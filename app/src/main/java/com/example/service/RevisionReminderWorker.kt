@@ -1,5 +1,6 @@
 package com.example.service
 
+import com.example.R
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -49,8 +50,8 @@ class RevisionReminderWorker(
 
                 val notification = NotificationCompat.Builder(applicationContext, REVISION_CHANNEL_ID)
                     .setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .setContentTitle("Flashcards Review Due 📚")
-                    .setContentText("You have $dueCount flashcard(s) to review today.")
+                    .setContentTitle(applicationContext.getString(R.string.reminder_notif_title))
+                    .setContentText(applicationContext.resources.getQuantityString(R.plurals.reminder_notif_body, dueCount, dueCount))
                     .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                     .setAutoCancel(true)
                     .setContentIntent(pendingIntent)
@@ -68,8 +69,8 @@ class RevisionReminderWorker(
     companion object {
         fun createNotificationChannel(context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val name = "Revision Reminders"
-                val descriptionText = "Notifications for due flashcards"
+                val name = context.getString(R.string.reminder_channel_name)
+                val descriptionText = context.getString(R.string.reminder_channel_body)
                 val importance = NotificationManager.IMPORTANCE_DEFAULT
                 val channel = NotificationChannel(REVISION_CHANNEL_ID, name, importance).apply {
                     description = descriptionText

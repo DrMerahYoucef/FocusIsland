@@ -1,61 +1,114 @@
 package com.example.ui.screen.revisions
 
-import android.content.ContentValues
-import android.content.Context
-import android.content.Intent
-import android.graphics.BitmapFactory
-import android.media.MediaPlayer
-import android.os.Environment
-import android.provider.MediaStore
-import android.widget.Toast
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.automirrored.rounded.DriveFileMove
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.SearchOff
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.core.content.FileProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
-import com.example.ui.components.ConfirmDeleteDialog
+import com.example.data.db.entity.RevisionDeckEntity
+import com.example.data.db.entity.RevisionNoteEntity
+import com.example.ui.designsystem.ConfirmDialog
+import com.example.ui.designsystem.EmptyState
 import com.example.ui.revisions.CardInlineEditor
-import com.example.ui.revisions.CardMarkdownEditorUtils
 import com.example.ui.revisions.FullScreenNoteReaderDialog
 import com.example.ui.revisions.HighlightedMarkdownWithTables
 import com.example.ui.revisions.NoteBlocksRenderer
-import com.example.ui.theme.NeumorphicColors
+import com.example.ui.theme.Spacing
+import kotlinx.coroutines.launch
 import java.io.File
 
+/**
+ * The body of a card (photo, recording or text), shared by the card screen and the review session.
+ * Photo/voice cards created without text carry a placeholder preview that is not shown.
+ */
+@Composable
+fun CardContent(
+    note: RevisionNoteEntity,
+    onZoomImage: (File) -> Unit,
+    modifier: Modifier = Modifier,
+    fontSize: TextUnit = 16.sp,
+    autoPlayAudio: Boolean = false,
+    mediaActions: (@Composable (File) -> Unit)? = null
+) {
+    val context = LocalContext.current
+    val mediaFile = remember(note.mediaFilePath) { note.mediaFilePath?.let(::File)?.takeIf { it.exists() } }
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+        if (mediaFile != null && note.mediaType == "IMAGE") {
+            CardImage(mediaFile, onZoom = { onZoomImage(mediaFile) })
+            mediaActions?.invoke(mediaFile)
+        } else if (mediaFile != null && note.mediaType == "AUDIO") {
+            AudioCardPlayerView(audioFile = mediaFile, context = context, autoPlay = autoPlayAudio)
+            mediaActions?.invoke(mediaFile)
+        }
+        val hasBlocks = note.contentBlocksJson.isNotBlank() && note.contentBlocksJson != "[]"
+        val plain = note.plainTextPreview.ifBlank { note.contentMarkdown }.trim()
+        val isPlaceholder = plain.equals("Photo Card", ignoreCase = true) || plain.equals("Voice Note Card", ignoreCase = true)
+        when {
+            hasBlocks -> NoteBlocksRenderer(blocksJson = note.contentBlocksJson, fontSize = fontSize, modifier = Modifier.fillMaxWidth())
+            plain.isNotBlank() && !isPlaceholder -> HighlightedMarkdownWithTables(markdown = plain, fontSize = fontSize, modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+/** One card: read, edit in place, open full screen, move to another deck, copy, share media, delete. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RevisionNoteDetailScreen(
@@ -64,801 +117,280 @@ fun RevisionNoteDetailScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
-    val state by viewModel.uiState.collectAsState()
-    val note = state.allNotes.find { it.id == noteId }
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val note = state.allNotes.firstOrNull { it.id == noteId }
+    val deck = note?.let { n -> state.decks.firstOrNull { it.id == n.deckId } }
 
-    var showDeleteCardDialog by remember { mutableStateOf(false) }
-    var showEditDialog by remember { mutableStateOf(false) }
-    var showMoveDeckDialog by remember { mutableStateOf(false) }
-    var showZoomImageDialog by remember { mutableStateOf(false) }
-    var showFullScreenReader by remember { mutableStateOf(false) }
-    var cardTextScale by remember { mutableFloatStateOf(1.0f) }
-    var isCardEditing by remember { mutableStateOf(false) }
+    var editing by rememberSaveable { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var showReader by rememberSaveable { mutableStateOf(false) }
+    var showMove by rememberSaveable { mutableStateOf(false) }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    var zoomFile by remember { mutableStateOf<File?>(null) }
 
-    if (showDeleteCardDialog && note != null) {
-        ConfirmDeleteDialog(
-            title = stringResource(R.string.delete_card_title),
-            body = stringResource(R.string.delete_card_body),
-            onConfirm = {
-                viewModel.deleteNote(note)
-                onBack()
+    val msgSaved = stringResource(R.string.study_card_saved)
+    val msgCopied = stringResource(R.string.study_text_copied)
+    val msgMediaSaved = stringResource(R.string.study_media_saved)
+    val msgFailed = stringResource(R.string.study_media_failed)
+    val shareTitle = stringResource(R.string.study_share_title)
+    fun notify(text: String) { scope.launch { snackbar.showSnackbar(text) } }
+
+    val isTextCard = note != null && note.mediaType == null
+
+    // The editor is a full screen of its own: it handles Close/back and asks before discarding.
+    if (editing && note != null) {
+        CardInlineEditor(
+            note = note,
+            onSave = { updated ->
+                viewModel.updateNote(updated)
+                editing = false
+                notify(msgSaved)
             },
-            onDismiss = { showDeleteCardDialog = false }
+            onCancel = { editing = false },
+            modifier = Modifier.fillMaxSize()
         )
-    }
-
-    if (note == null) {
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text("Card") },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
-                        }
-                    }
-                )
-            },
-            containerColor = NeumorphicColors.Background
-        ) { padding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            )
-        }
         return
     }
 
-    val deckName = state.decks.find { it.id == note.deckId }?.name ?: "Deck"
-
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = {
-                    Text(
-                        text = deckName,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1
-                    )
-                },
+                title = { Text(deck?.name.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.back)
-                        )
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showMoveDeckDialog = true }) {
-                        Icon(
-                            imageVector = Icons.Outlined.Folder,
-                            contentDescription = "Move to Deck",
-                            tint = NeumorphicColors.Primary
-                        )
+                    if (note != null) {
+                        if (isTextCard) {
+                            IconButton(onClick = { editing = true }) {
+                                Icon(Icons.Rounded.Edit, contentDescription = stringResource(R.string.edit))
+                            }
+                        }
+                        IconButton(onClick = { showReader = true }) {
+                            Icon(Icons.Rounded.Fullscreen, contentDescription = stringResource(R.string.full_screen))
+                        }
+                        Box {
+                            IconButton(onClick = { menuOpen = true }) {
+                                Icon(Icons.Rounded.MoreVert, contentDescription = stringResource(R.string.study_card_options))
+                            }
+                            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.study_move_card)) },
+                                    leadingIcon = { Icon(Icons.AutoMirrored.Rounded.DriveFileMove, contentDescription = null) },
+                                    onClick = { menuOpen = false; showMove = true }
+                                )
+                                if (isTextCard) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.study_copy_text)) },
+                                        leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) },
+                                        onClick = {
+                                            menuOpen = false
+                                            clipboard.setText(AnnotatedString(note.plainTextPreview.ifBlank { note.contentMarkdown }))
+                                            notify(msgCopied)
+                                        }
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) },
+                                    leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                    onClick = { menuOpen = false; confirmDelete = true }
+                                )
+                            }
+                        }
                     }
-                    IconButton(onClick = { showDeleteCardDialog = true }) {
-                        Icon(
-                            imageVector = Icons.Outlined.Delete,
-                            contentDescription = stringResource(R.string.delete_card_title),
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = androidx.compose.ui.graphics.Color.Transparent,
-                    titleContentColor = NeumorphicColors.TextPrimary,
-                    navigationIconContentColor = NeumorphicColors.TextPrimary
-                )
+                }
             )
-        },
-        containerColor = androidx.compose.ui.graphics.Color.Transparent
+        }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            com.example.ui.components.NeumorphicCard(
-                cornerRadius = 20.dp,
-                modifier = Modifier.fillMaxWidth()
+        if (note == null) {
+            EmptyState(
+                icon = Icons.Rounded.SearchOff,
+                title = stringResource(R.string.study_card_missing_title),
+                body = stringResource(R.string.study_card_missing_body),
+                modifier = Modifier.padding(padding)
+            )
+            return@Scaffold
+        }
+        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
+            Column(
+                modifier = Modifier
+                    .widthIn(max = Spacing.contentMaxWidth)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(Spacing.md),
+                verticalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
-                if (isCardEditing) {
-                    CardInlineEditor(
-                        note = note,
-                        onSave = { updatedNote ->
-                            viewModel.updateNote(updatedNote)
-                            isCardEditing = false
-                            Toast.makeText(context, "Carte enregistrée avec succès ! ✨", Toast.LENGTH_SHORT).show()
-                        },
-                        onCancel = { isCardEditing = false },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 400.dp, max = 800.dp)
+                val isDue = note.dueDate <= System.currentTimeMillis()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DeckDot(deck?.colorHex)
+                    Spacer(Modifier.size(Spacing.xs))
+                    Text(
+                        dueLabel(note.dueDate),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (isDue) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                } else {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showFullScreenReader = true }
-                            .padding(20.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val deckName = state.decks.find { it.id == note.deckId }?.name ?: "Deck"
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = deckName.uppercase(),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = NeumorphicColors.Primary,
-                                    letterSpacing = 1.sp
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "• " + formatDueIn(note.dueDate),
-                                    fontSize = 12.sp,
-                                    color = NeumorphicColors.TextSecondary
-                                )
-                            }
-
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                // Card Edit Toggle Button
-                                FilledTonalIconButton(
-                                    onClick = { isCardEditing = true },
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .testTag("card_inline_edit_toggle_button"),
-                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                        containerColor = NeumorphicColors.Primary.copy(alpha = 0.12f),
-                                        contentColor = NeumorphicColors.Primary
-                                    )
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "Éditer la carte",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                // Card Full Screen Button
-                                FilledTonalIconButton(
-                                    onClick = { showFullScreenReader = true },
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .testTag("card_fullscreen_button"),
-                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                        containerColor = NeumorphicColors.Primary.copy(alpha = 0.12f),
-                                        contentColor = NeumorphicColors.Primary
-                                    )
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Fullscreen,
-                                        contentDescription = stringResource(R.string.full_screen),
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                            text = note.title,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary
-                        )
-
-                        Spacer(modifier = Modifier.height(16.dp))
-                        HorizontalDivider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // IMAGE Card View
-                        val imageFile = note.mediaFilePath?.let { File(it) }
-                        if (note.mediaType == "IMAGE" && imageFile != null && imageFile.exists()) {
-                            val bitmap = remember(note.mediaFilePath) {
-                                BitmapFactory.decodeFile(imageFile.absolutePath)
-                            }
-
-                            if (bitmap != null) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(240.dp)
-                                            .clickable { showZoomImageDialog = true }
-                                    ) {
-                                        Image(
-                                            bitmap = bitmap.asImageBitmap(),
-                                            contentDescription = "Card Photo",
-                                            contentScale = ContentScale.Fit,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    }
-
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = "Tap photo to zoom",
-                                        fontSize = 11.sp,
-                                        color = NeumorphicColors.TextSecondary
-                                    )
-
-                                    Spacer(modifier = Modifier.height(12.dp))
-
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        OutlinedButton(
-                                            onClick = { saveImageToGallery(context, imageFile) },
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Save", fontSize = 12.sp)
-                                        }
-
-                                        Button(
-                                            onClick = { shareMediaFile(context, imageFile, "image/jpeg") },
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Send", fontSize = 12.sp)
-                                        }
-                                    }
-                                }
-                            }
-                        } else if (note.mediaType == "AUDIO" && imageFile != null && imageFile.exists()) {
-                            // AUDIO Card View
-                            AudioCardPlayerView(
-                                audioFile = imageFile,
-                                context = context
-                            )
-                        } else {
-                            // TEXT Card View
-                            Column(
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                val currentFontSize = (16 * cardTextScale).sp
-                                if (note.contentBlocksJson.isBlank() || note.contentBlocksJson == "[]") {
-                                    HighlightedMarkdownWithTables(
-                                        markdown = note.plainTextPreview.ifBlank { note.contentMarkdown },
-                                        fontSize = currentFontSize,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                } else {
-                                    NoteBlocksRenderer(
-                                        blocksJson = note.contentBlocksJson,
-                                        fontSize = currentFontSize,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-                            }
-
-                            if (cardTextScale != 1.0f) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "Zoom: ${(cardTextScale * 100).toInt()}%",
-                                        fontSize = 11.sp,
-                                        color = NeumorphicColors.TextSecondary
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    TextButton(
-                                        onClick = { cardTextScale = 1.0f },
-                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                                        modifier = Modifier.height(26.dp)
-                                    ) {
-                                        Text("Reset", fontSize = 11.sp, color = NeumorphicColors.Primary)
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            OutlinedButton(
-                                onClick = {
-                                    val textToCopy = note.plainTextPreview.ifBlank { note.contentMarkdown }
-                                    clipboardManager.setText(AnnotatedString(textToCopy))
-                                    Toast.makeText(context, "Text copied to clipboard! 📋", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Copy Text")
-                            }
-                        }
-                    }
                 }
-            }
-        }
-    }
-
-    // Fullscreen Zoomable Image Dialog
-    if (showZoomImageDialog && note?.mediaFilePath != null) {
-        val file = File(note.mediaFilePath)
-        val bitmap = remember(note.mediaFilePath) { BitmapFactory.decodeFile(file.absolutePath) }
-        if (bitmap != null) {
-            Dialog(
-                onDismissRequest = { showZoomImageDialog = false },
-                properties = DialogProperties(usePlatformDefaultWidth = false)
-            ) {
-                var scale by remember { mutableStateOf(1f) }
-                var offsetX by remember { mutableStateOf(0f) }
-                var offsetY by remember { mutableStateOf(0f) }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(Unit) {
-                                detectTransformGestures { _, pan, zoom, _ ->
-                                    scale = (scale * zoom).coerceIn(1f, 5f)
-                                    if (scale > 1f) {
-                                        offsetX += pan.x
-                                        offsetY += pan.y
-                                    } else {
-                                        offsetX = 0f
-                                        offsetY = 0f
-                                    }
-                                }
+                Text(
+                    note.title.ifBlank { stringResource(R.string.study_untitled) },
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.semantics { heading() }
+                )
+                HorizontalDivider()
+                CardContent(
+                    note = note,
+                    onZoomImage = { zoomFile = it },
+                    modifier = Modifier.clickable(
+                        enabled = isTextCard,
+                        onClickLabel = stringResource(R.string.full_screen),
+                        onClick = { showReader = true }
+                    ),
+                    mediaActions = { file ->
+                        MediaActions(
+                            onSave = {
+                                val ok = if (note.mediaType == "AUDIO") saveAudioToDownloads(context, file) else saveImageToGallery(context, file)
+                                notify(if (ok) msgMediaSaved else msgFailed)
                             },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "Zoomable Image",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer(
-                                    scaleX = scale,
-                                    scaleY = scale,
-                                    translationX = offsetX,
-                                    translationY = offsetY
-                                )
+                            onShare = { if (!shareMediaFile(context, file, shareTitle)) notify(msgFailed) }
                         )
                     }
-
-                    // Close Button in top corner
-                    IconButton(
-                        onClick = { showZoomImageDialog = false },
-                        modifier = Modifier
-                            .statusBarsPadding()
-                            .padding(16.dp)
-                            .align(Alignment.TopEnd)
-                            .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
-                            tint = Color.White
-                        )
-                    }
-                }
+                )
+                ScheduleSummary(note)
             }
         }
     }
 
-    // Fullscreen Zoomable Note Reader Dialog
-    if (showFullScreenReader && note != null) {
-        val deckName = state.decks.find { it.id == note.deckId }?.name ?: ""
+    zoomFile?.let { ZoomableImageDialog(it) { zoomFile = null } }
+
+    if (showReader && note != null) {
         FullScreenNoteReaderDialog(
             note = note,
-            deckName = deckName,
-            onDismiss = { showFullScreenReader = false },
-            onSaveNote = { updatedNote ->
-                viewModel.updateNote(updatedNote)
-            }
+            deckName = deck?.name.orEmpty(),
+            onDismiss = { showReader = false },
+            onSaveNote = { viewModel.updateNote(it) }
         )
     }
-
-    // Edit Card Dialog with Rich Text Highlighting & Underline
-    if (showEditDialog && note != null) {
-        Dialog(
-            onDismissRequest = { showEditDialog = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            CardInlineEditor(
-                note = note,
-                onSave = { updatedNote ->
-                    viewModel.updateNote(updatedNote)
-                    showEditDialog = false
-                    Toast.makeText(context, "Carte enregistrée avec succès ! ✨", Toast.LENGTH_SHORT).show()
-                },
-                onCancel = { showEditDialog = false },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-    }
-
-    // Move to Deck Dialog with Inline Deck Creation
-    if (showMoveDeckDialog && note != null) {
+    if (showMove && note != null) {
         MoveToDeckDialog(
             currentDeckId = note.deckId,
             decks = state.decks,
-            onDismiss = { showMoveDeckDialog = false },
-            onDeckSelected = { selectedDeckId ->
-                viewModel.moveNoteToDeck(note.id, selectedDeckId)
-                showMoveDeckDialog = false
-                Toast.makeText(context, "Moved card to new deck!", Toast.LENGTH_SHORT).show()
+            onDismiss = { showMove = false },
+            onMove = { targetId ->
+                viewModel.moveNoteToDeck(note.id, targetId)
+                showMove = false
+                val name = state.decks.firstOrNull { it.id == targetId }?.name.orEmpty()
+                notify(context.getString(R.string.study_card_moved, name))
             },
-            onCreateNewDeck = { newName ->
-                viewModel.addDeckAndSelect(newName) { newId ->
-                    viewModel.moveNoteToDeck(note.id, newId)
-                    showMoveDeckDialog = false
-                    Toast.makeText(context, "Created deck and moved card!", Toast.LENGTH_SHORT).show()
-                }
+            onCreateAndMove = { name, color ->
+                viewModel.addDeckAndSelect(name, color) { newId -> viewModel.moveNoteToDeck(note.id, newId) }
+                showMove = false
+                notify(context.getString(R.string.study_card_moved, name))
             }
+        )
+    }
+    if (confirmDelete && note != null) {
+        ConfirmDialog(
+            title = stringResource(R.string.delete_card_title),
+            body = stringResource(R.string.delete_card_body),
+            confirmLabel = stringResource(R.string.delete),
+            dismissLabel = stringResource(R.string.cancel),
+            onConfirm = {
+                confirmDelete = false
+                viewModel.deleteNote(note)
+                onBack()
+            },
+            onDismiss = { confirmDelete = false },
+            destructive = true
         )
     }
 }
 
+/** Where the card stands in spaced repetition: next review, interval, times reviewed. */
 @Composable
-fun AudioCardPlayerView(
-    audioFile: File,
-    context: Context,
-    autoPlay: Boolean = false
-) {
-    var isPlaying by remember(audioFile) { mutableStateOf(autoPlay) }
-    var currentPosition by remember(audioFile) { mutableStateOf(0) }
-    var duration by remember(audioFile) { mutableStateOf(1) }
-
-    val mediaPlayer = remember(audioFile) {
-        MediaPlayer().apply {
-            try {
-                setDataSource(audioFile.absolutePath)
-                prepare()
-                duration = this.duration.coerceAtLeast(1)
-                setOnCompletionListener {
-                    isPlaying = false
-                    currentPosition = 0
-                }
-                if (autoPlay) {
-                    start()
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
-    DisposableEffect(audioFile) {
-        onDispose {
-            try {
-                mediaPlayer.stop()
-                mediaPlayer.release()
-            } catch (e: Exception) {}
-        }
-    }
-
-    LaunchedEffect(isPlaying) {
-        while (isPlaying && mediaPlayer.isPlaying) {
-            currentPosition = mediaPlayer.currentPosition
-            kotlinx.coroutines.delay(200)
-        }
-        if (!mediaPlayer.isPlaying) {
-            isPlaying = false
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(NeumorphicColors.SurfaceLight.copy(alpha = 0.4f))
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            IconButton(
-                onClick = {
-                    if (isPlaying) {
-                        mediaPlayer.pause()
-                        isPlaying = false
-                    } else {
-                        mediaPlayer.start()
-                        isPlaying = true
-                    }
-                },
-                modifier = Modifier
-                    .size(52.dp)
-                    .background(NeumorphicColors.Primary, CircleShape)
-            ) {
-                Icon(
-                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = "Play/Pause",
-                    tint = Color.White
-                )
-            }
-
-            Column(modifier = Modifier.weight(1f)) {
-                Slider(
-                    value = currentPosition.toFloat(),
-                    onValueChange = {
-                        currentPosition = it.toInt()
-                        mediaPlayer.seekTo(it.toInt())
-                    },
-                    valueRange = 0f..duration.toFloat(),
-                    colors = SliderDefaults.colors(thumbColor = NeumorphicColors.Primary, activeTrackColor = NeumorphicColors.Primary)
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = formatMillis(currentPosition.toLong()),
-                        fontSize = 11.sp,
-                        color = NeumorphicColors.TextSecondary
-                    )
-                    Text(
-                        text = formatMillis(duration.toLong()),
-                        fontSize = 11.sp,
-                        color = NeumorphicColors.TextSecondary
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            OutlinedButton(
-                onClick = { saveAudioToDownloads(context, audioFile) },
-                modifier = Modifier.weight(1f)
-            ) {
-                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Save", fontSize = 12.sp)
-            }
-
-            Button(
-                onClick = { shareMediaFile(context, audioFile, "audio/3gpp") },
-                modifier = Modifier.weight(1f)
-            ) {
-                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Send", fontSize = 12.sp)
-            }
+private fun ScheduleSummary(note: RevisionNoteEntity) {
+    Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(Spacing.md), horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
+            SummaryItem(stringResource(R.string.study_next_review), dueLabel(note.dueDate), Modifier.weight(1f))
+            SummaryItem(
+                stringResource(R.string.study_interval),
+                if (note.intervalDays <= 0) stringResource(R.string.study_interval_new)
+                else pluralStringResource(R.plurals.days_count, note.intervalDays, note.intervalDays),
+                Modifier.weight(1f)
+            )
+            SummaryItem(
+                stringResource(R.string.study_reviews),
+                note.repetitions.toString(),
+                Modifier.weight(1f)
+            )
         }
     }
 }
 
 @Composable
-fun EditCardDialog(
-    note: com.example.data.db.entity.RevisionNoteEntity,
-    onDismiss: () -> Unit,
-    onSave: (String, String) -> Unit
-) {
-    var title by remember { mutableStateOf(note.title) }
-    var contentText by remember { mutableStateOf(note.plainTextPreview.ifBlank { note.contentMarkdown }) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = NeumorphicColors.DialogBackground,
-        titleContentColor = NeumorphicColors.TextPrimary,
-        textContentColor = NeumorphicColors.TextSecondary,
-        title = { Text("Edit Card", fontWeight = FontWeight.Bold, color = NeumorphicColors.TextPrimary) },
-        text = {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Title / Question") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = contentText,
-                    onValueChange = { contentText = it },
-                    label = { Text("Answer / Content") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(180.dp)
-                )
-            }
-        },
-        confirmButton = {
-            Button(onClick = { onSave(title.trim(), contentText) }) {
-                Text("Save Changes")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = NeumorphicColors.TextSecondary) }
-        }
-    )
+private fun SummaryItem(label: String, value: String, modifier: Modifier) {
+    Column(modifier) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.titleSmall)
+    }
 }
 
+/** Pick another deck (radio list) or create one and move the card there. */
 @Composable
 fun MoveToDeckDialog(
     currentDeckId: String,
-    decks: List<com.example.data.db.entity.RevisionDeckEntity>,
+    decks: List<RevisionDeckEntity>,
     onDismiss: () -> Unit,
-    onDeckSelected: (String) -> Unit,
-    onCreateNewDeck: (String) -> Unit
+    onMove: (String) -> Unit,
+    onCreateAndMove: (name: String, colorHex: String) -> Unit
 ) {
-    var selectedId by remember { mutableStateOf(currentDeckId) }
-    var isCreatingDeck by remember { mutableStateOf(false) }
-    var newDeckName by remember { mutableStateOf("") }
-
+    var selected by rememberSaveable { mutableStateOf(currentDeckId) }
+    var creating by rememberSaveable { mutableStateOf(false) }
+    if (creating) {
+        DeckDialog(
+            title = stringResource(R.string.study_new_deck),
+            confirmLabel = stringResource(R.string.study_create_and_move),
+            onConfirm = onCreateAndMove,
+            onDismiss = { creating = false }
+        )
+        return
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = NeumorphicColors.DialogBackground,
-        titleContentColor = NeumorphicColors.TextPrimary,
-        textContentColor = NeumorphicColors.TextSecondary,
-        title = { Text("Move Card to Deck", color = NeumorphicColors.TextPrimary) },
+        title = { Text(stringResource(R.string.study_move_card)) },
         text = {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (!isCreatingDeck) {
-                    decks.forEach { deck ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { selectedId = deck.id }
-                                .padding(vertical = 4.dp)
-                        ) {
-                            RadioButton(
-                                selected = selectedId == deck.id,
-                                onClick = { selectedId = deck.id },
-                                colors = RadioButtonDefaults.colors(
-                                    selectedColor = NeumorphicColors.Primary,
-                                    unselectedColor = NeumorphicColors.TextSecondary
-                                )
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(deck.name, fontWeight = FontWeight.Medium, color = NeumorphicColors.TextPrimary)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedButton(
-                        onClick = { isCreatingDeck = true },
-                        modifier = Modifier.fillMaxWidth()
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                decks.forEach { deck ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = Spacing.minTouchTarget)
+                            .selectable(selected = selected == deck.id, role = Role.RadioButton, onClick = { selected = deck.id })
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Add New Deck")
+                        RadioButton(selected = selected == deck.id, onClick = null)
+                        Spacer(Modifier.size(Spacing.sm))
+                        DeckDot(deck.colorHex)
+                        Spacer(Modifier.size(Spacing.xs))
+                        Text(deck.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                } else {
-                    OutlinedTextField(
-                        value = newDeckName,
-                        onValueChange = { newDeckName = it },
-                        label = { Text("New Deck Name") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                }
+                TextButton(onClick = { creating = true }) {
+                    Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(Spacing.iconSm))
+                    Spacer(Modifier.size(Spacing.xs))
+                    Text(stringResource(R.string.study_new_deck))
                 }
             }
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    if (isCreatingDeck) {
-                        if (newDeckName.isNotBlank()) {
-                            onCreateNewDeck(newDeckName.trim())
-                        }
-                    } else {
-                        onDeckSelected(selectedId)
-                    }
-                }
-            ) {
-                Text(if (isCreatingDeck) "Create & Move" else "Move Card")
+            TextButton(onClick = { onMove(selected) }, enabled = selected != currentDeckId) {
+                Text(stringResource(R.string.study_move))
             }
         },
-        dismissButton = {
-            TextButton(
-                onClick = {
-                    if (isCreatingDeck) isCreatingDeck = false else onDismiss()
-                }
-            ) {
-                Text("Cancel")
-            }
-        }
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } }
     )
-}
-
-fun saveImageToGallery(context: Context, imageFile: File) {
-    try {
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, "card_photo_${System.currentTimeMillis()}.jpg")
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/RevisionCards")
-        }
-        val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-        if (uri != null) {
-            context.contentResolver.openOutputStream(uri)?.use { out ->
-                imageFile.inputStream().copyTo(out)
-            }
-            Toast.makeText(context, "Saved to Gallery! 📷", Toast.LENGTH_SHORT).show()
-        }
-    } catch (e: Exception) {
-        Toast.makeText(context, "Failed to save image: ${e.message}", Toast.LENGTH_SHORT).show()
-    }
-}
-
-fun saveAudioToDownloads(context: Context, audioFile: File) {
-    try {
-        val values = ContentValues().apply {
-            put(MediaStore.Audio.Media.DISPLAY_NAME, "card_audio_${System.currentTimeMillis()}.3gp")
-            put(MediaStore.Audio.Media.MIME_TYPE, "audio/3gpp")
-            put(MediaStore.Audio.Media.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/RevisionCards")
-        }
-        val uri = context.contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
-        if (uri != null) {
-            context.contentResolver.openOutputStream(uri)?.use { out ->
-                audioFile.inputStream().copyTo(out)
-            }
-            Toast.makeText(context, "Saved to Downloads! 🎵", Toast.LENGTH_SHORT).show()
-        }
-    } catch (e: Exception) {
-        Toast.makeText(context, "Failed to save audio: ${e.message}", Toast.LENGTH_SHORT).show()
-    }
-}
-
-fun shareMediaFile(context: Context, mediaFile: File, mimeType: String) {
-    try {
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            mediaFile
-        )
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = mimeType
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        context.startActivity(Intent.createChooser(intent, "Share Card Media"))
-    } catch (e: Exception) {
-        Toast.makeText(context, "Failed to share: ${e.message}", Toast.LENGTH_SHORT).show()
-    }
-}
-
-private fun formatMillis(millis: Long): String {
-    val totalSec = millis / 1000
-    val min = totalSec / 60
-    val sec = totalSec % 60
-    return String.format("%02d:%02d", min, sec)
 }

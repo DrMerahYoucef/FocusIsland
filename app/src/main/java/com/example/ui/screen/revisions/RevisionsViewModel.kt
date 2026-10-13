@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.FocusFlowApplication
+import com.example.R
 import com.example.data.db.entity.RevisionDeckEntity
 import com.example.data.db.entity.RevisionNoteEntity
 import com.example.data.repository.GeminiOcrRepository
@@ -21,13 +22,19 @@ import com.example.service.RevisionSyncWorker
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
+/** How a background card is being made. The UI turns this into localized text. */
+enum class OcrTaskKind { ON_DEVICE, GEMINI, PHOTO }
+
+/**
+ * A card being created in the background from a photo. [errorMessage] is the technical cause
+ * (shown as a detail under a localized headline), null while running.
+ */
 data class BackgroundOcrTask(
     val id: String = java.util.UUID.randomUUID().toString(),
     val deckId: String,
     val deckName: String,
-    val engineName: String,
+    val kind: OcrTaskKind,
     val promptAddendum: String? = null,
-    val statusMessage: String = "Numérisation OCR en cours...",
     val isError: Boolean = false,
     val errorMessage: String? = null,
     val startTime: Long = System.currentTimeMillis()
@@ -48,6 +55,27 @@ data class RevisionsUiState(
     val hasApiKey: Boolean = false
 )
 
+/**
+ * One review session. The queue is a snapshot taken at start, so grading a card (which moves
+ * its due date) never reshuffles, shrinks or silently refills the queue.
+ * In practice-ahead mode cards are shown but their schedule is left untouched.
+ */
+data class ReviewSessionState(
+    val deckId: String = "",
+    val isLoading: Boolean = true,
+    val practiceAhead: Boolean = false,
+    val queue: List<RevisionNoteEntity> = emptyList(),
+    val index: Int = 0,
+    val gradeCounts: Map<ReviewGrade, Int> = emptyMap(),
+    val lastGraded: RevisionNoteEntity? = null,
+    val lastGrade: ReviewGrade? = null
+) {
+    val current: RevisionNoteEntity? get() = queue.getOrNull(index)
+    val isEmpty: Boolean get() = !isLoading && queue.isEmpty()
+    val isFinished: Boolean get() = !isLoading && queue.isNotEmpty() && index >= queue.size
+    val canUndo: Boolean get() = lastGraded != null && index > 0
+}
+
 class RevisionsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = FocusFlowApplication.instance.revisionRepository
@@ -58,24 +86,79 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
     val uiState: StateFlow<RevisionsUiState> = _uiState.asStateFlow()
 
     private val ocrEngineProvider = com.example.data.repository.OcrEngineProvider(
-        apiKeyProvider = { getEffectiveApiKey() }
+        apiKeyProvider = { getEffectiveApiKey() },
+        // The list of models comes from Google (refreshed at most every 12 h); the choice in
+        // Settings decides which is tried first, the others follow if it fails.
+        modelOrderProvider = {
+            val models = FocusFlowApplication.instance.geminiModels
+            models.refresh(getEffectiveApiKey())
+            val settings = _uiState.value.srsSettings
+            models.attemptOrder(settings.selectedGeminiModel, settings.customGeminiModels)
+        }
     )
 
-    fun getEffectiveApiKey(): String {
-        val userKey = _uiState.value.srsSettings.geminiApiKey.trim()
-        val prefKey = sharedPrefs.getString("gemini_api_key", "")?.trim().orEmpty()
-        val buildConfigKey = try {
-            val key = com.example.BuildConfig.GEMINI_API_KEY.trim()
-            if (key.isNotBlank() && key != "null" && key != "MY_GEMINI_API_KEY" && key != "DEFAULT_KEY") key else ""
-        } catch (e: Exception) { "" }
+    private val _reviewSession = MutableStateFlow(ReviewSessionState())
+    val reviewSession: StateFlow<ReviewSessionState> = _reviewSession.asStateFlow()
 
-        return when {
-            userKey.isNotBlank() && userKey != "MY_GEMINI_API_KEY" -> userKey
-            prefKey.isNotBlank() && prefKey != "MY_GEMINI_API_KEY" -> prefKey
-            buildConfigKey.isNotBlank() -> buildConfigKey
-            else -> ""
+    /** Starts (or keeps, if already running for this deck and mode) a review session. */
+    fun startReviewSession(deckId: String, practiceAhead: Boolean = false) {
+        val current = _reviewSession.value
+        if (current.deckId == deckId && current.practiceAhead == practiceAhead &&
+            !current.isLoading && !current.isEmpty && !current.isFinished
+        ) return
+        _reviewSession.value = ReviewSessionState(deckId = deckId, practiceAhead = practiceAhead, isLoading = true)
+        viewModelScope.launch {
+            val queue = repository.buildReviewQueue(
+                deckId = deckId,
+                includeNotDue = practiceAhead,
+                limit = _uiState.value.srsSettings.maxReviewsPerDay
+            )
+            _reviewSession.update { it.copy(isLoading = false, queue = queue, index = 0) }
         }
     }
+
+    fun gradeCurrentCard(grade: ReviewGrade) {
+        val session = _reviewSession.value
+        val card = session.current ?: return
+        _reviewSession.update {
+            it.copy(
+                index = it.index + 1,
+                gradeCounts = it.gradeCounts + (grade to (it.gradeCounts[grade] ?: 0) + 1),
+                lastGrade = grade,
+                lastGraded = card
+            )
+        }
+        if (session.practiceAhead) return
+        viewModelScope.launch {
+            val latest = repository.getNoteById(card.id) ?: card // include edits made during the session
+            _reviewSession.update { s -> if (s.lastGraded?.id == latest.id) s.copy(lastGraded = latest) else s }
+            repository.upsertNote(Sm2Scheduler.schedule(latest, grade))
+            RevisionSyncWorker.scheduleSyncWork(getApplication())
+        }
+    }
+
+    /** Puts the last graded card back on screen and restores its previous schedule. */
+    fun undoLastGrade() {
+        val session = _reviewSession.value
+        val previous = session.lastGraded ?: return
+        val grade = session.lastGrade
+        _reviewSession.update {
+            it.copy(
+                index = (it.index - 1).coerceAtLeast(0),
+                gradeCounts = if (grade == null) it.gradeCounts
+                else it.gradeCounts + (grade to ((it.gradeCounts[grade] ?: 1) - 1).coerceAtLeast(0)),
+                lastGraded = null,
+                lastGrade = null
+            )
+        }
+        if (!session.practiceAhead) viewModelScope.launch { repository.upsertNote(previous) }
+    }
+
+    /** The user's own key only (encrypted on device). No key is ever bundled in the APK. */
+    private val secretStore = com.example.data.security.SecretStore(application)
+
+    fun getEffectiveApiKey(): String =
+        _uiState.value.srsSettings.geminiApiKey.trim().takeIf { it.isNotBlank() && it != "MY_GEMINI_API_KEY" }.orEmpty()
 
     init {
         loadSettings()
@@ -99,7 +182,12 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
         } else {
             savedModelsCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }.distinct()
         }
-        val selectedModel = sharedPrefs.getString("selected_gemini_model", "gemini-2.5-flash") ?: "gemini-2.5-flash"
+        // The old default (a fixed model) becomes "newest Flash" once; a model the user picked stays.
+        val storedModel = sharedPrefs.getString("selected_gemini_model", null)
+        val selectedModel = if (storedModel == null || (storedModel == "gemini-2.5-flash" && !sharedPrefs.getBoolean("gemini_auto_migrated", false))) {
+            sharedPrefs.edit().putBoolean("gemini_auto_migrated", true).apply()
+            com.example.data.repository.GeminiModels.AUTO_FLASH
+        } else storedModel
 
         val settings = SrsSettings(
             newCardsPerDay = sharedPrefs.getInt("srs_new_cards_per_day", 20),
@@ -108,7 +196,7 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
             reminderHour = sharedPrefs.getInt("srs_reminder_hour", 19),
             reminderMinute = sharedPrefs.getInt("srs_reminder_minute", 0),
             notificationsEnabled = sharedPrefs.getBoolean("srs_notifications_enabled", true),
-            geminiApiKey = sharedPrefs.getString("gemini_api_key", "") ?: "",
+            geminiApiKey = secretStore.geminiApiKey,
             explainModeEnabled = sharedPrefs.getBoolean("srs_explain_mode_enabled", false),
             customPromptOverride = sharedPrefs.getString("srs_custom_prompt_override", null),
             selectedGeminiModel = selectedModel,
@@ -199,9 +287,12 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 val apiKey = getEffectiveApiKey()
                 if (audioFile != null && audioFile.exists() && audioFile.length() > 0L && apiKey.isNotBlank() && apiKey != "MY_GEMINI_API_KEY") {
-                    val audioBytes = audioFile.readBytes()
+                    val audioBytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { audioFile.readBytes() }
                     val titleEngine = com.example.data.repository.GeminiTitleEngine { apiKey }
-                    val titleRes = titleEngine.generateTitle(audioBytes, "audio/3gpp")
+                    val titleRes = titleEngine.generateTitle(
+                        audioBytes,
+                        com.example.data.repository.LocalMediaStore.mimeTypeFor(audioFile.absolutePath)
+                    )
                     _uiState.update { it.copy(isProcessingOcr = false) }
                     onResult(titleRes.title)
                     return@launch
@@ -224,29 +315,27 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun deleteDeck(deck: RevisionDeckEntity) {
+    /** Renames and/or recolours a deck; its cards are untouched. */
+    fun updateDeck(deckId: String, name: String, colorHex: String) {
+        if (name.isBlank()) return
         viewModelScope.launch {
-            repository.deleteDeck(deck)
+            val deck = repository.getDeckById(deckId) ?: return@launch
+            repository.upsertDeck(deck.copy(name = name.trim(), colorHex = colorHex))
         }
     }
 
+    /** Deleting a deck always deletes its cards and their media (no orphaned cards). */
+    fun deleteDeck(deck: RevisionDeckEntity) = deleteDeckAndNotes(deck.id)
+
     suspend fun ensureAtLeastOneDeck(): String {
         val decks = repository.getAllDecksOnce()
-        if (decks.isNotEmpty()) return decks.first().id
-        val defaultDeck = RevisionDeckEntity(id = "default_deck", name = "Général", colorHex = "#4CAF50")
-        repository.upsertDeck(defaultDeck)
-        return defaultDeck.id
+        return decks.firstOrNull()?.id ?: repository.ensureDefaultDeck()
     }
 
     fun deleteDeckAndNotes(deckId: String) {
         viewModelScope.launch {
-            val notesInDeck = repository.getAllNotesOnce().filter { it.deckId == deckId }
-            notesInDeck.forEach { note ->
-                if (!note.mediaFilePath.isNullOrBlank()) {
-                    localMediaStore.delete(note.mediaFilePath)
-                }
-            }
-            repository.deleteDeckAndNotes(deckId)
+            val mediaPaths = repository.deleteDeckAndNotes(deckId)
+            localMediaStore.deleteAll(mediaPaths)
         }
     }
 
@@ -301,6 +390,9 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun hasApiKey(): Boolean = getEffectiveApiKey().isNotBlank()
 
+    /** Title for a photo card when none was typed or detected (stored once, in the current language). */
+    private fun defaultPhotoTitle(): String = getApplication<Application>().getString(R.string.study_card_type_photo)
+
     fun launchBackgroundOcrCardCreation(
         croppedBitmap: Bitmap,
         temporaryPromptAddendum: String?,
@@ -309,19 +401,14 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
         engineChoice: OcrEngineChoice = OcrEngineChoice.ML_KIT
     ) {
         val taskId = java.util.UUID.randomUUID().toString()
-        val deckName = _uiState.value.decks.find { it.id == targetDeckId }?.name ?: "Général"
-        val engineLabel = when (engineChoice) {
-            OcrEngineChoice.ML_KIT -> "Google ML Kit"
-            OcrEngineChoice.GEMINI -> "Gemini IA"
-        }
+        val deckName = _uiState.value.decks.find { it.id == targetDeckId }?.name.orEmpty()
 
         val task = BackgroundOcrTask(
             id = taskId,
             deckId = targetDeckId,
             deckName = deckName,
-            engineName = engineLabel,
-            promptAddendum = temporaryPromptAddendum,
-            statusMessage = "Extraction OCR du texte en cours..."
+            kind = if (engineChoice == OcrEngineChoice.GEMINI) OcrTaskKind.GEMINI else OcrTaskKind.ON_DEVICE,
+            promptAddendum = temporaryPromptAddendum
         )
 
         _uiState.update { state ->
@@ -355,14 +442,10 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             } catch (e: Exception) {
                 android.util.Log.e("RevisionsViewModel", "Background OCR failed with $engineChoice", e)
-                val errMsg = when {
-                    !e.message.isNullOrBlank() -> e.message!!
-                    !e.localizedMessage.isNullOrBlank() -> e.localizedMessage!!
-                    else -> "Échec de l'extraction OCR"
-                }
+                val errMsg = e.localizedMessage?.takeIf { it.isNotBlank() } ?: e.message?.takeIf { it.isNotBlank() }
                 _uiState.update { state ->
                     val updated = state.activeOcrTasks.map {
-                        if (it.id == taskId) it.copy(isError = true, errorMessage = errMsg, statusMessage = "Erreur de numérisation")
+                        if (it.id == taskId) it.copy(isError = true, errorMessage = errMsg)
                         else it
                     }
                     state.copy(
@@ -381,14 +464,13 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
         deckId: String
     ) {
         val taskId = java.util.UUID.randomUUID().toString()
-        val deckName = _uiState.value.decks.find { it.id == deckId }?.name ?: "Général"
+        val deckName = _uiState.value.decks.find { it.id == deckId }?.name.orEmpty()
         val task = BackgroundOcrTask(
             id = taskId,
             deckId = deckId,
             deckName = deckName,
-            engineName = "Photo Card",
-            promptAddendum = userTitle,
-            statusMessage = "Enregistrement de la photo..."
+            kind = OcrTaskKind.PHOTO,
+            promptAddendum = userTitle
         )
 
         _uiState.update { state ->
@@ -404,7 +486,9 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
                     try {
                         if (hasApiKey()) {
                             val bos = java.io.ByteArrayOutputStream()
-                            bitmap.compress(Bitmap.CompressFormat.JPEG, 80, bos)
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                bitmap.compress(Bitmap.CompressFormat.JPEG, 80, bos)
+                            }
                             val titleEngine = com.example.data.repository.GeminiTitleEngine { getEffectiveApiKey() }
                             val res = titleEngine.generateTitle(bos.toByteArray(), "image/jpeg")
                             titleToUse = res.title
@@ -414,13 +498,13 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
                             titleToUse = res.title
                         }
                     } catch (e: Exception) {
-                        titleToUse = "Photo Card"
+                        titleToUse = defaultPhotoTitle()
                     }
                 }
 
                 val note = RevisionNoteEntity(
                     deckId = deckId,
-                    title = titleToUse.ifBlank { "Photo Card" },
+                    title = titleToUse.ifBlank { defaultPhotoTitle() },
                     contentBlocksJson = "",
                     plainTextPreview = "Photo Card",
                     contentMarkdown = "",
@@ -434,10 +518,10 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
                     state.copy(activeOcrTasks = remaining, isProcessingOcr = remaining.isNotEmpty())
                 }
             } catch (e: Exception) {
-                val errMsg = e.localizedMessage ?: e.message ?: "Échec de sauvegarde"
+                val errMsg = e.localizedMessage?.takeIf { it.isNotBlank() } ?: e.message?.takeIf { it.isNotBlank() }
                 _uiState.update { state ->
                     val updated = state.activeOcrTasks.map {
-                        if (it.id == taskId) it.copy(isError = true, errorMessage = errMsg, statusMessage = "Erreur")
+                        if (it.id == taskId) it.copy(isError = true, errorMessage = errMsg)
                         else it
                     }
                     state.copy(activeOcrTasks = updated, isProcessingOcr = updated.any { !it.isError })
@@ -480,7 +564,7 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
                 val errorMessage = when {
                     !e.message.isNullOrBlank() -> e.message!!
                     !e.localizedMessage.isNullOrBlank() -> e.localizedMessage!!
-                    else -> "Error processing card (${e.javaClass.simpleName})"
+                    else -> e.javaClass.simpleName
                 }
                 _uiState.update { it.copy(isProcessingOcr = false, ocrError = errorMessage) }
                 onResult(null, errorMessage)
@@ -533,7 +617,9 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
                     try {
                         if (hasApiKey()) {
                             val bos = java.io.ByteArrayOutputStream()
-                            bitmap.compress(Bitmap.CompressFormat.JPEG, 80, bos)
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                bitmap.compress(Bitmap.CompressFormat.JPEG, 80, bos)
+                            }
                             val titleEngine = com.example.data.repository.GeminiTitleEngine { getEffectiveApiKey() }
                             val res = titleEngine.generateTitle(bos.toByteArray(), "image/jpeg")
                             titleToUse = res.title
@@ -543,13 +629,13 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
                             titleToUse = res.title
                         }
                     } catch (e: Exception) {
-                        titleToUse = "Photo Card"
+                        titleToUse = defaultPhotoTitle()
                     }
                 }
 
                 val note = RevisionNoteEntity(
                     deckId = deckId,
-                    title = titleToUse.ifBlank { "Photo Card" },
+                    title = titleToUse.ifBlank { defaultPhotoTitle() },
                     contentBlocksJson = "",
                     plainTextPreview = "Photo Card",
                     contentMarkdown = "",
@@ -582,9 +668,13 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
 
                 if (titleToUse.isBlank()) {
                     try {
-                        val audioBytes = java.io.File(savedPath).readBytes()
+                        if (!hasApiKey()) throw IllegalStateException("No Gemini key")
+                        val audioBytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { java.io.File(savedPath).readBytes() }
                         val titleEngine = com.example.data.repository.GeminiTitleEngine { getEffectiveApiKey() }
-                        val res = titleEngine.generateTitle(audioBytes, "audio/m4a")
+                        val res = titleEngine.generateTitle(
+                            audioBytes,
+                            com.example.data.repository.LocalMediaStore.mimeTypeFor(savedPath)
+                        )
                         titleToUse = res.title
                     } catch (e: Exception) {
                         titleToUse = "Voice Note Card"
@@ -613,6 +703,7 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun updateSrsSettings(settings: SrsSettings) {
+        secretStore.geminiApiKey = settings.geminiApiKey
         sharedPrefs.edit()
             .putInt("srs_new_cards_per_day", settings.newCardsPerDay)
             .putInt("srs_max_reviews_per_day", settings.maxReviewsPerDay)
@@ -620,7 +711,6 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
             .putInt("srs_reminder_hour", settings.reminderHour)
             .putInt("srs_reminder_minute", settings.reminderMinute)
             .putBoolean("srs_notifications_enabled", settings.notificationsEnabled)
-            .putString("gemini_api_key", settings.geminiApiKey)
             .putBoolean("srs_explain_mode_enabled", settings.explainModeEnabled)
             .putString("srs_custom_prompt_override", settings.customPromptOverride)
             .putString("selected_gemini_model", settings.selectedGeminiModel)
@@ -665,6 +755,8 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
                 localMediaStore.delete(note.mediaFilePath)
             }
             repository.deleteNote(note)
+            // Also remove the cloud copy (queued until there is a connection).
+            note.firestoreId?.let { RevisionSyncWorker.scheduleRemoteDelete(getApplication(), listOf(it)) }
         }
     }
 }

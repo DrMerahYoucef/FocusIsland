@@ -43,6 +43,12 @@ interface RadioDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertStation(station: StationEntity)
 
+    @Query("SELECT * FROM radio_stations WHERE id = :id")
+    suspend fun getStation(id: String): StationEntity?
+
+    @Query("SELECT * FROM radio_stations WHERE isCustom = 0 ORDER BY name ASC")
+    suspend fun getBuiltInStations(): List<StationEntity>
+
     @Query("DELETE FROM radio_stations WHERE id = :id")
     suspend fun deleteStation(id: String)
 

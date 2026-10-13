@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -15,13 +16,13 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import com.example.data.repository.NoteHighlight
 import com.example.ui.theme.LocalIsDarkTheme
-import com.example.ui.theme.NeumorphicColors
+import com.example.ui.theme.NotePalette
 
 @Composable
 fun HighlightedMarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
-    color: Color = NeumorphicColors.TextPrimary,
+    color: Color = MaterialTheme.colorScheme.onSurface,
     fontSize: TextUnit = 16.sp,
     highlights: List<NoteHighlight> = emptyList()
 ) {
@@ -60,7 +61,7 @@ fun parseMarkdownWithHighlights(
     val allHighlights = mutableListOf<NoteHighlight>()
     allHighlights.addAll(highlights.filter { it.text.isNotBlank() })
 
-    val mdHighlightRegex = Regex("==(?:color:(amber|green|blue|red|purple|pink|yellow|emerald|violet|cyan)==)?(.*?)==", RegexOption.DOT_MATCHES_ALL)
+    val mdHighlightRegex = Regex("==(?:color:(amber|green|blue|red|purple|pink|yellow|emerald|violet|cyan|vert|bleu|rouge|rose|sky|lavender)==)?(.*?)==", RegexOption.DOT_MATCHES_ALL)
     mdHighlightRegex.findAll(input).forEach { match ->
         val colorName = match.groupValues.getOrNull(1)?.lowercase()?.ifBlank { "amber" } ?: "amber"
         val term = match.groupValues.getOrNull(2) ?: ""
@@ -88,18 +89,7 @@ fun parseMarkdownWithHighlights(
     appendFormattedMarkdown(builder, textToParse, defaultTextColor)
     val plainString = builder.toAnnotatedString().text
 
-    // 3. Apply highlight backgrounds over the rendered clean text
-    // Light mode: high saturation pastel tones with dark text
-    // Dark mode: vibrant medium tones with pure white text
-    val amberBg = if (isDark) Color(0xFFD97706).copy(alpha = 0.55f) else Color(0xFFFEF08A).copy(alpha = 0.90f)
-    val greenBg = if (isDark) Color(0xFF059669).copy(alpha = 0.55f) else Color(0xFFBBF7D0).copy(alpha = 0.90f)
-    val blueBg = if (isDark) Color(0xFF2563EB).copy(alpha = 0.55f) else Color(0xFFBFDBFE).copy(alpha = 0.90f)
-    val redBg = if (isDark) Color(0xFFDC2626).copy(alpha = 0.55f) else Color(0xFFFECDD3).copy(alpha = 0.90f)
-    val purpleBg = if (isDark) Color(0xFF7C3AED).copy(alpha = 0.55f) else Color(0xFFE9D5FF).copy(alpha = 0.90f)
-    val pinkBg = if (isDark) Color(0xFFDB2777).copy(alpha = 0.55f) else Color(0xFFFCE7F3).copy(alpha = 0.90f)
-    val cyanBg = if (isDark) Color(0xFF0284C7).copy(alpha = 0.55f) else Color(0xFFBAE6FD).copy(alpha = 0.90f)
-    val highlightTextColor = if (isDark) Color(0xFFFFFFFF) else Color(0xFF0F172A)
-
+    // 3. Apply highlight backgrounds over the rendered clean text (colours: NotePalette).
     data class SpanMatch(val start: Int, val end: Int, val color: String)
     val matchedSpans = mutableListOf<SpanMatch>()
 
@@ -121,19 +111,11 @@ fun parseMarkdownWithHighlights(
     }
 
     matchedSpans.forEach { span ->
-        val bgColor = when (span.color.lowercase()) {
-            "green", "emerald" -> greenBg
-            "blue" -> blueBg
-            "red" -> redBg
-            "purple", "violet" -> purpleBg
-            "pink" -> pinkBg
-            "cyan" -> cyanBg
-            else -> amberBg
-        }
+        val colors = NotePalette.highlight(span.color, isDark)
         builder.addStyle(
             SpanStyle(
-                background = bgColor,
-                color = highlightTextColor,
+                background = colors.container,
+                color = colors.content,
                 fontWeight = FontWeight.Bold
             ),
             span.start,
@@ -196,9 +178,10 @@ internal fun appendFormattedMarkdown(
     // 3: *italic* or _italic_
     // 4: `inline code`
     // 5: ~~strikethrough~~
+    // Markers never span lines, and a single * or _ must touch its text on both sides: course notes
+    // use "_ " at the start of a line as a dash, which must not turn the rest of the card italic.
     val formattingRegex = Regex(
-        """(?:\*\*\*(.+?)\*\*\*|___(.+?)___|\*\*(.+?)\*\*|__(.+?)__|(?<!\w)\*(.+?)\*(?!\w)|(?<!\w)_(.+?)_(?!\w)|`([^`]+)`|~~(.+?)~~)""",
-        RegexOption.DOT_MATCHES_ALL
+        """(?:\*\*\*(.+?)\*\*\*|___(.+?)___|\*\*(.+?)\*\*|__(.+?)__|(?<!\w)\*(?=\S)(.+?)(?<=\S)\*(?!\w)|(?<!\w)_(?=\S)(.+?)(?<=\S)_(?!\w)|`([^`]+)`|~~(.+?)~~)"""
     )
 
     var currentIndex = 0

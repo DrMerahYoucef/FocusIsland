@@ -15,6 +15,7 @@ import com.example.data.db.entity.RevisionNoteEntity
 import com.example.data.repository.NoteBlock
 import com.example.data.repository.NoteBlocksSerializer
 import com.example.data.repository.NoteHighlight
+import com.example.ui.theme.NotePalette
 import java.util.UUID
 
 /**
@@ -48,39 +49,16 @@ data class RichDocumentData(
 
 object RichTextEditorEngine {
 
-    /**
-     * Color palette for text highlights matching Word & Markdown palettes.
-     */
-    fun getHighlightBackground(colorName: String, isDark: Boolean): Color {
-        return when (colorName.lowercase()) {
-            "green", "emerald", "vert" -> if (isDark) Color(0xFF065F46).copy(alpha = 0.75f) else Color(0xFFBBF7D0).copy(alpha = 0.95f)
-            "blue", "bleu", "sky", "cyan" -> if (isDark) Color(0xFF1E40AF).copy(alpha = 0.75f) else Color(0xFFBFDBFE).copy(alpha = 0.95f)
-            "red", "rouge", "rose", "pink" -> if (isDark) Color(0xFF9F1239).copy(alpha = 0.75f) else Color(0xFFFECDD3).copy(alpha = 0.95f)
-            "purple", "violet", "lavender" -> if (isDark) Color(0xFF581C87).copy(alpha = 0.75f) else Color(0xFFE9D5FF).copy(alpha = 0.95f)
-            else -> if (isDark) Color(0xFF78350F).copy(alpha = 0.75f) else Color(0xFFFEF08A).copy(alpha = 0.95f) // Amber / Yellow
-        }
-    }
+    /** Highlight background for a stored colour name. Colours live in [NotePalette]. */
+    fun getHighlightBackground(colorName: String, isDark: Boolean): Color =
+        NotePalette.highlight(colorName, isDark).container
 
-    fun getHighlightTextColor(colorName: String, isDark: Boolean): Color {
-        if (isDark) return Color(0xFFFFFFFF)
-        return when (colorName.lowercase()) {
-            "green", "emerald", "vert" -> Color(0xFF064E3B)
-            "blue", "bleu", "sky" -> Color(0xFF1E3A8A)
-            "red", "rouge", "rose", "pink" -> Color(0xFF881337)
-            "purple", "violet" -> Color(0xFF4C1D95)
-            else -> Color(0xFF713F12) // Amber / Yellow
-        }
-    }
+    /** Text colour on top of [getHighlightBackground]. */
+    fun getHighlightTextColor(colorName: String, isDark: Boolean): Color =
+        NotePalette.highlight(colorName, isDark).content
 
-    fun getHeadingColor(level: Int, isDark: Boolean): Color {
-        return when (level) {
-            1 -> if (isDark) Color(0xFF60A5FA) else Color(0xFF1D4ED8) // Royal Blue
-            2 -> if (isDark) Color(0xFF34D399) else Color(0xFF047857) // Mint Teal
-            3 -> if (isDark) Color(0xFFA78BFA) else Color(0xFF6D28D9) // Purple
-            4 -> if (isDark) Color(0xFFFBBF24) else Color(0xFFB45309) // Amber Orange
-            else -> if (isDark) Color(0xFFF1F5F9) else Color(0xFF1E293B) // Normal text
-        }
-    }
+    /** Heading text colour, shared with the reader so the editor is truly WYSIWYG. */
+    fun getHeadingColor(level: Int, isDark: Boolean): Color = NotePalette.heading(level, isDark)
 
     /**
      * Parses an existing raw markdown string and/or NoteBlocks JSON into clean text
@@ -653,7 +631,7 @@ object RichTextEditorEngine {
  * VisualTransformation that renders rich styles directly onto clean text
  * with 1:1 identity offset mapping (no cursor jumping or desync!).
  */
-class WordRichTextVisualTransformation(
+data class WordRichTextVisualTransformation(
     private val isDark: Boolean,
     private val lineHeadings: List<Int>,
     private val highlights: List<RichHighlight>,

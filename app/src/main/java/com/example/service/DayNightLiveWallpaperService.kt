@@ -34,7 +34,7 @@ class DayNightLiveWallpaperService : WallpaperService() {
         }
 
         private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (key == "follow_system_theme" || key == "wallpaper_theme") {
+            if (key == "follow_system_theme" || key == "wallpaper_theme" || key == "last_synced_tree_count") {
                 drawFrame()
             }
         }
@@ -124,14 +124,7 @@ class DayNightLiveWallpaperService : WallpaperService() {
                 }
             }
 
-            val bitmap = WallpaperHelper.renderBuildingBitmap(
-                context = applicationContext,
-                width = width,
-                height = height,
-                theme = theme
-            )
-
-            canvas.drawBitmap(bitmap, 0f, 0f, null)
+            WallpaperHelper.drawScene(applicationContext, canvas, width, height, theme, WallpaperHelper.lastSessionCount(applicationContext))
         }
     }
 }

@@ -103,7 +103,7 @@ class AudioRecordingService : Service() {
                 acquire(60 * 60 * 1000L) // 1 hour max safety limit
             }
 
-            val file = File(cacheDir, "audio_card_${System.currentTimeMillis()}.3gp")
+            val file = File(cacheDir, "audio_card_${System.currentTimeMillis()}.m4a")
             currentFile = file
 
             val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -117,8 +117,11 @@ class AudioRecordingService : Service() {
                 } catch (e: Exception) {
                     setAudioSource(MediaRecorder.AudioSource.DEFAULT)
                 }
-                setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB)
+                // AAC in an MP4 container: clear speech, plays everywhere, accepted by Gemini.
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setAudioSamplingRate(44_100)
+                setAudioEncodingBitRate(96_000)
                 setOutputFile(file.absolutePath)
                 prepare()
                 start()
@@ -156,7 +159,7 @@ class AudioRecordingService : Service() {
                     isRecording = false,
                     elapsedSeconds = 0L,
                     recordedFile = null,
-                    error = e.message ?: "Failed to start recording"
+                    error = getString(R.string.recording_failed)
                 )
             }
             stopSelf()
@@ -181,14 +184,15 @@ class AudioRecordingService : Service() {
 
         val finalSeconds = if (startTimeMillis > 0) (System.currentTimeMillis() - startTimeMillis) / 1000 else 0L
 
-        try {
-            mediaRecorder?.apply {
-                stop()
-                release()
-            }
+        // stop() throws if almost nothing was recorded; the file is then unusable.
+        val stoppedCleanly = try {
+            mediaRecorder?.stop()
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping MediaRecorder", e)
+            false
         } finally {
+            runCatching { mediaRecorder?.release() }
             mediaRecorder = null
         }
 
@@ -198,17 +202,15 @@ class AudioRecordingService : Service() {
         wakeLock = null
 
         val file = currentFile
-        if (file == null || !file.exists() || file.length() == 0L) {
-            // Write dummy buffer if recording failed silently
-            try { file?.writeBytes(ByteArray(4096) { 0 }) } catch (_: Exception) {}
-        }
+        val usable = stoppedCleanly && file != null && file.exists() && file.length() > 0L
+        if (!usable) file?.delete() // never hand a corrupt/empty file to a card
 
         _recordingState.update {
             AudioRecordingState(
                 isRecording = false,
                 elapsedSeconds = finalSeconds,
-                recordedFile = file,
-                error = null
+                recordedFile = if (usable) file else null,
+                error = if (usable) null else getString(R.string.recording_failed)
             )
         }
 
@@ -257,8 +259,8 @@ class AudioRecordingService : Service() {
         val formattedTime = String.format(java.util.Locale.getDefault(), "%02d:%02d", elapsedSeconds / 60, elapsedSeconds % 60)
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("🎙️ Recording Audio")
-            .setContentText("Duration: $formattedTime • Tap to return to app")
+            .setContentTitle(getString(R.string.recording_notif_title))
+            .setContentText(getString(R.string.recording_notif_body, formattedTime))
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .setContentIntent(pendingOpenApp)
@@ -266,7 +268,7 @@ class AudioRecordingService : Service() {
             .setWhen(System.currentTimeMillis() - (elapsedSeconds * 1000))
             .setShowWhen(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(android.R.drawable.ic_btn_speak_now, "Stop & Save", pendingStop)
+            .addAction(android.R.drawable.ic_btn_speak_now, getString(R.string.recording_notif_stop), pendingStop)
             .build()
     }
 
@@ -279,10 +281,10 @@ class AudioRecordingService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Audio Recording",
+                getString(R.string.recording_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Shows ongoing audio recording progress and timer"
+                description = getString(R.string.recording_channel_body)
                 setSound(null, null)
                 enableVibration(false)
             }

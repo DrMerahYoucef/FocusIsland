@@ -1,50 +1,85 @@
 package com.example.ui.screen.revisions
 
-import android.graphics.BitmapFactory
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Flip
-import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.TouchApp
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.db.entity.RevisionNoteEntity
 import com.example.data.srs.ReviewGrade
-import com.example.ui.components.NeumorphicCard
+import com.example.data.srs.Sm2Scheduler
+import com.example.ui.designsystem.BannerTone
+import com.example.ui.designsystem.InfoBanner
+import com.example.ui.designsystem.LoadingState
 import com.example.ui.revisions.FullScreenNoteReaderDialog
-import com.example.ui.revisions.HighlightedMarkdownWithTables
-import com.example.ui.revisions.NoteBlocksRenderer
-import com.example.ui.theme.NeumorphicColors
+import com.example.ui.theme.Spacing
+import com.example.ui.theme.extendedColors
 import java.io.File
 
+/**
+ * Review session: tap the card (or "Show answer") to flip, then grade it.
+ * Each grade button shows when the card would come back. Undo returns to the previous card.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RevisionSessionScreen(
     deckId: String,
@@ -52,487 +87,283 @@ fun RevisionSessionScreen(
     onFinishSession: () -> Unit,
     onBack: () -> Unit
 ) {
-    val state by viewModel.uiState.collectAsState()
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val session by viewModel.reviewSession.collectAsStateWithLifecycle()
+    LaunchedEffect(deckId) { viewModel.startReviewSession(deckId) }
 
-    val dueNotes = remember(state.dueNotes, deckId, state.allNotes) {
-        val filtered = if (deckId.isBlank() || deckId == "default_deck" || deckId == "ALL") {
-            state.dueNotes
-        } else {
-            state.dueNotes.filter { it.deckId == deckId }
-        }
-        if (filtered.isEmpty()) {
-            if (deckId.isBlank() || deckId == "default_deck" || deckId == "ALL") {
-                state.allNotes
-            } else {
-                state.allNotes.filter { it.deckId == deckId }
+    // Show the latest saved version (edits made in the reader appear immediately).
+    val current: RevisionNoteEntity? = session.current?.let { queued -> state.allNotes.firstOrNull { it.id == queued.id } ?: queued }
+    var flipped by rememberSaveable(current?.id) { mutableStateOf(false) }
+    var showReader by rememberSaveable { mutableStateOf(false) }
+    var zoomFile by remember { mutableStateOf<File?>(null) }
+    val haptics = LocalHapticFeedback.current
+
+    val total = session.queue.size
+    Scaffold(
+        topBar = {
+            Column {
+                TopAppBar(
+                    title = {
+                        if (current != null && total > 0) {
+                            Text(stringResource(R.string.review_progress, session.index + 1, total))
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.study_end_review))
+                        }
+                    },
+                    actions = {
+                        if (session.canUndo) {
+                            IconButton(onClick = { viewModel.undoLastGrade() }) {
+                                Icon(Icons.AutoMirrored.Rounded.Undo, contentDescription = stringResource(R.string.study_undo_answer))
+                            }
+                        }
+                        if (current != null) {
+                            IconButton(onClick = { showReader = true }) {
+                                Icon(Icons.Rounded.Fullscreen, contentDescription = stringResource(R.string.full_screen))
+                            }
+                        }
+                    }
+                )
+                if (current != null && total > 0) {
+                    LinearProgressIndicator(
+                        progress = { session.index.toFloat() / total },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
-        } else {
-            filtered
+        }
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
+            when {
+                session.isLoading -> LoadingState()
+                current == null -> SessionDone(
+                    nothingDue = session.isEmpty,
+                    practiceAhead = session.practiceAhead,
+                    reviewed = total,
+                    onPractice = { viewModel.startReviewSession(deckId, practiceAhead = true) },
+                    onDone = onFinishSession
+                )
+                else -> Column(
+                    Modifier.widthIn(max = Spacing.contentMaxWidth).fillMaxSize().padding(Spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                ) {
+                    if (session.practiceAhead) {
+                        InfoBanner(text = stringResource(R.string.review_practice_ahead_banner), tone = BannerTone.Info)
+                    }
+                    FlipCard(
+                        note = current,
+                        flipped = flipped,
+                        onFlip = { flipped = !flipped },
+                        onZoomImage = { zoomFile = it },
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (!flipped) {
+                        Button(
+                            onClick = { flipped = true },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = Spacing.buttonHeight)
+                        ) { Text(stringResource(R.string.study_show_answer)) }
+                    } else {
+                        GradeButtons(
+                            note = current,
+                            showIntervals = !session.practiceAhead,
+                            onGrade = { grade ->
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                flipped = false
+                                viewModel.gradeCurrentCard(grade)
+                            }
+                        )
+                    }
+                }
+            }
         }
     }
 
-    val totalInSession = remember(dueNotes.size) { dueNotes.size }
-    var currentIndex by remember { mutableStateOf(0) }
-    var isFlipped by remember { mutableStateOf(false) }
-    var zoomImageFile by remember { mutableStateOf<File?>(null) }
-    var showFullScreenReader by remember { mutableStateOf(false) }
-    var sessionTextScale by remember { mutableFloatStateOf(1.0f) }
-    val context = LocalContext.current
+    zoomFile?.let { ZoomableImageDialog(it) { zoomFile = null } }
+    if (showReader && current != null) {
+        FullScreenNoteReaderDialog(
+            note = current,
+            deckName = state.decks.firstOrNull { it.id == current.deckId }?.name.orEmpty(),
+            onDismiss = { showReader = false },
+            onSaveNote = { viewModel.updateNote(it) }
+        )
+    }
+}
 
-    val currentNote = dueNotes.getOrNull(currentIndex)
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Transparent)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(20.dp)
-        ) {
-            // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowBack,
-                        contentDescription = "Back",
-                        tint = NeumorphicColors.TextPrimary
-                    )
-                }
-
-                if (totalInSession > 0 && currentNote != null) {
-                    Text(
-                        text = "Card ${currentIndex + 1} / $totalInSession",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        color = NeumorphicColors.TextSecondary
-                    )
-                } else {
-                    Spacer(modifier = Modifier.width(48.dp))
-                }
-
-                Spacer(modifier = Modifier.width(48.dp))
+@Composable
+private fun FlipCard(
+    note: RevisionNoteEntity,
+    flipped: Boolean,
+    onFlip: () -> Unit,
+    onZoomImage: (File) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val rotation by animateFloatAsState(
+        targetValue = if (flipped) 180f else 0f,
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+        label = "cardFlip"
+    )
+    var textScale by remember(note.id) { mutableFloatStateOf(1f) }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        shape = MaterialTheme.shapes.large,
+        modifier = modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                rotationY = rotation
+                cameraDistance = 12 * density
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            if (currentNote == null || dueNotes.isEmpty()) {
-                // Completed Session View
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    NeumorphicCard(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        cornerRadius = 24.dp
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(32.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = NeumorphicColors.Success,
-                                modifier = Modifier.size(64.dp)
-                            )
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text(
-                                text = "Session complete!",
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.Black,
-                                color = NeumorphicColors.TextPrimary
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = if (deckId == "ALL") "You've reviewed every card scheduled across all decks." else "You've reviewed every card scheduled for this deck.",
-                                fontSize = 14.sp,
-                                color = NeumorphicColors.TextSecondary,
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(modifier = Modifier.height(24.dp))
-                            Button(
-                                onClick = onFinishSession,
-                                colors = ButtonDefaults.buttonColors(containerColor = NeumorphicColors.Primary),
-                                shape = RoundedCornerShape(16.dp)
-                            ) {
-                                Text("Back to decks", modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Active Card Session View
-                val rotation by animateFloatAsState(
-                    targetValue = if (isFlipped) 180f else 0f,
-                    animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
-                    label = "cardFlip"
-                )
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(vertical = 12.dp)
-                ) {
-                    NeumorphicCard(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                rotationY = rotation
-                                cameraDistance = 12 * density
-                            }
-                            .clickable { isFlipped = !isFlipped },
-                        cornerRadius = 24.dp,
-                        elevation = 8.dp
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(24.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (rotation <= 90f) {
-                                // Front Side
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.SpaceBetween,
-                                    modifier = Modifier.fillMaxSize()
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "QUESTION",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Black,
-                                            letterSpacing = 2.sp,
-                                            color = NeumorphicColors.Primary
-                                        )
-
-                                        IconButton(
-                                            onClick = { showFullScreenReader = true },
-                                            modifier = Modifier
-                                                .size(32.dp)
-                                                .testTag("session_question_fullscreen_btn")
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Fullscreen,
-                                                contentDescription = stringResource(R.string.full_screen),
-                                                tint = NeumorphicColors.Primary,
-                                                modifier = Modifier.size(22.dp)
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(12.dp))
-
-                                    Text(
-                                        text = currentNote.title,
-                                        fontSize = 22.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = NeumorphicColors.TextPrimary,
-                                        textAlign = TextAlign.Center
-                                    )
-
-                                    Spacer(modifier = Modifier.height(20.dp))
-
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.Center,
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(20.dp))
-                                            .background(NeumorphicColors.SurfaceLight.copy(alpha = 0.3f))
-                                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Flip,
-                                            contentDescription = null,
-                                            tint = NeumorphicColors.TextSecondary,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = "Tap to reveal the answer",
-                                            fontSize = 12.sp,
-                                            color = NeumorphicColors.TextSecondary
-                                        )
-                                    }
-                                }
-                            } else {
-                                // Back Side (Rendered flipped back with 2-finger pinch zoom)
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .pointerInput(Unit) {
-                                            detectTransformGestures { _, _, zoom, _ ->
-                                                if (zoom != 1.0f) {
-                                                    sessionTextScale = (sessionTextScale * zoom).coerceIn(0.7f, 3.5f)
-                                                }
-                                            }
-                                        }
-                                        .verticalScroll(rememberScrollState())
-                                        .graphicsLayer { rotationY = 180f },
-                                    horizontalAlignment = Alignment.Start
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "ANSWER",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Black,
-                                            letterSpacing = 2.sp,
-                                            color = NeumorphicColors.Accent
-                                        )
-
-                                        IconButton(
-                                            onClick = { showFullScreenReader = true },
-                                            modifier = Modifier
-                                                .size(32.dp)
-                                                .testTag("session_answer_fullscreen_btn")
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Fullscreen,
-                                                contentDescription = stringResource(R.string.full_screen),
-                                                tint = NeumorphicColors.Primary,
-                                                modifier = Modifier.size(22.dp)
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = currentNote.title,
-                                        fontSize = 18.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = NeumorphicColors.TextPrimary
-                                    )
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    HorizontalDivider(color = NeumorphicColors.TextSecondary.copy(alpha = 0.2f))
-                                    Spacer(modifier = Modifier.height(16.dp))
-
-                                    val mediaFile = remember(currentNote.mediaFilePath) {
-                                        currentNote.mediaFilePath?.let { File(it) }
-                                    }
-                                    val isImage = (currentNote.mediaType == "IMAGE" ||
-                                        (currentNote.mediaFilePath != null && (currentNote.mediaFilePath.endsWith(".jpg", true) || currentNote.mediaFilePath.endsWith(".png", true) || currentNote.mediaFilePath.endsWith(".jpeg", true)))) && mediaFile != null && mediaFile.exists()
-
-                                    val isAudio = (currentNote.mediaType == "AUDIO" ||
-                                        (currentNote.mediaFilePath != null && (currentNote.mediaFilePath.endsWith(".m4a", true) || currentNote.mediaFilePath.endsWith(".mp3", true) || currentNote.mediaFilePath.endsWith(".wav", true) || currentNote.mediaFilePath.endsWith(".3gp", true) || currentNote.mediaFilePath.endsWith(".aac", true)))) && mediaFile != null && mediaFile.exists()
-
-                                    if (isImage) {
-                                        val bitmap = remember(currentNote.mediaFilePath) {
-                                            BitmapFactory.decodeFile(mediaFile!!.absolutePath)
-                                        }
-                                        if (bitmap != null) {
-                                            Column(
-                                                horizontalAlignment = Alignment.CenterHorizontally,
-                                                modifier = Modifier.fillMaxWidth()
-                                            ) {
-                                                Surface(
-                                                    shape = RoundedCornerShape(16.dp),
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(220.dp)
-                                                        .clip(RoundedCornerShape(16.dp))
-                                                        .clickable { zoomImageFile = mediaFile }
-                                                ) {
-                                                    Image(
-                                                        bitmap = bitmap.asImageBitmap(),
-                                                        contentDescription = "Card Photo",
-                                                        contentScale = ContentScale.Fit,
-                                                        modifier = Modifier.fillMaxSize()
-                                                    )
-                                                }
-                                                Spacer(modifier = Modifier.height(6.dp))
-                                                Text(
-                                                    text = "Tap photo to zoom",
-                                                    fontSize = 11.sp,
-                                                    color = NeumorphicColors.TextSecondary
-                                                )
-                                                Spacer(modifier = Modifier.height(12.dp))
-                                            }
-                                        }
-                                    } else if (isAudio) {
-                                        AudioCardPlayerView(
-                                            audioFile = mediaFile!!,
-                                            context = context,
-                                            autoPlay = true
-                                        )
-                                        Spacer(modifier = Modifier.height(12.dp))
-                                    }
-
-                                    val hasBlocks = currentNote.contentBlocksJson.isNotBlank() && currentNote.contentBlocksJson != "[]"
-                                    val plainText = currentNote.plainTextPreview.trim()
-                                    val showPlainText = !hasBlocks && plainText.isNotBlank() &&
-                                            !plainText.equals("Photo Card", ignoreCase = true) &&
-                                            !plainText.equals("Voice Note Card", ignoreCase = true)
-
-                                    val currentFontSize = (15 * sessionTextScale).sp
-
-                                    if (hasBlocks) {
-                                        NoteBlocksRenderer(
-                                            blocksJson = currentNote.contentBlocksJson,
-                                            fontSize = currentFontSize,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    } else if (showPlainText) {
-                                        HighlightedMarkdownWithTables(
-                                            markdown = plainText,
-                                            fontSize = currentFontSize,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Answer Rating Buttons (Shown when card is flipped or user ready)
-                if (isFlipped) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        // AGAIN
-                        RatingButton(
-                            label = "Again",
-                            color = Color(0xFFE53935),
-                            onClick = {
-                                viewModel.submitReviewGrade(currentNote, ReviewGrade.AGAIN)
-                                isFlipped = false
-                                if (currentIndex < dueNotes.size - 1) currentIndex++
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-
-                        // HARD
-                        RatingButton(
-                            label = "Hard",
-                            color = Color(0xFFFB8C00),
-                            onClick = {
-                                viewModel.submitReviewGrade(currentNote, ReviewGrade.HARD)
-                                isFlipped = false
-                                if (currentIndex < dueNotes.size - 1) currentIndex++
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-
-                        // GOOD
-                        RatingButton(
-                            label = "Good",
-                            color = Color(0xFF1E88E5),
-                            onClick = {
-                                viewModel.submitReviewGrade(currentNote, ReviewGrade.GOOD)
-                                isFlipped = false
-                                if (currentIndex < dueNotes.size - 1) currentIndex++
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-
-                        // EASY
-                        RatingButton(
-                            label = "Easy",
-                            color = Color(0xFF43A047),
-                            onClick = {
-                                viewModel.submitReviewGrade(currentNote, ReviewGrade.EASY)
-                                isFlipped = false
-                                if (currentIndex < dueNotes.size - 1) currentIndex++
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                } else {
-                    Button(
-                        onClick = { isFlipped = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = NeumorphicColors.Primary),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                    ) {
-                        Text("Show answer", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    }
-                }
-            }
-        }
-
-        if (zoomImageFile != null && zoomImageFile!!.exists()) {
-            val bitmap = remember(zoomImageFile) { BitmapFactory.decodeFile(zoomImageFile!!.absolutePath) }
-            Dialog(onDismissRequest = { zoomImageFile = null }) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(0.8f)
-                        .background(Color.Black.copy(alpha = 0.9f), RoundedCornerShape(16.dp))
-                        .padding(16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (bitmap != null) {
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "Zoomed Image",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit
-                        )
-                    }
-                }
-            }
-        }
-
-        if (showFullScreenReader && currentNote != null) {
-            val deckName = state.decks.find { it.id == currentNote.deckId }?.name ?: ""
-            FullScreenNoteReaderDialog(
-                note = currentNote,
-                deckName = deckName,
-                onDismiss = { showFullScreenReader = false },
-                onSaveNote = { updatedNote ->
-                    viewModel.updateNote(updatedNote)
-                }
+            .clickable(
+                onClickLabel = stringResource(if (flipped) R.string.study_show_question else R.string.study_show_answer),
+                onClick = onFlip
             )
+    ) {
+        if (rotation <= 90f) {
+            Column(
+                Modifier.fillMaxSize().padding(Spacing.lg),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(stringResource(R.string.study_question), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    note.title.ifBlank { stringResource(R.string.study_untitled) },
+                    style = MaterialTheme.typography.headlineSmall,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.semantics { heading() }
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.TouchApp, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(Spacing.iconSm))
+                    Spacer(Modifier.size(Spacing.xs))
+                    Text(stringResource(R.string.tap_card_to_reveal), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        } else {
+            // Back side: drawn mirrored so it reads correctly after the flip. Pinch to resize the text.
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { rotationY = 180f }
+                    .pointerInput(note.id) {
+                        detectTransformGestures { _, _, zoom, _ ->
+                            if (zoom != 1f) textScale = (textScale * zoom).coerceIn(0.7f, 3.5f)
+                        }
+                    }
+                    .verticalScroll(rememberScrollState())
+                    .padding(Spacing.lg),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+            ) {
+                Text(stringResource(R.string.study_answer), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
+                Text(note.title, style = MaterialTheme.typography.titleMedium)
+                HorizontalDivider()
+                CardContent(note = note, onZoomImage = onZoomImage, fontSize = (15 * textScale).sp, autoPlayAudio = true)
+            }
         }
     }
 }
 
 @Composable
-fun RatingButton(
-    label: String,
-    color: Color,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
+private fun GradeButtons(note: RevisionNoteEntity, showIntervals: Boolean, onGrade: (ReviewGrade) -> Unit) {
+    val now = remember(note.id) { System.currentTimeMillis() }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        ReviewGrade.entries.forEach { grade ->
+            val (container, content) = gradeColors(grade)
+            val label = stringResource(
+                when (grade) {
+                    ReviewGrade.AGAIN -> R.string.grade_again
+                    ReviewGrade.HARD -> R.string.grade_hard
+                    ReviewGrade.GOOD -> R.string.grade_good
+                    ReviewGrade.EASY -> R.string.grade_easy
+                }
+            )
+            val nextDue = remember(note, grade) { Sm2Scheduler.schedule(note, grade).dueDate }
+            val spoken = if (showIntervals) stringResource(R.string.study_grade_a11y, label, dueLabel(nextDue, now)) else label
+            Button(
+                onClick = { onGrade(grade) },
+                colors = ButtonDefaults.buttonColors(containerColor = container, contentColor = content),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = Spacing.xxs, vertical = Spacing.xs),
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = Spacing.buttonHeight + Spacing.xs)
+                    .semantics(mergeDescendants = true) { contentDescription = spoken }
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+                    if (showIntervals) {
+                        Text(shortInterval(nextDue - now), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun gradeColors(grade: ReviewGrade): Pair<Color, Color> {
+    val c = MaterialTheme.colorScheme
+    return when (grade) {
+        ReviewGrade.AGAIN -> c.errorContainer to c.onErrorContainer
+        ReviewGrade.HARD -> c.tertiaryContainer to c.onTertiaryContainer
+        ReviewGrade.GOOD -> c.primaryContainer to c.onPrimaryContainer
+        ReviewGrade.EASY -> MaterialTheme.extendedColors.successContainer to MaterialTheme.extendedColors.onSuccessContainer
+    }
+}
+
+/** Compact "10 min", "3 d", "2 mo" for the grade buttons. */
+@Composable
+private fun shortInterval(ms: Long): String {
+    val minutes = (ms / 60_000L).coerceAtLeast(1)
+    val hours = minutes / 60
+    val days = hours / 24
+    return when {
+        days >= 30 -> stringResource(R.string.study_short_months, (days / 30).toInt())
+        days >= 1 -> stringResource(R.string.study_short_days, days.toInt())
+        hours >= 1 -> stringResource(R.string.study_short_hours, hours.toInt())
+        else -> stringResource(R.string.study_short_minutes, minutes.toInt())
+    }
+}
+
+@Composable
+private fun SessionDone(
+    nothingDue: Boolean,
+    practiceAhead: Boolean,
+    reviewed: Int,
+    onPractice: () -> Unit,
+    onDone: () -> Unit
 ) {
-    Button(
-        onClick = onClick,
-        colors = ButtonDefaults.buttonColors(containerColor = color),
-        shape = RoundedCornerShape(14.dp),
-        contentPadding = PaddingValues(vertical = 12.dp, horizontal = 4.dp),
-        modifier = modifier
+    Column(
+        Modifier.widthIn(max = Spacing.formMaxWidth).fillMaxSize().padding(Spacing.lg),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Spacing.sm, Alignment.CenterVertically)
     ) {
+        Surface(shape = CircleShape, color = MaterialTheme.extendedColors.successContainer, modifier = Modifier.size(Spacing.illustration)) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = MaterialTheme.extendedColors.onSuccessContainer, modifier = Modifier.size(Spacing.xxl))
+            }
+        }
         Text(
-            text = label,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.White,
-            maxLines = 1
+            stringResource(if (nothingDue) R.string.review_nothing_due_title else R.string.review_complete_title),
+            style = MaterialTheme.typography.headlineSmall,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.semantics { heading() }
         )
+        Text(
+            when {
+                nothingDue && practiceAhead -> stringResource(R.string.review_deck_empty_body)
+                nothingDue -> stringResource(R.string.review_nothing_due_body)
+                else -> pluralStringResource(R.plurals.review_complete_body, reviewed, reviewed)
+            },
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.size(Spacing.sm))
+        if (nothingDue && !practiceAhead) {
+            OutlinedButton(onClick = onPractice, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.review_practice_ahead)) }
+        }
+        Button(onClick = onDone, modifier = Modifier.fillMaxWidth().heightIn(min = Spacing.buttonHeight)) {
+            Text(stringResource(R.string.review_back_to_decks))
+        }
     }
 }

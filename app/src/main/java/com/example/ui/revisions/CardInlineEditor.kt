@@ -1,49 +1,97 @@
 package com.example.ui.revisions
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.automirrored.rounded.FormatListBulleted
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.FormatBold
+import androidx.compose.material.icons.rounded.FormatColorReset
+import androidx.compose.material.icons.rounded.FormatItalic
+import androidx.compose.material.icons.rounded.FormatListNumbered
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconToggleButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.VerticalDivider
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextOverflow
+import com.example.R
 import com.example.data.db.entity.RevisionNoteEntity
+import com.example.ui.designsystem.ConfirmDialog
+import com.example.ui.designsystem.ThemePreviews
+import com.example.ui.theme.FocusIslandTheme
+import com.example.ui.theme.HighlightTone
 import com.example.ui.theme.LocalIsDarkTheme
-import com.example.ui.theme.NeumorphicColors
-import com.example.ui.theme.RevisionHeadingColors
+import com.example.ui.theme.NotePalette
+import com.example.ui.theme.Spacing
+import com.example.ui.theme.ThemeMode
+import com.example.ui.theme.noteHeadingColor
 
 /**
- * Microsoft Word-style True WYSIWYG rich card editor.
- * Renders headings, highlight colors, and text styles DIRECTLY on clean text
- * without exposing raw markdown markup (no ####, no ==color:blue==, no ==, no **).
- * When saved, it automatically synchronizes to standard markdown and high-fidelity blocks.
+ * Full-screen card editor. What you see is what you get: headings, highlights, bold and italic
+ * are drawn on clean text (no "#", "==" or "**"); on save the text is written back to the
+ * card's markdown and blocks exactly as before.
+ *
+ * Owns its back behaviour: with unsaved changes, Close and system back ask before discarding.
+ * Everything typed survives rotation and process death.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,880 +102,444 @@ fun CardInlineEditor(
     modifier: Modifier = Modifier
 ) {
     val isDark = LocalIsDarkTheme.current
-    var title by remember { mutableStateOf(note.title) }
-
-    // Parse note into clean text and rich formatting spans
-    val initialDoc = remember(note.id) {
-        RichTextEditorEngine.parseFromNote(note)
-    }
-
-    var contentTextFieldValue by remember {
-        mutableStateOf(
-            TextFieldValue(
-                text = initialDoc.cleanText,
-                selection = TextRange(initialDoc.cleanText.length)
-            )
+    val initialDoc = remember(note.id) { RichTextEditorEngine.parseFromNote(note) }
+    val initialMarkdown = remember(note.id) {
+        RichTextEditorEngine.serializeToMarkdown(
+            cleanText = initialDoc.cleanText,
+            lineHeadings = initialDoc.lineHeadings,
+            highlights = initialDoc.highlights,
+            bolds = initialDoc.bolds,
+            italics = initialDoc.italics
         )
     }
-    var lineHeadings by remember { mutableStateOf(initialDoc.lineHeadings) }
-    var highlights by remember { mutableStateOf(initialDoc.highlights) }
-    var bolds by remember { mutableStateOf(initialDoc.bolds) }
-    var italics by remember { mutableStateOf(initialDoc.italics) }
 
-    var selectedTab by remember { mutableIntStateOf(0) } // 0 = Word WYSIWYG, 1 = Live Preview
-    val editorScrollState = rememberScrollState()
-
-    // Determine current line heading for active toolbar button indication
-    val currentLineIndex = remember(contentTextFieldValue.text, contentTextFieldValue.selection) {
-        val selStart = contentTextFieldValue.selection.min.coerceIn(0, contentTextFieldValue.text.length)
-        val lines = contentTextFieldValue.text.split('\n')
-        var offset = 0
-        var foundIdx = 0
-        for (i in lines.indices) {
-            val nextOffset = offset + lines[i].length + 1
-            if (selStart in offset..nextOffset || i == lines.size - 1) {
-                foundIdx = i
-                break
-            }
-            offset = nextOffset
-        }
-        foundIdx
+    var title by rememberSaveable(note.id) { mutableStateOf(note.title) }
+    var body by rememberSaveable(note.id, stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(initialDoc.cleanText, TextRange(initialDoc.cleanText.length)))
     }
-    val activeHeadingLevel = lineHeadings.getOrNull(currentLineIndex) ?: 0
+    var lineHeadings by rememberSaveable(note.id, stateSaver = IntListSaver) { mutableStateOf(initialDoc.lineHeadings) }
+    var highlights by rememberSaveable(note.id, stateSaver = HighlightListSaver) { mutableStateOf(initialDoc.highlights) }
+    var bolds by rememberSaveable(note.id, stateSaver = SpanListSaver) { mutableStateOf(initialDoc.bolds) }
+    var italics by rememberSaveable(note.id, stateSaver = SpanListSaver) { mutableStateOf(initialDoc.italics) }
+    var tab by rememberSaveable { mutableIntStateOf(0) } // 0 = edit, 1 = preview
+    var confirmDiscard by rememberSaveable { mutableStateOf(false) }
 
-    // Construct live note for instant preview tab
-    val livePreviewMarkdown = remember(contentTextFieldValue.text, lineHeadings, highlights, bolds, italics) {
+    val markdown = remember(body.text, lineHeadings, highlights, bolds, italics) {
         RichTextEditorEngine.serializeToMarkdown(
-            cleanText = contentTextFieldValue.text,
+            cleanText = body.text,
             lineHeadings = lineHeadings,
             highlights = highlights,
             bolds = bolds,
             italics = italics
         )
     }
-    val livePreviewNote = remember(title, livePreviewMarkdown) {
-        CardMarkdownEditorUtils.serializeEditedContentToNote(
-            originalNote = note,
-            newTitle = title,
-            editedMarkdown = livePreviewMarkdown
-        )
+    val dirty = title != note.title || markdown != initialMarkdown
+    val requestClose = { if (dirty) confirmDiscard = true else onCancel() }
+    val save = {
+        onSave(CardMarkdownEditorUtils.serializeEditedContentToNote(originalNote = note, newTitle = title, editedMarkdown = markdown))
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(NeumorphicColors.Background)
-    ) {
-        // --- Top Bar: Editor Mode Header & Mode Tabs ---
-        Surface(
-            color = MaterialTheme.colorScheme.surface.copy(alpha = if (isDark) 0.88f else 0.98f),
-            tonalElevation = 2.dp,
-            shadowElevation = 3.dp,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = null,
-                            tint = NeumorphicColors.Primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Text(
-                            text = "Modifier la carte",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary
-                        )
+    BackHandler(onBack = requestClose)
+
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.editor_title)) },
+                navigationIcon = {
+                    IconButton(onClick = requestClose, modifier = Modifier.testTag("card_editor_cancel_button")) {
+                        Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.editor_close))
                     }
-
-                    // Mode Tabs (Édition vs Aperçu)
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (selectedTab == 0) NeumorphicColors.Primary.copy(alpha = 0.18f) else Color.Transparent,
-                            border = if (selectedTab == 0) androidx.compose.foundation.BorderStroke(1.dp, NeumorphicColors.Primary) else null,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { selectedTab = 0 }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = null,
-                                    tint = if (selectedTab == 0) NeumorphicColors.Primary else NeumorphicColors.TextSecondary,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = "Éditer",
-                                    fontSize = 12.sp,
-                                    fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (selectedTab == 0) NeumorphicColors.Primary else NeumorphicColors.TextSecondary
-                                )
-                            }
-                        }
-
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (selectedTab == 1) NeumorphicColors.Primary.copy(alpha = 0.18f) else Color.Transparent,
-                            border = if (selectedTab == 1) androidx.compose.foundation.BorderStroke(1.dp, NeumorphicColors.Primary) else null,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { selectedTab = 1 }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Visibility,
-                                    contentDescription = null,
-                                    tint = if (selectedTab == 1) NeumorphicColors.Primary else NeumorphicColors.TextSecondary,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = "Aperçu",
-                                    fontSize = 12.sp,
-                                    fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (selectedTab == 1) NeumorphicColors.Primary else NeumorphicColors.TextSecondary
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // --- Word-Style Sticky Formatting Toolbar ---
-        if (selectedTab == 0) {
-            WordStyleFormattingRibbon(
-                currentText = contentTextFieldValue.text,
-                currentSelection = contentTextFieldValue.selection,
-                activeHeadingLevel = activeHeadingLevel,
-                bolds = bolds,
-                italics = italics,
-                highlights = highlights,
-                onApplyHeading = { level ->
-                    lineHeadings = RichTextEditorEngine.toggleHeadingOnLine(
-                        text = contentTextFieldValue.text,
-                        selection = contentTextFieldValue.selection,
-                        level = level,
-                        currentLineHeadings = lineHeadings
-                    )
                 },
-                onApplyHighlight = { colorName ->
-                    val (updatedHighlights, newSel) = RichTextEditorEngine.applyHighlightToRange(
-                        text = contentTextFieldValue.text,
-                        selection = contentTextFieldValue.selection,
-                        color = colorName,
-                        currentHighlights = highlights
-                    )
-                    highlights = updatedHighlights
-                    contentTextFieldValue = contentTextFieldValue.copy(selection = newSel)
-                },
-                onToggleBold = {
-                    bolds = RichTextEditorEngine.toggleBoldOnRange(
-                        text = contentTextFieldValue.text,
-                        selection = contentTextFieldValue.selection,
-                        currentBolds = bolds
-                    )
-                },
-                onToggleItalic = {
-                    italics = RichTextEditorEngine.toggleItalicOnRange(
-                        text = contentTextFieldValue.text,
-                        selection = contentTextFieldValue.selection,
-                        currentItalics = italics
-                    )
-                },
-                onInsertBullet = {
-                    val selStart = contentTextFieldValue.selection.min.coerceIn(0, contentTextFieldValue.text.length)
-                    val text = contentTextFieldValue.text
-                    val lineStart = text.lastIndexOf('\n', (selStart - 1).coerceAtLeast(0)).let { if (it == -1) 0 else it + 1 }
-                    val newText = text.substring(0, lineStart) + "• " + text.substring(lineStart)
-                    contentTextFieldValue = TextFieldValue(newText, TextRange(selStart + 2))
-                },
-                onInsertNumbered = {
-                    val selStart = contentTextFieldValue.selection.min.coerceIn(0, contentTextFieldValue.text.length)
-                    val text = contentTextFieldValue.text
-                    val lineStart = text.lastIndexOf('\n', (selStart - 1).coerceAtLeast(0)).let { if (it == -1) 0 else it + 1 }
-                    val newText = text.substring(0, lineStart) + "1. " + text.substring(lineStart)
-                    contentTextFieldValue = TextFieldValue(newText, TextRange(selStart + 3))
+                actions = {
+                    Button(
+                        onClick = save,
+                        modifier = Modifier.padding(end = Spacing.xs).testTag("card_editor_save_button")
+                    ) { Text(stringResource(R.string.save)) }
                 }
             )
         }
-
-        // --- Main Editor or Live Preview Body ---
-        Box(
-            modifier = Modifier
+    ) { padding ->
+        Column(
+            Modifier
                 .fillMaxSize()
-                .weight(1f)
+                .padding(padding)
+                .imePadding()
         ) {
-            if (selectedTab == 0) {
-                // TRUE WORD-STYLE WYSIWYG EDITOR
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(editorScrollState)
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    // Card Title Field (H1 Principal)
-                    OutlinedTextField(
-                        value = title,
-                        onValueChange = { title = it },
-                        label = { Text("Titre de la carte") },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Title,
-                                contentDescription = null,
-                                tint = NeumorphicColors.Primary
-                            )
-                        },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("card_editor_title_input"),
-                        shape = RoundedCornerShape(12.dp),
-                        textStyle = TextStyle(
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary
-                        )
-                    )
-
-                    // Content Rich Visual Text Area
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        border = androidx.compose.foundation.BorderStroke(
-                            width = 1.5.dp,
-                            color = NeumorphicColors.Primary.copy(alpha = 0.45f)
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 320.dp, max = 800.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(16.dp)
-                        ) {
-                            if (contentTextFieldValue.text.isEmpty()) {
-                                Text(
-                                    text = "Tapez votre texte ici...",
-                                    color = NeumorphicColors.TextSecondary.copy(alpha = 0.6f),
-                                    fontSize = 15.sp,
-                                    lineHeight = 22.sp
-                                )
-                            }
-
-                            // Visual Transformation renders colored headings, highlight pills & bold/italic
-                            // while maintaining 100% clean underlying text
-                            BasicTextField(
-                                value = contentTextFieldValue,
-                                onValueChange = { newValue ->
-                                    val oldText = contentTextFieldValue.text
-                                    val newText = newValue.text
-
-                                    if (oldText != newText) {
-                                        // Adjust span offsets cleanly
-                                        val (adjustedSpans, adjustedLineHeadings) = RichTextEditorEngine.adjustSpansOnTextChange(
-                                            oldText = oldText,
-                                            newText = newText,
-                                            currentHighlights = highlights,
-                                            currentBolds = bolds,
-                                            currentItalics = italics,
-                                            currentLineHeadings = lineHeadings
-                                        )
-                                        highlights = adjustedSpans.first
-                                        bolds = adjustedSpans.second
-                                        italics = adjustedSpans.third
-                                        lineHeadings = adjustedLineHeadings
-                                    }
-
-                                    contentTextFieldValue = newValue
-                                },
-                                visualTransformation = WordRichTextVisualTransformation(
-                                    isDark = isDark,
-                                    lineHeadings = lineHeadings,
-                                    highlights = highlights,
-                                    bolds = bolds,
-                                    italics = italics
-                                ),
-                                textStyle = TextStyle(
-                                    color = NeumorphicColors.TextPrimary,
-                                    fontSize = 15.sp,
-                                    lineHeight = 23.sp
-                                ),
-                                cursorBrush = SolidColor(NeumorphicColors.Primary),
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .testTag("card_editor_content_input")
-                            )
-                        }
-                    }
-
-                    // Bottom Document Stats
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "${contentTextFieldValue.text.length} caractères • ${contentTextFieldValue.text.split('\n').size} lignes • ${highlights.size} surlignages",
-                            fontSize = 11.sp,
-                            color = NeumorphicColors.TextSecondary
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(80.dp))
-                }
-            } else {
-                // LIVE CARD PREVIEW TAB
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    Card(
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(20.dp)
-                        ) {
-                            Text(
-                                text = livePreviewNote.title.ifBlank { "Sans titre" },
-                                fontSize = 21.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = NeumorphicColors.TextPrimary
-                            )
-
-                            Spacer(modifier = Modifier.height(14.dp))
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
-                            Spacer(modifier = Modifier.height(14.dp))
-
-                            if (livePreviewNote.contentBlocksJson.isNotBlank() && livePreviewNote.contentBlocksJson != "[]") {
-                                NoteBlocksRenderer(
-                                    blocksJson = livePreviewNote.contentBlocksJson,
-                                    fontSize = 16.sp,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            } else {
-                                HighlightedMarkdownWithTables(
-                                    markdown = livePreviewNote.contentMarkdown.ifBlank { "Aucun contenu" },
-                                    fontSize = 16.sp,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(80.dp))
+            SingleChoiceSegmentedButtonRow(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Spacing.md, vertical = Spacing.xs)
+            ) {
+                listOf(
+                    Triple(R.string.editor_tab_edit, Icons.Rounded.Edit, 0),
+                    Triple(R.string.editor_tab_preview, Icons.Rounded.Visibility, 1)
+                ).forEach { (label, icon, index) ->
+                    SegmentedButton(
+                        selected = tab == index,
+                        onClick = { tab = index },
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = 2),
+                        icon = { SegmentedButtonDefaults.Icon(active = tab == index) { Icon(icon, contentDescription = null, modifier = Modifier.size(SegmentedButtonDefaults.IconSize)) } }
+                    ) { Text(stringResource(label)) }
                 }
             }
 
-            // --- Floating Action Buttons (X Annuler & Check Confirmer) ---
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Floating Cancel Action Button (Annuler)
-                FloatingActionButton(
-                    onClick = onCancel,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("card_editor_cancel_button"),
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.error,
-                    elevation = FloatingActionButtonDefaults.elevation(
-                        defaultElevation = 6.dp,
-                        pressedElevation = 10.dp
-                    )
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Annuler",
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                // Floating Confirm Action Button (Confirmer)
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        val finalMarkdown = RichTextEditorEngine.serializeToMarkdown(
-                            cleanText = contentTextFieldValue.text,
+            if (tab == 0) {
+                FormattingToolbar(
+                    text = body.text,
+                    selection = body.selection,
+                    lineHeadings = lineHeadings,
+                    bolds = bolds,
+                    italics = italics,
+                    onHeading = { level ->
+                        lineHeadings = RichTextEditorEngine.toggleHeadingOnLine(body.text, body.selection, level, lineHeadings)
+                    },
+                    onHighlight = { colorName ->
+                        val (updated, newSelection) = RichTextEditorEngine.applyHighlightToRange(body.text, body.selection, colorName, highlights)
+                        highlights = updated
+                        body = body.copy(selection = newSelection)
+                    },
+                    onBold = { bolds = RichTextEditorEngine.toggleBoldOnRange(body.text, body.selection, bolds) },
+                    onItalic = { italics = RichTextEditorEngine.toggleItalicOnRange(body.text, body.selection, italics) },
+                    onBullet = { body = insertAtLineStart(body, "• ") },
+                    onNumbered = { body = insertAtLineStart(body, "1. ") }
+                )
+                Box(Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.TopCenter) {
+                    Column(
+                        modifier = Modifier
+                            .widthIn(max = Spacing.contentMaxWidth)
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .padding(Spacing.md),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                    ) {
+                        OutlinedTextField(
+                            value = title,
+                            onValueChange = { title = it },
+                            label = { Text(stringResource(R.string.editor_field_title)) },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.titleMedium,
+                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                            modifier = Modifier.fillMaxWidth().testTag("card_editor_title_input")
+                        )
+                        BodyField(
+                            value = body,
+                            isDark = isDark,
                             lineHeadings = lineHeadings,
                             highlights = highlights,
                             bolds = bolds,
-                            italics = italics
+                            italics = italics,
+                            onValueChange = { newValue ->
+                                if (newValue.text != body.text) {
+                                    // Keep every span attached to the same characters while typing.
+                                    val (spans, headings) = RichTextEditorEngine.adjustSpansOnTextChange(
+                                        oldText = body.text,
+                                        newText = newValue.text,
+                                        currentHighlights = highlights,
+                                        currentBolds = bolds,
+                                        currentItalics = italics,
+                                        currentLineHeadings = lineHeadings
+                                    )
+                                    highlights = spans.first
+                                    bolds = spans.second
+                                    italics = spans.third
+                                    lineHeadings = headings
+                                }
+                                body = newValue
+                            }
                         )
-                        val updated = CardMarkdownEditorUtils.serializeEditedContentToNote(
-                            originalNote = note,
-                            newTitle = title,
-                            editedMarkdown = finalMarkdown
-                        )
-                        onSave(updated)
-                    },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    },
-                    text = {
                         Text(
-                            text = "Confirmer",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
+                            text = stringResource(
+                                R.string.editor_stats,
+                                pluralStringResource(R.plurals.editor_stats_chars, body.text.length, body.text.length),
+                                pluralStringResource(R.plurals.editor_stats_lines, body.text.split('\n').size, body.text.split('\n').size),
+                                pluralStringResource(R.plurals.editor_stats_highlights, highlights.size, highlights.size)
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    },
-                    containerColor = NeumorphicColors.Primary,
-                    contentColor = Color.White,
-                    modifier = Modifier.testTag("card_editor_save_button"),
-                    elevation = FloatingActionButtonDefaults.elevation(
-                        defaultElevation = 6.dp,
-                        pressedElevation = 10.dp
-                    )
+                    }
+                }
+            } else {
+                PreviewPane(note = note, title = title, markdown = markdown, modifier = Modifier.weight(1f))
+            }
+        }
+    }
+
+    if (confirmDiscard) {
+        ConfirmDialog(
+            title = stringResource(R.string.editor_discard_title),
+            body = stringResource(R.string.editor_discard_body),
+            confirmLabel = stringResource(R.string.study_discard),
+            dismissLabel = stringResource(R.string.study_keep_editing),
+            onConfirm = { confirmDiscard = false; onCancel() },
+            onDismiss = { confirmDiscard = false },
+            destructive = true
+        )
+    }
+}
+
+@Composable
+private fun BodyField(
+    value: TextFieldValue,
+    isDark: Boolean,
+    lineHeadings: List<Int>,
+    highlights: List<RichHighlight>,
+    bolds: List<RichStyleSpan>,
+    italics: List<RichStyleSpan>,
+    onValueChange: (TextFieldValue) -> Unit
+) {
+    val transformation = remember(isDark, lineHeadings, highlights, bolds, italics) {
+        WordRichTextVisualTransformation(isDark, lineHeadings, highlights, bolds, italics)
+    }
+    val label = stringResource(R.string.editor_body_label)
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(Spacing.xxs / 4, MaterialTheme.colorScheme.outline),
+        modifier = Modifier.fillMaxWidth().heightIn(min = Spacing.editorMinHeight)
+    ) {
+        Box(Modifier.padding(Spacing.md)) {
+            if (value.text.isEmpty()) {
+                Text(
+                    stringResource(R.string.editor_body_placeholder),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                visualTransformation = transformation,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = Spacing.editorMinHeight - Spacing.xl)
+                    .semantics { contentDescription = label }
+                    .testTag("card_editor_content_input")
+            )
+        }
+    }
+}
+
+/** Live preview of the card exactly as the reader and the review session will show it. */
+@Composable
+private fun PreviewPane(note: RevisionNoteEntity, title: String, markdown: String, modifier: Modifier = Modifier) {
+    val preview = remember(title, markdown) {
+        CardMarkdownEditorUtils.serializeEditedContentToNote(originalNote = note, newTitle = title, editedMarkdown = markdown)
+    }
+    Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(
+            Modifier
+                .widthIn(max = Spacing.contentMaxWidth)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(Spacing.md)
+        ) {
+            OutlinedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(Spacing.lg), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                    Text(
+                        preview.title.ifBlank { stringResource(R.string.study_untitled) },
+                        style = MaterialTheme.typography.headlineSmall
+                    )
+                    HorizontalDivider()
+                    val hasBlocks = preview.contentBlocksJson.isNotBlank() && preview.contentBlocksJson != "[]"
+                    when {
+                        hasBlocks -> NoteBlocksRenderer(blocksJson = preview.contentBlocksJson, modifier = Modifier.fillMaxWidth())
+                        preview.contentMarkdown.isNotBlank() -> HighlightedMarkdownWithTables(markdown = preview.contentMarkdown, modifier = Modifier.fillMaxWidth())
+                        else -> Text(
+                            stringResource(R.string.editor_preview_empty),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
     }
 }
 
 /**
- * Word-Style Ribbon Toolbar:
- * 1. Headings Row: Titre 1, Sous-Titre, Sujet, Section, Texte
- * 2. Highlighting & Text Styles Row: Color Palette (Jaune, Vert, Bleu, Rose, Violet, Clear) + Bold, Italic, Bullets
+ * Two rows: text styles (Title … Body) with bold/italic/lists, then highlight colours.
+ * Every control is ≥ 48 dp and labelled for TalkBack; the active style is shown as selected.
  */
 @Composable
-fun WordStyleFormattingRibbon(
-    currentText: String,
-    currentSelection: TextRange,
-    activeHeadingLevel: Int,
+fun FormattingToolbar(
+    text: String,
+    selection: TextRange,
+    lineHeadings: List<Int>,
     bolds: List<RichStyleSpan>,
     italics: List<RichStyleSpan>,
-    highlights: List<RichHighlight>,
-    onApplyHeading: (Int) -> Unit,
-    onApplyHighlight: (String?) -> Unit,
-    onToggleBold: () -> Unit,
-    onToggleItalic: () -> Unit,
-    onInsertBullet: () -> Unit,
-    onInsertNumbered: () -> Unit,
+    onHeading: (Int) -> Unit,
+    onHighlight: (String?) -> Unit,
+    onBold: () -> Unit,
+    onItalic: () -> Unit,
+    onBullet: () -> Unit,
+    onNumbered: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val isDark = LocalIsDarkTheme.current
-    val rowScrollState = rememberScrollState()
+    val selStart = selection.min.coerceIn(0, text.length)
+    val selEnd = selection.max.coerceIn(0, text.length)
+    fun List<RichStyleSpan>.isActive() =
+        if (selStart == selEnd) any { selStart in it.start..it.end } else any { it.start < selEnd && it.end > selStart }
 
-    // Determine active styles based on current selection / cursor position
-    val selStart = currentSelection.min.coerceIn(0, currentText.length)
-    val selEnd = currentSelection.max.coerceIn(0, currentText.length)
+    val lineIndex = text.substring(0, selStart).count { it == '\n' }
+    val currentLine = text.split('\n').getOrNull(lineIndex)?.trimStart().orEmpty()
+    val activeHeading = lineHeadings.getOrNull(lineIndex) ?: 0
+    val bulletActive = currentLine.startsWith("•") || currentLine.startsWith("- ") || currentLine.startsWith("* ")
+    val numberedActive = currentLine.matches(Regex("""^\d+[.)]\s+.*"""))
 
-    val isBoldActive = if (selStart == selEnd) {
-        bolds.any { selStart >= it.start && selStart <= it.end }
-    } else {
-        bolds.any { it.start < selEnd && it.end > selStart }
-    }
-
-    val isItalicActive = if (selStart == selEnd) {
-        italics.any { selStart >= it.start && selStart <= it.end }
-    } else {
-        italics.any { it.start < selEnd && it.end > selStart }
-    }
-
-    // Determine current line bullet / numbered state
-    val lines = currentText.split('\n')
-    var offset = 0
-    var lineIndex = 0
-    for (i in lines.indices) {
-        val nextOffset = offset + lines[i].length + 1
-        if (selStart in offset..nextOffset || i == lines.size - 1) {
-            lineIndex = i
-            break
-        }
-        offset = nextOffset
-    }
-    val currentLineText = lines.getOrNull(lineIndex)?.trimStart() ?: ""
-    val isBulletActive = currentLineText.startsWith("•") || currentLineText.startsWith("- ") || currentLineText.startsWith("* ")
-    val isNumberedActive = currentLineText.matches(Regex("""^\d+[\.\)]\s+.*"""))
-
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isDark) 0.65f else 0.90f),
-        tonalElevation = 3.dp,
-        modifier = modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            // Row 1: Headings & Hierarchy Styles + Style Buttons
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rowScrollState)
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                // Heading 1 (#)
-                WordHierarchyChip(
-                    label = "# Titre 1",
-                    level = 1,
-                    isActive = activeHeadingLevel == 1,
-                    onClick = { onApplyHeading(1) }
-                )
-
-                // Heading 2 (##)
-                WordHierarchyChip(
-                    label = "## Sous-Titre",
-                    level = 2,
-                    isActive = activeHeadingLevel == 2,
-                    onClick = { onApplyHeading(2) }
-                )
-
-                // Heading 3 (###)
-                WordHierarchyChip(
-                    label = "### Sujet",
-                    level = 3,
-                    isActive = activeHeadingLevel == 3,
-                    onClick = { onApplyHeading(3) }
-                )
-
-                // Heading 4 (####)
-                WordHierarchyChip(
-                    label = "#### Section",
-                    level = 4,
-                    isActive = activeHeadingLevel == 4,
-                    onClick = { onApplyHeading(4) }
-                )
-
-                // Normal Paragraph
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (activeHeadingLevel == 0) NeumorphicColors.Primary.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
-                    border = if (activeHeadingLevel == 0) androidx.compose.foundation.BorderStroke(1.dp, NeumorphicColors.Primary) else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { onApplyHeading(0) }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "¶ Normal",
-                            fontSize = 12.sp,
-                            fontWeight = if (activeHeadingLevel == 0) FontWeight.Bold else FontWeight.Medium,
-                            color = if (activeHeadingLevel == 0) NeumorphicColors.Primary else NeumorphicColors.TextPrimary
-                        )
-                    }
-                }
-
-                VerticalDivider(
-                    modifier = Modifier
-                        .height(24.dp)
-                        .padding(horizontal = 4.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant
-                )
-
-                // Bold (B) - Adapts to Dark/Light theme with active underline
-                FormatIconButton(
-                    icon = { isActive ->
-                        Text(
-                            text = "B",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 15.sp,
-                            color = if (isActive) NeumorphicColors.Primary else NeumorphicColors.TextPrimary
-                        )
-                    },
-                    contentDescription = "Gras",
-                    isActive = isBoldActive,
-                    onClick = onToggleBold
-                )
-
-                // Italic (I) - Adapts to Dark/Light theme with active underline
-                FormatIconButton(
-                    icon = { isActive ->
-                        Text(
-                            text = "I",
-                            fontStyle = FontStyle.Italic,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = if (isActive) NeumorphicColors.Primary else NeumorphicColors.TextPrimary
-                        )
-                    },
-                    contentDescription = "Italique",
-                    isActive = isItalicActive,
-                    onClick = onToggleItalic
-                )
-
-                // Bullet List (•) - Adapts to Dark/Light theme with active underline
-                FormatIconButton(
-                    icon = { isActive ->
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.FormatListBulleted,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = if (isActive) NeumorphicColors.Primary else NeumorphicColors.TextPrimary
-                        )
-                    },
-                    contentDescription = "Puces",
-                    isActive = isBulletActive,
-                    onClick = onInsertBullet
-                )
-
-                // Numbered List (1.) - Adapts to Dark/Light theme with active underline
-                FormatIconButton(
-                    icon = { isActive ->
-                        Text(
-                            text = "1.",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
-                            color = if (isActive) NeumorphicColors.Primary else NeumorphicColors.TextPrimary
-                        )
-                    },
-                    contentDescription = "Numéroté",
-                    isActive = isNumberedActive,
-                    onClick = onInsertNumbered
-                )
-            }
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
-
-            // Row 2: Microsoft Word-Style Highlight Palette
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, modifier = modifier.fillMaxWidth()) {
+        Column {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .padding(horizontal = Spacing.sm),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.BorderColor,
-                        contentDescription = null,
-                        tint = NeumorphicColors.Primary,
-                        modifier = Modifier.size(15.dp)
+                listOf(
+                    1 to R.string.editor_style_title,
+                    2 to R.string.editor_style_heading,
+                    3 to R.string.editor_style_subheading,
+                    4 to R.string.editor_style_section,
+                    0 to R.string.editor_style_body
+                ).forEach { (level, label) ->
+                    FilterChip(
+                        selected = activeHeading == level,
+                        onClick = { onHeading(level) },
+                        label = { Text(stringResource(label), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingIcon = if (level > 0) {
+                            { Box(Modifier.size(Spacing.noteAccentBar, Spacing.md).background(noteHeadingColor(level), CircleShape)) }
+                        } else null
                     )
-                    Text("Surlignage :", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = NeumorphicColors.TextPrimary)
                 }
-
-                // Jaune / Amber
-                WordHighlightChip(
-                    name = "Jaune",
-                    color = Color(0xFFEAB308),
-                    bgColor = if (isDark) Color(0xFF78350F).copy(alpha = 0.75f) else Color(0xFFFEF08A),
-                    onClick = { onApplyHighlight("amber") }
+                VerticalDivider(Modifier.height(Spacing.lg).padding(horizontal = Spacing.xxs))
+                ToggleTool(Icons.Rounded.FormatBold, R.string.editor_bold, bolds.isActive(), onBold)
+                ToggleTool(Icons.Rounded.FormatItalic, R.string.editor_italic, italics.isActive(), onItalic)
+                ToggleTool(Icons.AutoMirrored.Rounded.FormatListBulleted, R.string.editor_bullets, bulletActive, onBullet)
+                ToggleTool(Icons.Rounded.FormatListNumbered, R.string.editor_numbered, numberedActive, onNumbered)
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = Spacing.sm),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    stringResource(R.string.editor_highlight),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = Spacing.xs)
                 )
-
-                // Vert / Green
-                WordHighlightChip(
-                    name = "Vert",
-                    color = Color(0xFF10B981),
-                    bgColor = if (isDark) Color(0xFF065F46).copy(alpha = 0.75f) else Color(0xFFBBF7D0),
-                    onClick = { onApplyHighlight("green") }
-                )
-
-                // Bleu / Blue
-                WordHighlightChip(
-                    name = "Bleu",
-                    color = Color(0xFF3B82F6),
-                    bgColor = if (isDark) Color(0xFF1E40AF).copy(alpha = 0.75f) else Color(0xFFBFDBFE),
-                    onClick = { onApplyHighlight("blue") }
-                )
-
-                // Rose / Rouge
-                WordHighlightChip(
-                    name = "Rose/Rouge",
-                    color = Color(0xFFEF4444),
-                    bgColor = if (isDark) Color(0xFF9F1239).copy(alpha = 0.75f) else Color(0xFFFECDD3),
-                    onClick = { onApplyHighlight("red") }
-                )
-
-                // Violet / Purple
-                WordHighlightChip(
-                    name = "Violet",
-                    color = Color(0xFF8B5CF6),
-                    bgColor = if (isDark) Color(0xFF581C87).copy(alpha = 0.75f) else Color(0xFFE9D5FF),
-                    onClick = { onApplyHighlight("purple") }
-                )
-
-                // Clear Highlight (🧽 Effacer)
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { onApplyHighlight(null) }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                HighlightTone.pickable.forEach { tone ->
+                    val colors = NotePalette.highlight(tone, isDark)
+                    val label = stringResource(tone.labelRes())
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(Spacing.minTouchTarget)
+                            .clickable(role = Role.Button, onClick = { onHighlight(tone.storedName) })
+                            .semantics { contentDescription = label }
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.FormatClear,
-                            contentDescription = "Effacer le surlignage",
-                            modifier = Modifier.size(13.dp),
-                            tint = NeumorphicColors.TextSecondary
+                        Box(
+                            Modifier
+                                .size(Spacing.xl - Spacing.xxs)
+                                .background(colors.container, CircleShape)
+                                .border(Spacing.xxs / 2, colors.swatch, CircleShape)
                         )
-                        Text("Effacer", fontSize = 11.sp, color = NeumorphicColors.TextSecondary)
                     }
                 }
+                IconButton(onClick = { onHighlight(null) }) {
+                    Icon(Icons.Rounded.FormatColorReset, contentDescription = stringResource(R.string.editor_highlight_clear))
+                }
+                Text(
+                    stringResource(R.string.editor_highlight_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = Spacing.xs)
+                )
             }
         }
     }
 }
 
 @Composable
-private fun WordHierarchyChip(
-    label: String,
-    level: Int,
-    isActive: Boolean,
-    onClick: () -> Unit
-) {
-    val isDark = LocalIsDarkTheme.current
-    val barColor = RevisionHeadingColors.getHeadingColor(level, isDark)
-    val bgColor = RevisionHeadingColors.getHeadingBgColor(level, isDark)
-
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = if (isActive) barColor.copy(alpha = 0.22f) else bgColor,
-        border = androidx.compose.foundation.BorderStroke(
-            width = if (isActive) 1.5.dp else 1.dp,
-            color = if (isActive) barColor else barColor.copy(alpha = 0.4f)
-        ),
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .clickable { onClick() }
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(3.5.dp)
-                    .height(13.dp)
-                    .background(barColor, RoundedCornerShape(1.dp))
-            )
-            Text(
-                text = label,
-                fontSize = 12.sp,
-                fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.Bold,
-                color = barColor
-            )
-        }
+private fun ToggleTool(icon: androidx.compose.ui.graphics.vector.ImageVector, label: Int, checked: Boolean, onClick: () -> Unit) {
+    FilledTonalIconToggleButton(checked = checked, onCheckedChange = { onClick() }) {
+        Icon(icon, contentDescription = stringResource(label))
     }
 }
 
+private fun HighlightTone.labelRes(): Int = when (this) {
+    HighlightTone.Amber -> R.string.editor_highlight_amber
+    HighlightTone.Green -> R.string.editor_highlight_green
+    HighlightTone.Blue -> R.string.editor_highlight_blue
+    HighlightTone.Red -> R.string.editor_highlight_red
+    HighlightTone.Purple -> R.string.editor_highlight_purple
+    HighlightTone.Pink -> R.string.editor_highlight_pink
+    HighlightTone.Cyan -> R.string.editor_highlight_cyan
+}
+
+/** Inserts [prefix] at the start of the line holding the cursor and moves the cursor with it. */
+private fun insertAtLineStart(value: TextFieldValue, prefix: String): TextFieldValue {
+    val text = value.text
+    val cursor = value.selection.min.coerceIn(0, text.length)
+    val lineStart = text.lastIndexOf('\n', (cursor - 1).coerceAtLeast(0)).let { if (it == -1 || cursor == 0) 0 else it + 1 }
+    return TextFieldValue(text.substring(0, lineStart) + prefix + text.substring(lineStart), TextRange(cursor + prefix.length))
+}
+
+// --- State savers (rotation / process death) ---------------------------------------------
+
+private val IntListSaver = listSaver<List<Int>, Int>(save = { it }, restore = { it.toList() })
+
+private val SpanListSaver = listSaver<List<RichStyleSpan>, Int>(
+    save = { spans -> spans.flatMap { listOf(it.start, it.end) } },
+    restore = { flat -> flat.chunked(2).map { RichStyleSpan(it[0], it[1]) } }
+)
+
+private val HighlightListSaver = listSaver<List<RichHighlight>, String>(
+    save = { list -> list.flatMap { listOf(it.id, it.start.toString(), it.end.toString(), it.color) } },
+    restore = { flat -> flat.chunked(4).map { RichHighlight(id = it[0], start = it[1].toInt(), end = it[2].toInt(), color = it[3]) } }
+)
+
+// --- Previews ------------------------------------------------------------------------------
+
+@ThemePreviews
 @Composable
-private fun WordHighlightChip(
-    name: String,
-    color: Color,
-    bgColor: Color,
-    onClick: () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = bgColor,
-        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.7f)),
-        modifier = Modifier
-            .clip(RoundedCornerShape(12.dp))
-            .clickable { onClick() }
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .background(color, CircleShape)
-            )
-            Text(
-                text = name,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (LocalIsDarkTheme.current) Color.White else Color(0xFF0F172A)
-            )
-        }
+private fun FormattingToolbarPreview() {
+    FocusIslandTheme(themeMode = ThemeMode.SYSTEM) {
+        FormattingToolbar(
+            text = "Mitochondria\nThe powerhouse of the cell",
+            selection = TextRange(3),
+            lineHeadings = listOf(1, 0),
+            bolds = emptyList(),
+            italics = emptyList(),
+            onHeading = {}, onHighlight = {}, onBold = {}, onItalic = {}, onBullet = {}, onNumbered = {}
+        )
     }
 }
 
+@ThemePreviews
 @Composable
-private fun FormatIconButton(
-    icon: @Composable (isActive: Boolean) -> Unit,
-    contentDescription: String,
-    isActive: Boolean = false,
-    onClick: () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = if (isActive) NeumorphicColors.Primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.75f),
-        border = androidx.compose.foundation.BorderStroke(
-            width = if (isActive) 1.5.dp else 1.dp,
-            color = if (isActive) NeumorphicColors.Primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-        ),
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .clickable { onClick() }
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.size(18.dp)
-            ) {
-                icon(isActive)
-            }
-            Spacer(modifier = Modifier.height(2.dp))
-            Box(
-                modifier = Modifier
-                    .width(14.dp)
-                    .height(2.5.dp)
-                    .background(
-                        if (isActive) NeumorphicColors.Primary else Color.Transparent,
-                        RoundedCornerShape(1.dp)
-                    )
-            )
-        }
+private fun CardInlineEditorPreview() {
+    FocusIslandTheme(themeMode = ThemeMode.SYSTEM) {
+        CardInlineEditor(
+            note = RevisionNoteEntity(
+                deckId = "d",
+                title = "Cell biology",
+                contentBlocksJson = "",
+                plainTextPreview = "Mitochondria make ATP.",
+                contentMarkdown = "# Mitochondria\nThey make ==ATP== through **respiration**."
+            ),
+            onSave = {},
+            onCancel = {}
+        )
     }
 }

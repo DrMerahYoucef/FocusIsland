@@ -18,4 +18,16 @@ data class TimerState(
     val sessionsBeforeLongBreak: Int = 4,
     val isDndActive: Boolean = false,
     val currentAmbientId: String = "none"
-)
+) {
+    fun durationOf(p: Phase): Long = when (p) {
+        Phase.FOCUS -> focusDurationMs
+        Phase.SHORT_BREAK -> shortBreakDurationMs
+        Phase.LONG_BREAK -> longBreakDurationMs
+    }
+
+    /** Length of the current phase, fixed when the phase began. */
+    val phaseDurationMs: Long get() = durationOf(phase)
+
+    /** True when the current phase hasn't been started or paused yet. */
+    val isUntouched: Boolean get() = !isRunning && remainingMs == phaseDurationMs
+}

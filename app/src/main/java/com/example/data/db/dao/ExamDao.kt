@@ -24,4 +24,7 @@ interface ExamDao {
 
     @Query("SELECT * FROM exams WHERE examDate >= :todayStart ORDER BY examDate ASC")
     suspend fun getUpcomingExams(todayStart: Long): List<ExamEntity>
+
+    @Query("DELETE FROM exams")
+    suspend fun deleteAll()
 }

@@ -26,6 +26,10 @@ enum class OcrEngineChoice {
  */
 class MlKitOcrEngine : OcrEngine {
 
+    /** Card title when none was typed or found, in the app's language (stored once with the card). */
+    private fun defaultTitle() = com.example.FocusFlowApplication.instance.getString(com.example.R.string.study_untitled)
+
+
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
     override suspend fun extractStructuredContent(
@@ -61,11 +65,11 @@ class MlKitOcrEngine : OcrEngine {
         val rawText = visionText.text.trim()
         if (rawText.isBlank()) {
             return GeminiNoteResult(
-                title = userTitleHint?.ifBlank { null } ?: "Carte de Révision",
+                title = userTitleHint?.ifBlank { null } ?: defaultTitle(),
                 blocks = listOf(
                     GeminiBlock(
                         type = "text",
-                        content = "Aucun texte détecté dans l'image sélectionnée. Veuillez vérifier le cadrage ou l'éclairage de votre document."
+                        content = com.example.FocusFlowApplication.instance.getString(com.example.R.string.ocr_no_text)
                     )
                 ),
                 highlights = emptyList()
@@ -93,7 +97,7 @@ class MlKitOcrEngine : OcrEngine {
                 extractedTitle = cleanTitle(firstLine.take(60) + "...")
                 titleFoundFromImage = true
             } else {
-                extractedTitle = "Carte de Révision"
+                extractedTitle = defaultTitle()
             }
         }
 
@@ -177,7 +181,7 @@ class MlKitOcrEngine : OcrEngine {
         }
 
         return GeminiNoteResult(
-            title = extractedTitle.ifBlank { "Carte de Révision" },
+            title = extractedTitle.ifBlank { defaultTitle() },
             blocks = parsedBlocks,
             highlights = highlights.distinctBy { it.text.lowercase(Locale.ROOT) }
         )

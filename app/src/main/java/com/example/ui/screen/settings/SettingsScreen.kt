@@ -1,2416 +1,640 @@
 package com.example.ui.screen.settings
 
+import android.app.NotificationManager
+import android.app.WallpaperManager
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import android.content.res.Configuration
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import com.example.ui.theme.IslandPalette
+import com.example.ui.components.IslandRenderer
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.automirrored.rounded.Notes
+import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.CloudUpload
+import androidx.compose.material.icons.rounded.Contrast
+import androidx.compose.material.icons.rounded.Coffee
+import androidx.compose.material.icons.rounded.DeleteForever
+import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.DoNotDisturbOn
+import androidx.compose.material.icons.rounded.Event
+import androidx.compose.material.icons.rounded.Facebook
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.Landscape
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.PersonAdd
+import androidx.compose.material.icons.rounded.Phone
+import androidx.compose.material.icons.rounded.Radio
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.Restore
+import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.Smartphone
+import androidx.compose.material.icons.rounded.Style
+import androidx.compose.material.icons.rounded.Swipe
+import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material.icons.rounded.Vibration
+import androidx.compose.material.icons.rounded.Wallpaper
+import androidx.compose.material.icons.rounded.Widgets
+import androidx.compose.material.icons.rounded.WbSunny
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import com.example.ui.components.NeumorphicButton
-import com.example.ui.components.NeumorphicCard
-import com.example.ui.components.neumorphicShadow
-import com.example.ui.theme.NeumorphicColors
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.core.content.FileProvider
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
+import com.example.BuildConfig
+import com.example.FocusFlowApplication
+import com.example.R
+import com.example.data.auth.AccountState
 import com.example.data.backup.BackupTaskState
-import com.example.data.backup.BackupTaskType
 import com.example.data.backup.CardBackupStateHolder
-import com.example.data.backup.CardTypeFilter
-import com.example.data.repository.ImportMode
+import com.example.data.repository.GeminiOcrEngine
 import com.example.service.CardBackupService
-import androidx.compose.material.icons.filled.Wallpaper
 import com.example.service.DayNightLiveWallpaperService
+import com.example.ui.components.WallpaperHelper
+import com.example.ui.designsystem.ConfirmDialog
+import com.example.ui.navigation.Routes
+import com.example.ui.screen.auth.AuthMode
+import com.example.ui.screen.revisions.RevisionsViewModel
+import com.example.ui.theme.Spacing
+import com.example.ui.theme.ThemeMode
+import com.example.ui.theme.WallpaperTheme
 import com.example.widget.ExamCountdownWidgetReceiver
 import com.example.widget.ExamMatrixWidgetReceiver
-import java.io.File
-import com.google.firebase.Firebase
-import com.google.firebase.auth.auth
 import kotlinx.coroutines.launch
 
-@Composable
-fun ExpandableSection(
-    title: String,
-    icon: ImageVector,
-    isExpanded: Boolean,
-    onHeaderClick: () -> Unit,
-    content: @Composable () -> Unit
-) {
-    NeumorphicCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        cornerRadius = 16.dp,
-        elevation = 4.dp
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onHeaderClick() }
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = NeumorphicColors.Primary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Text(
-                        text = title,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 14.sp,
-                        color = NeumorphicColors.TextPrimary,
-                        letterSpacing = 0.5.sp
-                    )
-                }
-                Icon(
-                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = if (isExpanded) "Collapse" else "Expand",
-                    tint = NeumorphicColors.TextSecondary,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-            AnimatedVisibility(
-                visible = isExpanded,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
-                ) {
-                    Divider(
-                        color = NeumorphicColors.SurfaceDark.copy(alpha = 0.15f),
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    )
-                    content()
-                }
-            }
-        }
-    }
-}
+private const val DEVELOPER_PHONE = "+213558460474"
+private const val DEVELOPER_WHATSAPP = "https://wa.me/213558460474"
+private const val DEVELOPER_FACEBOOK = "https://www.facebook.com/youcef.Merahh/"
+private const val GEMINI_KEY_PAGE = "https://aistudio.google.com/app/apikey"
 
+/**
+ * All settings on one scrolling page, grouped: Account, Focus timer, Study & AI, Appearance,
+ * Wallpaper, Home screen, Backup & data, About. Complex edits open dialogs; actions report
+ * their result in a snackbar. Shown inside the Settings route's app bar (see AppNavGraph).
+ */
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
     modifier: Modifier = Modifier,
-    navController: androidx.navigation.NavController? = null
+    navController: NavController? = null
 ) {
-    val state by viewModel.state.collectAsState()
-    val scrollState = rememberScrollState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+    fun notify(text: String) { scope.launch { snackbar.showSnackbar(text) } }
 
-    var isResetConfirmOpen by remember { mutableStateOf(false) }
-    var isDeleteAccountConfirmOpen by remember { mutableStateOf(false) }
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val revisions: RevisionsViewModel = viewModel()
+    val study by revisions.uiState.collectAsStateWithLifecycle()
+    val srs = study.srsSettings
+    val account by FocusFlowApplication.instance.authRepository.state.collectAsStateWithLifecycle()
+    val backup by CardBackupStateHolder.state.collectAsStateWithLifecycle()
 
-    // State of each expandable section
-    var isExamsExpanded by remember { mutableStateOf(false) }
-    var isTimerIntervalsExpanded by remember { mutableStateOf(false) }
-    var isSystemSettingsExpanded by remember { mutableStateOf(false) }
-    var isAppBlockerExpanded by remember { mutableStateOf(false) }
-    var isDataBackupExpanded by remember { mutableStateOf(false) }
-    var isWallpaperExpanded by remember { mutableStateOf(false) }
-    var isAccountExpanded by remember { mutableStateOf(false) }
-    var isUpdateExpanded by remember { mutableStateOf(false) }
-    var isDeveloperExpanded by remember { mutableStateOf(false) }
+    val app = FocusFlowApplication.instance
+    val geminiInfo by app.geminiModels.info.collectAsState()
+    val examCount by remember { app.database.examDao().getAllExams() }.collectAsState(initial = emptyList())
+    val blocked by remember { app.database.blockedAppDao().getAllBlocked() }.collectAsState(initial = emptyList())
+    val sessionCount by remember { app.sessionRepository.getSessionCount(0L, Long.MAX_VALUE) }.collectAsState(initial = 0)
 
-    // Data queries
-    val examDao = remember { com.example.FocusFlowApplication.instance.database.examDao() }
-    val examList by examDao.getAllExams().collectAsState(initial = emptyList())
-    val examCount = examList.size
+    // DND access can change while the user is in system settings.
+    var dndAllowed by remember { mutableStateOf(hasDndAccess(context)) }
+    LifecycleResumeEffect(Unit) { dndAllowed = hasDndAccess(context); onPauseOrDispose { } }
 
-    val db = remember { com.example.FocusFlowApplication.instance.database }
-    val blockedList by db.blockedAppDao().getAllBlocked().collectAsState(initial = emptyList())
-    val blockedCount = blockedList.size
+    var dialog by rememberSaveable { mutableStateOf<SettingsDialog?>(null) }
+    var importUri by rememberSaveable { mutableStateOf<Uri?>(null) }
+    var applyingWallpaper by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
 
-    val dbSessionCount by remember {
-        com.example.FocusFlowApplication.instance.sessionRepository.getSessionCount(0L, Long.MAX_VALUE)
-    }.collectAsState(initial = 0)
+    val msgKeySaved = stringResource(R.string.settings_gemini_key_saved)
+    val msgKeyRemoved = stringResource(R.string.settings_gemini_key_removed)
+    val msgBackupSaved = stringResource(R.string.backup_file_saved)
+    val msgFailed = stringResource(R.string.study_media_failed)
+    val msgNoScreen = stringResource(R.string.wallpaper_pick_screen)
+    val msgWallpaperDone = stringResource(R.string.wallpaper_applied)
+    val msgPinUnsupported = stringResource(R.string.widget_pin_unsupported)
+    val msgPromptSaved = stringResource(R.string.settings_prompt_saved)
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(androidx.compose.ui.graphics.Color.Transparent)
-            .verticalScroll(scrollState)
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // Uppermost Header
-        Text(
-            text = "DASHBOARD CONFIG",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Black,
-            letterSpacing = 2.sp,
-            color = NeumorphicColors.TextPrimary,
-            modifier = Modifier.padding(top = 16.dp, bottom = 24.dp)
+    val saveBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val file = (backup as? BackupTaskState.ExportCompleted)?.backupFile
+        if (uri != null && file != null) {
+            val ok = runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } } ?: error("no stream")
+            }.isSuccess
+            notify(if (ok) msgBackupSaved else msgFailed)
+        }
+    }
+    val pickBackup = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) { importUri = uri; dialog = SettingsDialog.IMPORT }
+    }
+
+    val wallpaperDark = if (state.followSystemTheme) {
+        (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    } else state.wallpaperTheme == WallpaperTheme.DARK
+
+    fun applyWallpaper(onDone: (Boolean, String?) -> Unit) {
+        val dark = wallpaperDark
+        scope.launch {
+            val error = WallpaperHelper.setIslandWallpaper(
+                context = context,
+                theme = if (dark) WallpaperTheme.DARK else WallpaperTheme.LIGHT,
+                setHomeScreen = state.wallpaperHomeScreen,
+                setLockScreen = state.wallpaperLockScreen,
+                sessions = sessionCount
+            )
+            onDone(error == null, error)
+        }
+    }
+
+    Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = Spacing.contentMaxWidth)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = Spacing.md)
+                .padding(bottom = Spacing.xl),
+            verticalArrangement = Arrangement.spacedBy(Spacing.lg)
+        ) {
+            // ------------------------------------------------ account
+            SettingsGroup(stringResource(R.string.settings_account)) {
+                when (val a = account) {
+                    is AccountState.SignedIn -> {
+                        SettingsRow(
+                            Icons.Rounded.AccountCircle,
+                            title = a.displayName?.takeIf { it.isNotBlank() } ?: a.email.orEmpty(),
+                            summary = if (a.displayName.isNullOrBlank()) stringResource(R.string.settings_signed_in) else a.email
+                        )
+                        SettingsDivider()
+                        SettingsRow(Icons.AutoMirrored.Rounded.Logout, stringResource(R.string.settings_sign_out), onClick = { dialog = SettingsDialog.SIGN_OUT })
+                    }
+                    else -> {
+                        SettingsRow(
+                            Icons.Rounded.PersonAdd,
+                            title = stringResource(R.string.settings_guest_title),
+                            summary = stringResource(R.string.settings_guest_body),
+                            onClick = { navController?.navigate(Routes.auth(AuthMode.CREATE_ACCOUNT)) },
+                            trailing = { Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null) }
+                        )
+                        SettingsDivider()
+                        SettingsRow(Icons.AutoMirrored.Rounded.Logout, stringResource(R.string.community_guest_sign_in), onClick = { navController?.navigate(Routes.auth(AuthMode.SIGN_IN)) })
+                    }
+                }
+                SettingsDivider()
+                SettingsRow(
+                    Icons.Rounded.DeleteForever,
+                    title = stringResource(if (account is AccountState.SignedIn) R.string.settings_delete_account else R.string.settings_erase_device),
+                    titleColor = MaterialTheme.colorScheme.error,
+                    onClick = { dialog = SettingsDialog.DELETE_ACCOUNT },
+                    trailing = if (deleting) { { CircularProgressIndicator(strokeWidth = Spacing.progressStroke, modifier = Modifier.size(Spacing.iconSm)) } } else null
+                )
+            }
+
+            // ------------------------------------------------ focus timer
+            SettingsGroup(stringResource(R.string.settings_focus)) {
+                val min = { m: Int -> context.resources.getQuantityString(R.plurals.settings_minutes, m, m) }
+                StepperRow(Icons.Rounded.Timer, stringResource(R.string.settings_focus_length), min(state.focusMin),
+                    // Steps of 5 minutes, fine-grained below 5.
+                    { viewModel.updateFocusMin(if (state.focusMin > 5) state.focusMin - 5 else state.focusMin - 1) },
+                    { viewModel.updateFocusMin(if (state.focusMin >= 5) state.focusMin + 5 else state.focusMin + 1) },
+                    canDecrease = state.focusMin > SettingsState.FOCUS_RANGE.first, canIncrease = state.focusMin < SettingsState.FOCUS_RANGE.last)
+                SettingsDivider()
+                StepperRow(Icons.Rounded.Coffee, stringResource(R.string.settings_short_break), min(state.shortBreakMin),
+                    { viewModel.updateShortBreakMin(state.shortBreakMin - 1) }, { viewModel.updateShortBreakMin(state.shortBreakMin + 1) },
+                    canDecrease = state.shortBreakMin > SettingsState.BREAK_RANGE.first, canIncrease = state.shortBreakMin < SettingsState.BREAK_RANGE.last)
+                SettingsDivider()
+                StepperRow(Icons.Rounded.Landscape, stringResource(R.string.settings_long_break), min(state.longBreakMin),
+                    { viewModel.updateLongBreakMin(state.longBreakMin - 1) }, { viewModel.updateLongBreakMin(state.longBreakMin + 1) },
+                    canDecrease = state.longBreakMin > SettingsState.BREAK_RANGE.first, canIncrease = state.longBreakMin < SettingsState.BREAK_RANGE.last)
+                SettingsDivider()
+                StepperRow(Icons.Rounded.Repeat, stringResource(R.string.settings_rounds), state.sessionsBeforeLong.toString(),
+                    { viewModel.updateSessionsBeforeLong(state.sessionsBeforeLong - 1) }, { viewModel.updateSessionsBeforeLong(state.sessionsBeforeLong + 1) },
+                    canDecrease = state.sessionsBeforeLong > SettingsState.ROUNDS_RANGE.first, canIncrease = state.sessionsBeforeLong < SettingsState.ROUNDS_RANGE.last,
+                    summary = stringResource(R.string.settings_rounds_body))
+                SettingsDivider()
+                SwitchRow(
+                    Icons.Rounded.DoNotDisturbOn,
+                    stringResource(R.string.settings_dnd),
+                    stringResource(if (state.blockNotifications && !dndAllowed) R.string.settings_dnd_needs_access else R.string.settings_dnd_body),
+                    checked = state.blockNotifications,
+                    onCheckedChange = { on ->
+                        viewModel.updateBlockNotifications(on)
+                        if (on && !dndAllowed) openDndAccess(context)
+                    }
+                )
+                SettingsDivider()
+                SwitchRow(Icons.Rounded.Vibration, stringResource(R.string.settings_vibrate), stringResource(R.string.settings_vibrate_body), state.vibrateOnComplete, viewModel::updateVibrateOnComplete)
+                SettingsDivider()
+                SwitchRow(Icons.Rounded.Fullscreen, stringResource(R.string.settings_auto_focus_mode), stringResource(R.string.settings_auto_focus_mode_body), state.autoFocusMode, viewModel::updateAutoFocusMode)
+                SettingsDivider()
+                StepperRow(
+                    Icons.Rounded.Shuffle, stringResource(R.string.settings_sound_rotation),
+                    if (state.ambientRotationMin == 0) stringResource(R.string.settings_off) else min(state.ambientRotationMin),
+                    { viewModel.updateAmbientRotationMin(state.ambientRotationMin - 1) }, { viewModel.updateAmbientRotationMin(state.ambientRotationMin + 1) },
+                    canDecrease = state.ambientRotationMin > SettingsState.ROTATION_RANGE.first, canIncrease = state.ambientRotationMin < SettingsState.ROTATION_RANGE.last,
+                    summary = stringResource(R.string.settings_sound_rotation_body)
+                )
+                SettingsDivider()
+                SettingsRow(
+                    Icons.Rounded.Block, stringResource(R.string.settings_app_blocker),
+                    pluralStringResource(R.plurals.settings_apps_blocked, blocked.size, blocked.size),
+                    onClick = { navController?.navigate(Routes.APP_BLOCKER) },
+                    trailing = { Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null) }
+                )
+            }
+
+            // ------------------------------------------------ study & AI
+            SettingsGroup(stringResource(R.string.settings_study)) {
+                StepperRow(
+                    Icons.Rounded.Style, stringResource(R.string.settings_new_cards), srs.newCardsPerDay.toString(),
+                    { revisions.updateSrsSettings(srs.copy(newCardsPerDay = (srs.newCardsPerDay - 5).coerceAtLeast(5))) },
+                    { revisions.updateSrsSettings(srs.copy(newCardsPerDay = (srs.newCardsPerDay + 5).coerceAtMost(100))) },
+                    canDecrease = srs.newCardsPerDay > 5, canIncrease = srs.newCardsPerDay < 100,
+                    summary = stringResource(R.string.settings_new_cards_body)
+                )
+                SettingsDivider()
+                SwitchRow(
+                    Icons.Rounded.NotificationsActive, stringResource(R.string.settings_reminder),
+                    stringResource(R.string.settings_reminder_body, "%02d:%02d".format(srs.reminderHour, srs.reminderMinute)),
+                    checked = srs.notificationsEnabled,
+                    onCheckedChange = { revisions.updateSrsSettings(srs.copy(notificationsEnabled = it)) }
+                )
+                SettingsDivider()
+                SettingsRow(
+                    Icons.Rounded.Key, stringResource(R.string.settings_gemini_key),
+                    stringResource(if (srs.geminiApiKey.isBlank()) R.string.settings_gemini_key_none else R.string.settings_gemini_key_set),
+                    onClick = { dialog = SettingsDialog.GEMINI_KEY }
+                )
+                SettingsDivider()
+                SettingsRow(Icons.Rounded.Memory, stringResource(R.string.settings_gemini_models), geminiModelLabel(srs.selectedGeminiModel), onClick = { dialog = SettingsDialog.GEMINI_MODELS })
+                SettingsDivider()
+                SettingsRow(
+                    Icons.AutoMirrored.Rounded.Notes, stringResource(R.string.settings_prompt),
+                    stringResource(if (srs.customPromptOverride != null) R.string.settings_prompt_custom else R.string.settings_prompt_default),
+                    onClick = { dialog = SettingsDialog.PROMPT }
+                )
+                SettingsDivider()
+                SettingsRow(
+                    Icons.Rounded.Event, stringResource(R.string.progress_tab_exams),
+                    pluralStringResource(R.plurals.settings_exams_count, examCount.size, examCount.size),
+                    onClick = { navController?.navigate(Routes.EXAMS) },
+                    trailing = { Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null) }
+                )
+            }
+
+            // ------------------------------------------------ appearance & privacy
+            SettingsGroup(stringResource(R.string.settings_appearance)) {
+                Column(Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                        Icon(Icons.Rounded.Contrast, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.settings_theme), style = MaterialTheme.typography.bodyLarge)
+                    }
+                    val modes = listOf(ThemeMode.SYSTEM to R.string.settings_theme_system, ThemeMode.LIGHT to R.string.settings_theme_light, ThemeMode.DARK to R.string.settings_theme_dark)
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        modes.forEachIndexed { i, (mode, label) ->
+                            SegmentedButton(
+                                selected = ThemeMode.from(state.themeMode) == mode,
+                                onClick = { viewModel.updateThemeMode(mode.key) },
+                                shape = SegmentedButtonDefaults.itemShape(i, modes.size)
+                            ) { Text(stringResource(label), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        }
+                    }
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    SettingsDivider()
+                    SwitchRow(Icons.Rounded.Palette, stringResource(R.string.settings_dynamic_color), stringResource(R.string.settings_dynamic_color_body), state.dynamicColor, viewModel::updateDynamicColor)
+                }
+                SettingsDivider()
+                SwitchRow(Icons.Rounded.Swipe, stringResource(R.string.settings_swipe), stringResource(R.string.settings_swipe_body), state.swipeToNavigate, viewModel::updateSwipeToNavigate)
+                SettingsDivider()
+                SwitchRow(Icons.Rounded.Radio, stringResource(R.string.community_share_listening), stringResource(R.string.community_share_listening_body), state.shareListening, viewModel::updateShareListening)
+            }
+
+            // ------------------------------------------------ wallpaper
+            SettingsGroup(stringResource(R.string.settings_wallpaper)) {
+                WallpaperPreview(sessions = sessionCount, dark = wallpaperDark)
+                SettingsDivider()
+                SwitchRow(Icons.Rounded.Contrast, stringResource(R.string.wallpaper_follow_system), stringResource(R.string.wallpaper_follow_system_body), state.followSystemTheme, viewModel::updateFollowSystemTheme)
+                if (!state.followSystemTheme) {
+                    Column(Modifier.padding(horizontal = Spacing.md, vertical = Spacing.xs)) {
+                        val choices = listOf(WallpaperTheme.LIGHT to R.string.wallpaper_day, WallpaperTheme.DARK to R.string.wallpaper_night)
+                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                            choices.forEachIndexed { i, (theme, label) ->
+                                SegmentedButton(
+                                    selected = state.wallpaperTheme == theme,
+                                    onClick = { viewModel.updateWallpaperTheme(theme) },
+                                    shape = SegmentedButtonDefaults.itemShape(i, choices.size),
+                                    icon = { SegmentedButtonDefaults.Icon(active = state.wallpaperTheme == theme) { Icon(Icons.Rounded.WbSunny, contentDescription = null, modifier = Modifier.size(SegmentedButtonDefaults.IconSize)) } }
+                                ) { Text(stringResource(label)) }
+                            }
+                        }
+                    }
+                }
+                SettingsDivider()
+                SwitchRow(Icons.Rounded.Smartphone, stringResource(R.string.wallpaper_home), null, state.wallpaperHomeScreen, viewModel::updateWallpaperHomeScreen)
+                SettingsDivider()
+                SwitchRow(Icons.Rounded.Lock, stringResource(R.string.wallpaper_lock), null, state.wallpaperLockScreen, viewModel::updateWallpaperLockScreen)
+                SettingsDivider()
+                SwitchRow(Icons.Rounded.Sync, stringResource(R.string.wallpaper_auto_sync), stringResource(R.string.wallpaper_auto_sync_body), state.autoSyncWallpaper, onCheckedChange = { on ->
+                    viewModel.updateAutoSyncWallpaper(on)
+                    if (on) applyWallpaper { ok, err -> notify(if (ok) msgWallpaperDone else err ?: msgFailed) }
+                })
+                Row(
+                    Modifier.fillMaxWidth().padding(Spacing.md),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = {
+                            if (!state.wallpaperHomeScreen && !state.wallpaperLockScreen) { notify(msgNoScreen); return@Button }
+                            applyingWallpaper = true
+                            applyWallpaper { ok, err -> applyingWallpaper = false; notify(if (ok) msgWallpaperDone else err ?: msgFailed) }
+                        },
+                        enabled = !applyingWallpaper,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        if (applyingWallpaper) CircularProgressIndicator(strokeWidth = Spacing.progressStroke, modifier = Modifier.size(Spacing.iconSm))
+                        else Text(stringResource(R.string.wallpaper_apply_now), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    FilledTonalButton(onClick = { openLiveWallpaper(context) }, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.wallpaper_live), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+
+            // ------------------------------------------------ widgets
+            SettingsGroup(stringResource(R.string.settings_widgets)) {
+                SettingsRow(Icons.Rounded.Widgets, stringResource(R.string.widget_countdown), stringResource(R.string.widget_countdown_body),
+                    onClick = { if (!pinWidget(context, ExamCountdownWidgetReceiver::class.java)) notify(msgPinUnsupported) })
+                SettingsDivider()
+                SettingsRow(Icons.Rounded.CalendarMonth, stringResource(R.string.widget_calendar), stringResource(R.string.widget_calendar_body),
+                    onClick = { if (!pinWidget(context, ExamMatrixWidgetReceiver::class.java)) notify(msgPinUnsupported) })
+            }
+
+            // ------------------------------------------------ backup & data
+            SettingsGroup(stringResource(R.string.settings_backup)) {
+                SettingsRow(Icons.Rounded.CloudUpload, stringResource(R.string.backup_create), stringResource(R.string.backup_create_body),
+                    onClick = { dialog = SettingsDialog.EXPORT })
+                SettingsDivider()
+                SettingsRow(Icons.Rounded.Restore, stringResource(R.string.backup_restore), stringResource(R.string.backup_restore_body),
+                    onClick = { pickBackup.launch("*/*") })
+                BackupStatusCard(
+                    state = backup,
+                    onSave = { (backup as? BackupTaskState.ExportCompleted)?.let { saveBackup.launch(it.backupFile.name) } },
+                    onSend = {
+                        (backup as? BackupTaskState.ExportCompleted)?.let {
+                            if (!shareFile(context, it.backupFile, context.getString(R.string.backup_send_title))) notify(msgFailed)
+                        }
+                    },
+                    onDismiss = { CardBackupStateHolder.reset() }
+                )
+                SettingsDivider()
+                SettingsRow(Icons.Rounded.DeleteSweep, stringResource(R.string.settings_reset), stringResource(R.string.settings_reset_body),
+                    titleColor = MaterialTheme.colorScheme.error, onClick = { dialog = SettingsDialog.RESET })
+            }
+
+            // ------------------------------------------------ about
+            SettingsGroup(stringResource(R.string.settings_about)) {
+                SettingsRow(Icons.Rounded.Info, stringResource(R.string.app_name), stringResource(R.string.settings_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE))
+                SettingsDivider()
+                SettingsRow(Icons.Rounded.AutoAwesome, stringResource(R.string.settings_developer_name), stringResource(R.string.settings_developer_bio))
+                SettingsDivider()
+                SettingsRow(Icons.Rounded.Phone, stringResource(R.string.settings_contact_whatsapp), DEVELOPER_PHONE,
+                    onClick = { if (!openUrl(context, DEVELOPER_WHATSAPP)) notify(msgFailed) })
+                SettingsDivider()
+                SettingsRow(Icons.Rounded.Facebook, stringResource(R.string.settings_contact_facebook), null,
+                    onClick = { if (!openUrl(context, DEVELOPER_FACEBOOK)) notify(msgFailed) })
+            }
+        }
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+    }
+
+    // ---------------------------------------------------------------- dialogs
+    when (dialog) {
+        SettingsDialog.GEMINI_KEY -> GeminiKeyDialog(
+            current = srs.geminiApiKey,
+            onSave = { key ->
+                revisions.setGeminiApiKey(key)
+                dialog = null
+                notify(if (key.isBlank()) msgKeyRemoved else msgKeySaved)
+            },
+            onGetKey = { if (!openUrl(context, GEMINI_KEY_PAGE)) notify(msgFailed) },
+            onTest = { key -> if (app.geminiModels.refresh(key, force = true)) app.geminiModels.info.value.models.size else null },
+            onDismiss = { dialog = null }
         )
-
-        // 1. Section: Exam Countdown Workload
-        ExpandableSection(
-            title = "EXAM WORKLOAD",
-            icon = Icons.Default.CalendarMonth,
-            isExpanded = isExamsExpanded,
-            onHeaderClick = { isExamsExpanded = !isExamsExpanded }
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { navController?.navigate("exams") }
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "Exam Countdowns",
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            text = "$examCount upcoming trials",
-                            fontSize = 11.sp,
-                            color = NeumorphicColors.TextSecondary
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.Default.CalendarMonth,
-                        contentDescription = "Configure Exam Countdown",
-                        tint = NeumorphicColors.Primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                HorizontalDivider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.2f))
-
-                Text(
-                    text = "ADD WIDGET TO PHONE HOME SCREEN",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 0.8.sp,
-                    color = NeumorphicColors.TextPrimary
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                                val mgr = android.appwidget.AppWidgetManager.getInstance(context)
-                                if (mgr.isRequestPinAppWidgetSupported) {
-                                    val provider = android.content.ComponentName(context, ExamCountdownWidgetReceiver::class.java)
-                                    mgr.requestPinAppWidget(provider, null, null)
-                                    Toast.makeText(context, "Adding Countdown & Stats Widget...", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    Toast.makeText(context, "Pinning widgets not supported by launcher.", Toast.LENGTH_SHORT).show()
-                                }
-                            } else {
-                                Toast.makeText(context, "Long-press home screen to pick widgets.", Toast.LENGTH_LONG).show()
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = NeumorphicColors.Primary)
-                    ) {
-                        Icon(imageVector = Icons.Default.Widgets, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Stats Widget", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    }
-
-                    Button(
-                        onClick = {
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                                val mgr = android.appwidget.AppWidgetManager.getInstance(context)
-                                if (mgr.isRequestPinAppWidgetSupported) {
-                                    val provider = android.content.ComponentName(context, ExamMatrixWidgetReceiver::class.java)
-                                    mgr.requestPinAppWidget(provider, null, null)
-                                    Toast.makeText(context, "Adding Matrix Calendar Widget...", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    Toast.makeText(context, "Pinning widgets not supported by launcher.", Toast.LENGTH_SHORT).show()
-                                }
-                            } else {
-                                Toast.makeText(context, "Long-press home screen to pick widgets.", Toast.LENGTH_LONG).show()
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6750A4))
-                    ) {
-                        Icon(imageVector = Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Matrix Widget", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    }
-                }
-            }
-        }
-
-        // 2. Section: Timer Intervals Option Sliders / Steppers
-        ExpandableSection(
-            title = "TIMER INTERVALS",
-            icon = Icons.Default.Timer,
-            isExpanded = isTimerIntervalsExpanded,
-            onHeaderClick = { isTimerIntervalsExpanded = !isTimerIntervalsExpanded }
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                // Focus Option stepper
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Focus Duration",
-                        fontWeight = FontWeight.Bold,
-                        color = NeumorphicColors.TextPrimary,
-                        fontSize = 14.sp
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        IconButton(
-                            onClick = {
-                                if (state.focusMin > 1) {
-                                    viewModel.updateFocusMin(state.focusMin - 1)
-                                }
-                            }
-                        ) {
-                            Text("-", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = NeumorphicColors.Primary)
-                        }
-                        Text(
-                            text = "${state.focusMin} min",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 15.sp,
-                            color = NeumorphicColors.TextPrimary
-                        )
-                        IconButton(
-                            onClick = {
-                                if (state.focusMin < 120) {
-                                    viewModel.updateFocusMin(state.focusMin + 1)
-                                }
-                            }
-                        ) {
-                            Text("+", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NeumorphicColors.Primary)
-                        }
-                    }
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                // Short break option stepper
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Short Break",
-                        fontWeight = FontWeight.Bold,
-                        color = NeumorphicColors.TextPrimary,
-                        fontSize = 14.sp
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        IconButton(
-                            onClick = {
-                                if (state.shortBreakMin > 1) {
-                                    viewModel.updateShortBreakMin(state.shortBreakMin - 1)
-                                }
-                            }
-                        ) {
-                            Text("-", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = NeumorphicColors.Success)
-                        }
-                        Text(
-                            text = "${state.shortBreakMin} min",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 15.sp,
-                            color = NeumorphicColors.TextPrimary
-                        )
-                        IconButton(
-                            onClick = {
-                                if (state.shortBreakMin < 60) {
-                                    viewModel.updateShortBreakMin(state.shortBreakMin + 1)
-                                }
-                            }
-                        ) {
-                            Text("+", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NeumorphicColors.Success)
-                        }
-                    }
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                // Long break option stepper
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Long Break",
-                        fontWeight = FontWeight.Bold,
-                        color = NeumorphicColors.TextPrimary,
-                        fontSize = 14.sp
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        IconButton(
-                            onClick = {
-                                if (state.longBreakMin > 1) {
-                                    viewModel.updateLongBreakMin(state.longBreakMin - 1)
-                                }
-                            }
-                        ) {
-                            Text("-", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = NeumorphicColors.Accent)
-                        }
-                        Text(
-                            text = "${state.longBreakMin} min",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 15.sp,
-                            color = NeumorphicColors.TextPrimary
-                        )
-                        IconButton(
-                            onClick = {
-                                if (state.longBreakMin < 60) {
-                                    viewModel.updateLongBreakMin(state.longBreakMin + 1)
-                                }
-                            }
-                        ) {
-                            Text("+", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NeumorphicColors.Accent)
-                        }
-                    }
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                // Rounds before long break
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Rounds Count",
-                        fontWeight = FontWeight.Bold,
-                        color = NeumorphicColors.TextPrimary,
-                        fontSize = 14.sp
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        IconButton(
-                            onClick = {
-                                if (state.sessionsBeforeLong > 2) {
-                                    viewModel.updateSessionsBeforeLong(state.sessionsBeforeLong - 1)
-                                }
-                            }
-                        ) {
-                            Text("-", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = NeumorphicColors.TextSecondary)
-                        }
-                        Text(
-                            text = "${state.sessionsBeforeLong}",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 16.sp,
-                            color = NeumorphicColors.TextPrimary
-                        )
-                        IconButton(
-                            onClick = {
-                                if (state.sessionsBeforeLong < 10) {
-                                    viewModel.updateSessionsBeforeLong(state.sessionsBeforeLong + 1)
-                                }
-                            }
-                        ) {
-                            Text("+", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NeumorphicColors.TextSecondary)
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Section: System Settings
-        ExpandableSection(
-            title = "SYSTEM SETTINGS",
-            icon = Icons.Default.Settings,
-            isExpanded = isSystemSettingsExpanded,
-            onHeaderClick = { isSystemSettingsExpanded = !isSystemSettingsExpanded }
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                // Block Notifications (DND)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Silenced Focus (DND)",
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            text = "Automated Do Not Disturb block active on Focus",
-                            fontSize = 11.sp,
-                            color = NeumorphicColors.TextSecondary
-                        )
-                    }
-                    Switch(
-                        checked = state.blockNotifications,
-                        onCheckedChange = { viewModel.updateBlockNotifications(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = NeumorphicColors.Primary,
-                            checkedTrackColor = NeumorphicColors.Primary.copy(alpha = 0.5f)
-                        )
-                    )
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                // Vibrate feedback
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Vibrations Feedback",
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            text = "Double pulse vibrate when a phase ends",
-                            fontSize = 11.sp,
-                            color = NeumorphicColors.TextSecondary
-                        )
-                    }
-                    Switch(
-                        checked = state.vibrateOnComplete,
-                        onCheckedChange = { viewModel.updateVibrateOnComplete(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = NeumorphicColors.Primary,
-                            checkedTrackColor = NeumorphicColors.Primary.copy(alpha = 0.5f)
-                        )
-                    )
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                // Swipe to Navigate
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Swipe to Navigate",
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            text = "Swipe left/right to switch screens",
-                            fontSize = 11.sp,
-                            color = NeumorphicColors.TextSecondary
-                        )
-                    }
-                    Switch(
-                        checked = state.swipeToNavigate,
-                        onCheckedChange = { viewModel.updateSwipeToNavigate(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = NeumorphicColors.Primary,
-                            checkedTrackColor = NeumorphicColors.Primary.copy(alpha = 0.5f)
-                        )
-                    )
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                // Ambient sound switched interval
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Sound Switch Interval",
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            text = "Minutes before fading to another random sound",
-                            fontSize = 11.sp,
-                            color = NeumorphicColors.TextSecondary
-                        )
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        IconButton(
-                            onClick = {
-                                if (state.ambientRotationMin > 1) {
-                                    viewModel.updateAmbientRotationMin(state.ambientRotationMin - 1)
-                                }
-                            }
-                        ) {
-                            Text("-", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = NeumorphicColors.Primary)
-                        }
-                        Text(
-                            text = "${state.ambientRotationMin} min",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 15.sp,
-                            color = NeumorphicColors.TextPrimary
-                        )
-                        IconButton(
-                            onClick = {
-                                if (state.ambientRotationMin < 120) {
-                                    viewModel.updateAmbientRotationMin(state.ambientRotationMin + 1)
-                                }
-                            }
-                        ) {
-                            Text("+", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NeumorphicColors.Primary)
-                        }
-                    }
-                }
-            }
-        }
-
-        // 4. Section: App Blocker Setup
-        ExpandableSection(
-            title = "APP BLOCKER",
-            icon = Icons.Default.Block,
-            isExpanded = isAppBlockerExpanded,
-            onHeaderClick = { isAppBlockerExpanded = !isAppBlockerExpanded }
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { navController?.navigate("app_blocker") }
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "Focus App Blocker",
-                        fontWeight = FontWeight.Bold,
-                        color = NeumorphicColors.TextPrimary,
-                        fontSize = 14.sp
-                    )
-                    Text(
-                        text = "$blockedCount apps configured",
-                        fontSize = 11.sp,
-                        color = NeumorphicColors.TextSecondary
-                    )
-                }
-                Icon(
-                    imageVector = Icons.Default.Block,
-                    contentDescription = "Configure App Blocker",
-                    tint = NeumorphicColors.Primary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        }
-
-        // 5. Section: Data & Backup management
-        var isSrsSettingsExpanded by remember { mutableStateOf(false) }
-        var isExportOptionsDialogOpen by remember { mutableStateOf(false) }
-        var selectedExportCardType by remember { mutableStateOf(CardTypeFilter.ALL) }
-        var selectedExportDeckId by remember { mutableStateOf("ALL") }
-
-        var isImportConfirmDialogOpen by remember { mutableStateOf(false) }
-        var selectedImportUri by remember { mutableStateOf<Uri?>(null) }
-        var selectedImportMode by remember { mutableStateOf(ImportMode.MERGE) }
-
-        val revisionsViewModel: com.example.ui.screen.revisions.RevisionsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-        val srsUiState by revisionsViewModel.uiState.collectAsState()
-        val backupState by CardBackupStateHolder.state.collectAsState()
-
-        val saveDocumentLauncher = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.CreateDocument("application/octet-stream")
-        ) { destinationUri ->
-            destinationUri?.let { uri ->
-                if (backupState is BackupTaskState.ExportCompleted) {
-                    val exportedFile = (backupState as BackupTaskState.ExportCompleted).backupFile
-                    try {
-                        context.contentResolver.openOutputStream(uri)?.use { output ->
-                            exportedFile.inputStream().use { input ->
-                                input.copyTo(output)
-                            }
-                        }
-                        Toast.makeText(context, "Backup saved to phone!", Toast.LENGTH_SHORT).show()
-                    } catch (e: Exception) {
-                        Toast.makeText(context, "Error saving backup file: ${e.message}", Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
-        }
-
-        val backupPickerLauncher = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.GetContent()
-        ) { uri ->
-            uri?.let {
-                selectedImportUri = it
-                isImportConfirmDialogOpen = true
-            }
-        }
-
-        ExpandableSection(
-            title = "REVISIONS & GEMINI API KEY",
-            icon = Icons.Default.AutoAwesome,
-            isExpanded = isSrsSettingsExpanded,
-            onHeaderClick = { isSrsSettingsExpanded = !isSrsSettingsExpanded }
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                // Gemini API Key Field
-                var localGeminiKey by remember(srsUiState.srsSettings.geminiApiKey) { mutableStateOf(srsUiState.srsSettings.geminiApiKey) }
-
-                Text(
-                    text = "Gemini API Key (OCR Cards)",
-                    fontWeight = FontWeight.Bold,
-                    color = NeumorphicColors.TextPrimary,
-                    fontSize = 13.sp
-                )
-                OutlinedTextField(
-                    value = localGeminiKey,
-                    onValueChange = { localGeminiKey = it },
-                    label = { Text("Gemini API Key (AI Studio)") },
-                    placeholder = { Text("AIzaSy...") },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = NeumorphicColors.TextPrimary,
-                        unfocusedTextColor = NeumorphicColors.TextPrimary,
-                        focusedBorderColor = NeumorphicColors.Primary,
-                        unfocusedBorderColor = NeumorphicColors.SurfaceDark.copy(alpha = 0.3f)
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    NeumorphicButton(
-                        label = "Save Key Locally",
-                        icon = Icons.Default.Save,
-                        onClick = {
-                            revisionsViewModel.setGeminiApiKey(localGeminiKey)
-                            Toast.makeText(context, "Gemini API key saved locally!", Toast.LENGTH_SHORT).show()
-                        },
-                        accentColor = NeumorphicColors.Primary
-                    )
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                // --- Inner Small Expandable: Gemini Model Selection & Model Verification ---
-                var isModelsSectionExpanded by remember { mutableStateOf(false) }
-                var modelTestStatuses by remember { mutableStateOf<Map<String, com.example.data.repository.GeminiModelTestStatus>>(emptyMap()) }
-                var isVerifyingModels by remember { mutableStateOf(false) }
-                var isAddModelDialogOpen by remember { mutableStateOf(false) }
-                var newModelInput by remember { mutableStateOf("") }
-
-                Card(
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = NeumorphicColors.Background.copy(alpha = 0.7f)),
-                    border = BorderStroke(1.dp, NeumorphicColors.SurfaceDark.copy(alpha = 0.15f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        // Expandable Header
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { isModelsSectionExpanded = !isModelsSectionExpanded },
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Tune,
-                                    contentDescription = null,
-                                    tint = NeumorphicColors.Primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Column {
-                                    Text(
-                                        text = "Gemini Models & API Compatibility",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        color = NeumorphicColors.TextPrimary
-                                    )
-                                    Text(
-                                        text = "Active: ${srsUiState.srsSettings.selectedGeminiModel}",
-                                        fontSize = 11.sp,
-                                        color = NeumorphicColors.Primary
-                                    )
-                                }
-                            }
-
-                            Icon(
-                                imageVector = if (isModelsSectionExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                contentDescription = if (isModelsSectionExpanded) "Collapse" else "Expand",
-                                tint = NeumorphicColors.TextSecondary
-                            )
-                        }
-
-                        if (isModelsSectionExpanded) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            // Test / Verify Models action column
-                            Column(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    text = "Select model & test API key compatibility:",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = NeumorphicColors.TextSecondary
-                                )
-
-                                NeumorphicButton(
-                                    label = if (isVerifyingModels) "Verifying Models..." else "Check All Models",
-                                    icon = if (isVerifyingModels) Icons.Default.Sync else Icons.Default.FactCheck,
-                                    onClick = {
-                                        val keyToTest = localGeminiKey.ifBlank { srsUiState.srsSettings.geminiApiKey }
-                                        if (keyToTest.isBlank() || keyToTest == "MY_GEMINI_API_KEY") {
-                                            Toast.makeText(context, "Please enter a valid Gemini API Key first!", Toast.LENGTH_SHORT).show()
-                                        } else if (!isVerifyingModels) {
-                                            scope.launch {
-                                                isVerifyingModels = true
-                                                val currentModels = srsUiState.srsSettings.availableGeminiModels
-                                                modelTestStatuses = currentModels.associateWith { com.example.data.repository.GeminiModelTestStatus.UNTESTED }
-
-                                                var approvedCount = 0
-                                                for (modelId in currentModels) {
-                                                    modelTestStatuses = modelTestStatuses + (modelId to com.example.data.repository.GeminiModelTestStatus.TESTING)
-                                                    val passed = com.example.data.repository.verifyGeminiModel(keyToTest, modelId)
-                                                    if (passed) approvedCount++
-                                                    modelTestStatuses = modelTestStatuses + (modelId to if (passed) com.example.data.repository.GeminiModelTestStatus.APPROVED else com.example.data.repository.GeminiModelTestStatus.FAILED)
-                                                }
-                                                isVerifyingModels = false
-                                                Toast.makeText(context, "Model Check Complete: $approvedCount/${currentModels.size} approved!", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    accentColor = NeumorphicColors.Primary
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            // Available Models List
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                srsUiState.srsSettings.availableGeminiModels.forEach { modelId ->
-                                    val isSelected = srsUiState.srsSettings.selectedGeminiModel == modelId
-                                    val testStatus = modelTestStatuses[modelId] ?: com.example.data.repository.GeminiModelTestStatus.UNTESTED
-
-                                    Surface(
-                                        onClick = { revisionsViewModel.setSelectedGeminiModel(modelId) },
-                                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
-                                        color = if (isSelected) NeumorphicColors.Primary.copy(alpha = 0.12f) else NeumorphicColors.SurfaceDark.copy(alpha = 0.05f),
-                                        border = BorderStroke(
-                                            width = 1.dp,
-                                            color = if (isSelected) NeumorphicColors.Primary else Color.Transparent
-                                        ),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                RadioButton(
-                                                    selected = isSelected,
-                                                    onClick = { revisionsViewModel.setSelectedGeminiModel(modelId) },
-                                                    colors = RadioButtonDefaults.colors(selectedColor = NeumorphicColors.Primary)
-                                                )
-                                                Text(
-                                                    text = modelId,
-                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                    fontSize = 12.sp,
-                                                    color = NeumorphicColors.TextPrimary
-                                                )
-                                                if (isSelected) {
-                                                    Surface(
-                                                        shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
-                                                        color = NeumorphicColors.Primary,
-                                                        modifier = Modifier.padding(start = 4.dp)
-                                                    ) {
-                                                        Text(
-                                                            text = "Active",
-                                                            fontSize = 9.sp,
-                                                            fontWeight = FontWeight.Bold,
-                                                            color = Color.White,
-                                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-
-                                            // Status Icon (Green check for approved, Red wrong for failed)
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                            ) {
-                                                when (testStatus) {
-                                                    com.example.data.repository.GeminiModelTestStatus.TESTING -> {
-                                                        CircularProgressIndicator(
-                                                            modifier = Modifier.size(16.dp),
-                                                            strokeWidth = 2.dp,
-                                                            color = NeumorphicColors.Primary
-                                                        )
-                                                    }
-                                                    com.example.data.repository.GeminiModelTestStatus.APPROVED -> {
-                                                        Icon(
-                                                            imageVector = Icons.Default.CheckCircle,
-                                                            contentDescription = "Approved",
-                                                            tint = Color(0xFF4CAF50),
-                                                            modifier = Modifier.size(18.dp)
-                                                        )
-                                                    }
-                                                    com.example.data.repository.GeminiModelTestStatus.FAILED -> {
-                                                        Icon(
-                                                            imageVector = Icons.Default.Cancel,
-                                                            contentDescription = "Failed",
-                                                            tint = Color(0xFFE53935),
-                                                            modifier = Modifier.size(18.dp)
-                                                        )
-                                                    }
-                                                    com.example.data.repository.GeminiModelTestStatus.UNTESTED -> {}
-                                                }
-
-                                                // Delete custom model option if not default
-                                                if (srsUiState.srsSettings.availableGeminiModels.size > 1 &&
-                                                    !listOf("gemini-2.5-flash", "gemini-1.5-flash").contains(modelId)
-                                                ) {
-                                                    IconButton(
-                                                        onClick = { revisionsViewModel.removeCustomGeminiModel(modelId) },
-                                                        modifier = Modifier.size(24.dp)
-                                                    ) {
-                                                        Icon(
-                                                            imageVector = Icons.Default.Delete,
-                                                            contentDescription = "Remove model",
-                                                            tint = NeumorphicColors.TextSecondary.copy(alpha = 0.5f),
-                                                            modifier = Modifier.size(14.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            // Button to add custom new model
-                            OutlinedButton(
-                                onClick = { isAddModelDialogOpen = true },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = NeumorphicColors.Primary)
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Add New Model to List", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                        }
-                    }
-                }
-
-                if (isAddModelDialogOpen) {
-                    AlertDialog(
-                        onDismissRequest = { isAddModelDialogOpen = false },
-                        containerColor = NeumorphicColors.DialogBackground,
-                        titleContentColor = NeumorphicColors.TextPrimary,
-                        textContentColor = NeumorphicColors.TextSecondary,
-                        title = { Text("Add Custom Gemini Model", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = NeumorphicColors.TextPrimary) },
-                        text = {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(
-                                    text = "Enter the model ID (e.g. gemini-2.0-flash-exp, gemini-exp-1206):",
-                                    fontSize = 12.sp,
-                                    color = NeumorphicColors.TextSecondary
-                                )
-                                OutlinedTextField(
-                                    value = newModelInput,
-                                    onValueChange = { newModelInput = it },
-                                    placeholder = { Text("gemini-2.0-flash", color = NeumorphicColors.TextSecondary.copy(alpha = 0.5f)) },
-                                    singleLine = true,
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedTextColor = NeumorphicColors.TextPrimary,
-                                        unfocusedTextColor = NeumorphicColors.TextPrimary,
-                                        focusedBorderColor = NeumorphicColors.Primary,
-                                        unfocusedBorderColor = NeumorphicColors.SurfaceDark.copy(alpha = 0.3f),
-                                        focusedLabelColor = NeumorphicColors.Primary,
-                                        unfocusedLabelColor = NeumorphicColors.TextSecondary,
-                                        cursorColor = NeumorphicColors.Primary
-                                    ),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        },
-                        confirmButton = {
-                            Button(
-                                onClick = {
-                                    if (newModelInput.isNotBlank()) {
-                                        revisionsViewModel.addCustomGeminiModel(newModelInput.trim())
-                                        newModelInput = ""
-                                        isAddModelDialogOpen = false
-                                        Toast.makeText(context, "New model added & selected!", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = NeumorphicColors.Primary)
-                            ) {
-                                Text("Add Model", color = Color.White)
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { isAddModelDialogOpen = false }) {
-                                Text("Cancel", color = NeumorphicColors.TextSecondary)
-                            }
-                        }
-                    )
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                // Custom Prompt Override Section
-                var showAdjustPromptDialog by remember { mutableStateOf(false) }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "OCR System Prompt",
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary,
-                            fontSize = 13.sp
-                        )
-                        Text(
-                            text = if (srsUiState.srsSettings.customPromptOverride != null) "Custom prompt active" else "Default prompt active",
-                            fontSize = 11.sp,
-                            color = if (srsUiState.srsSettings.customPromptOverride != null) NeumorphicColors.Primary else NeumorphicColors.TextSecondary
-                        )
-                    }
-
-                    NeumorphicButton(
-                        label = "Adjust Prompt",
-                        icon = Icons.Default.Edit,
-                        onClick = { showAdjustPromptDialog = true },
-                        accentColor = NeumorphicColors.Primary
-                    )
-                }
-
-                if (showAdjustPromptDialog) {
-                    val defaultPrompt = com.example.data.repository.GeminiOcrEngine.VERBATIM_PROMPT
-                    var editingPrompt by remember {
-                        mutableStateOf(srsUiState.srsSettings.customPromptOverride ?: defaultPrompt)
-                    }
-
-                    Dialog(
-                        onDismissRequest = { showAdjustPromptDialog = false },
-                        properties = DialogProperties(usePlatformDefaultWidth = false)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.Black.copy(alpha = 0.5f))
-                                .padding(16.dp)
-                                .navigationBarsPadding()
-                                .imePadding(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Surface(
-                                shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
-                                color = NeumorphicColors.Background,
-                                shadowElevation = 12.dp,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = 580.dp)
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(20.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    // Header
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            IconButton(onClick = { showAdjustPromptDialog = false }) {
-                                                Icon(Icons.Default.Close, contentDescription = "Close", tint = NeumorphicColors.TextPrimary)
-                                            }
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                text = "Adjust System Prompt",
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 17.sp,
-                                                color = NeumorphicColors.TextPrimary
-                                            )
-                                        }
-
-                                        TextButton(
-                                            onClick = {
-                                                editingPrompt = defaultPrompt
-                                                revisionsViewModel.updateSrsSettings(srsUiState.srsSettings.copy(customPromptOverride = null))
-                                                Toast.makeText(context, "Original prompt restored!", Toast.LENGTH_SHORT).show()
-                                            }
-                                        ) {
-                                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Restore", color = NeumorphicColors.TextSecondary, fontSize = 12.sp)
-                                        }
-                                    }
-
-                                    Text(
-                                        text = "Edit the instruction prompt used by Gemini when reading your cards and notes:",
-                                        fontSize = 12.sp,
-                                        color = NeumorphicColors.TextSecondary
-                                    )
-
-                                    OutlinedTextField(
-                                        value = editingPrompt,
-                                        onValueChange = { editingPrompt = it },
-                                        label = { Text("System Prompt") },
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedTextColor = NeumorphicColors.TextPrimary,
-                                            unfocusedTextColor = NeumorphicColors.TextPrimary,
-                                            focusedBorderColor = NeumorphicColors.Primary,
-                                            unfocusedBorderColor = NeumorphicColors.SurfaceDark.copy(alpha = 0.3f),
-                                            focusedContainerColor = NeumorphicColors.SurfaceLight,
-                                            unfocusedContainerColor = NeumorphicColors.SurfaceLight
-                                        ),
-                                        minLines = 6,
-                                        maxLines = 10,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .weight(1f, fill = false)
-                                            .heightIn(min = 160.dp, max = 280.dp)
-                                    )
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        OutlinedButton(
-                                            onClick = { showAdjustPromptDialog = false },
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Text("Cancel")
-                                        }
-
-                                        Button(
-                                            onClick = {
-                                                val finalPrompt = if (editingPrompt.trim() == defaultPrompt.trim()) null else editingPrompt.trim().ifBlank { null }
-                                                revisionsViewModel.updateSrsSettings(srsUiState.srsSettings.copy(customPromptOverride = finalPrompt))
-                                                Toast.makeText(context, "New prompt saved!", Toast.LENGTH_SHORT).show()
-                                                showAdjustPromptDialog = false
-                                            },
-                                            colors = ButtonDefaults.buttonColors(containerColor = NeumorphicColors.Primary),
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text("Save New Prompt", fontSize = 13.sp)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                // Daily limits
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Max new cards / day",
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary,
-                            fontSize = 13.sp
-                        )
-                        Text(
-                            text = "Daily limit of new revision cards",
-                            fontSize = 11.sp,
-                            color = NeumorphicColors.TextSecondary
-                        )
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        IconButton(onClick = {
-                            if (srsUiState.srsSettings.newCardsPerDay > 5) {
-                                revisionsViewModel.updateSrsSettings(srsUiState.srsSettings.copy(newCardsPerDay = srsUiState.srsSettings.newCardsPerDay - 5))
-                            }
-                        }) {
-                            Text("-", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = NeumorphicColors.Primary)
-                        }
-                        Box(
-                            modifier = Modifier
-                                .background(
-                                    color = NeumorphicColors.Primary.copy(alpha = 0.12f),
-                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
-                                )
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "${srsUiState.srsSettings.newCardsPerDay}",
-                                fontWeight = FontWeight.ExtraBold,
-                                color = NeumorphicColors.TextPrimary,
-                                fontSize = 15.sp
-                            )
-                        }
-                        IconButton(onClick = {
-                            if (srsUiState.srsSettings.newCardsPerDay < 100) {
-                                revisionsViewModel.updateSrsSettings(srsUiState.srsSettings.copy(newCardsPerDay = srsUiState.srsSettings.newCardsPerDay + 5))
-                            }
-                        }) {
-                            Text("+", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NeumorphicColors.Primary)
-                        }
-                    }
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                // Notifications toggle
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Daily Revision Reminders", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = NeumorphicColors.TextPrimary)
-                        Text(text = "Reminder at ${"%02d".format(srsUiState.srsSettings.reminderHour)}:${"%02d".format(srsUiState.srsSettings.reminderMinute)} when cards are due", fontSize = 11.sp, color = NeumorphicColors.TextSecondary)
-                    }
-                    Switch(
-                        checked = srsUiState.srsSettings.notificationsEnabled,
-                        onCheckedChange = { checked ->
-                            revisionsViewModel.updateSrsSettings(srsUiState.srsSettings.copy(notificationsEnabled = checked))
-                        },
-                        colors = SwitchDefaults.colors(checkedThumbColor = NeumorphicColors.Primary)
-                    )
-                }
-            }
-        }
-
-        // Export Options Dialog
-        if (isExportOptionsDialogOpen) {
-            AlertDialog(
-                onDismissRequest = { isExportOptionsDialogOpen = false },
-                containerColor = NeumorphicColors.DialogBackground,
-                titleContentColor = NeumorphicColors.TextPrimary,
-                textContentColor = NeumorphicColors.TextSecondary,
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Default.CloudUpload, contentDescription = null, tint = NeumorphicColors.Primary)
-                        Text("Export Card Backup (.focuscards)", color = NeumorphicColors.TextPrimary)
-                    }
-                },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Select Card Types to Export:", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = NeumorphicColors.TextPrimary)
-
-                        CardTypeFilter.values().forEach { filter ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { selectedExportCardType = filter }
-                                    .padding(vertical = 4.dp)
-                            ) {
-                                RadioButton(
-                                    selected = selectedExportCardType == filter,
-                                    onClick = { selectedExportCardType = filter },
-                                    colors = RadioButtonDefaults.colors(
-                                        selectedColor = NeumorphicColors.Primary,
-                                        unselectedColor = NeumorphicColors.TextSecondary
-                                    )
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(filter.label, fontSize = 13.sp, color = NeumorphicColors.TextPrimary)
-                            }
-                        }
-
-                        Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.2f))
-
-                        Text("Select Deck:", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = NeumorphicColors.TextPrimary)
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedExportDeckId = "ALL" }
-                                .padding(vertical = 4.dp)
-                        ) {
-                            RadioButton(
-                                selected = selectedExportDeckId == "ALL",
-                                onClick = { selectedExportDeckId = "ALL" },
-                                colors = RadioButtonDefaults.colors(
-                                    selectedColor = NeumorphicColors.Primary,
-                                    unselectedColor = NeumorphicColors.TextSecondary
-                                )
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("All Decks (${srsUiState.totalCount} cards)", fontSize = 13.sp, color = NeumorphicColors.TextPrimary)
-                        }
-
-                        srsUiState.decks.forEach { deck ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { selectedExportDeckId = deck.id }
-                                    .padding(vertical = 4.dp)
-                            ) {
-                                RadioButton(
-                                    selected = selectedExportDeckId == deck.id,
-                                    onClick = { selectedExportDeckId = deck.id },
-                                    colors = RadioButtonDefaults.colors(
-                                        selectedColor = NeumorphicColors.Primary,
-                                        unselectedColor = NeumorphicColors.TextSecondary
-                                    )
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(deck.name, fontSize = 13.sp, color = NeumorphicColors.TextPrimary)
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            isExportOptionsDialogOpen = false
-                            CardBackupService.startExport(
-                                context = context,
-                                cardTypeFilter = selectedExportCardType,
-                                deckIdFilter = selectedExportDeckId
-                            )
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = NeumorphicColors.Primary)
-                    ) {
-                        Text("Start Export", color = Color.White)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { isExportOptionsDialogOpen = false }) {
-                        Text("Cancel", color = NeumorphicColors.TextSecondary)
-                    }
-                }
+        SettingsDialog.GEMINI_MODELS -> {
+            // Opening the dialog checks Google's list if it is older than 12 hours.
+            LaunchedEffect(Unit) { app.geminiModels.refresh(srs.geminiApiKey) }
+            GeminiModelsDialog(
+                apiKey = srs.geminiApiKey,
+                info = geminiInfo,
+                selected = srs.selectedGeminiModel,
+                custom = srs.customGeminiModels,
+                onSelect = revisions::setSelectedGeminiModel,
+                onAdd = revisions::addCustomGeminiModel,
+                onRemove = revisions::removeCustomGeminiModel,
+                onRefresh = { scope.launch { app.geminiModels.refresh(srs.geminiApiKey, force = true) } },
+                onDismiss = { dialog = null }
             )
         }
-
-        // Import Confirmation Dialog
-        if (isImportConfirmDialogOpen && selectedImportUri != null) {
-            AlertDialog(
-                onDismissRequest = { isImportConfirmDialogOpen = false },
-                containerColor = NeumorphicColors.DialogBackground,
-                titleContentColor = NeumorphicColors.TextPrimary,
-                textContentColor = NeumorphicColors.TextSecondary,
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Default.CloudDownload, contentDescription = null, tint = NeumorphicColors.Accent)
-                        Text("Restore Cards Backup", color = NeumorphicColors.TextPrimary)
-                    }
-                },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Select Import Mode:", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = NeumorphicColors.TextPrimary)
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedImportMode = ImportMode.MERGE }
-                                .padding(vertical = 4.dp)
-                        ) {
-                            RadioButton(
-                                selected = selectedImportMode == ImportMode.MERGE,
-                                onClick = { selectedImportMode = ImportMode.MERGE },
-                                colors = RadioButtonDefaults.colors(
-                                    selectedColor = NeumorphicColors.Primary,
-                                    unselectedColor = NeumorphicColors.TextSecondary
-                                )
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Column {
-                                Text("Merge (Recommended)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = NeumorphicColors.TextPrimary)
-                                Text("Add imported cards & keep existing history", fontSize = 11.sp, color = NeumorphicColors.TextSecondary)
-                            }
+        SettingsDialog.PROMPT -> PromptEditorDialog(
+            current = srs.customPromptOverride ?: GeminiOcrEngine.VERBATIM_PROMPT,
+            defaultPrompt = GeminiOcrEngine.VERBATIM_PROMPT,
+            onSave = { prompt ->
+                revisions.updateSrsSettings(srs.copy(customPromptOverride = prompt))
+                dialog = null
+                notify(msgPromptSaved)
+            },
+            onDismiss = { dialog = null }
+        )
+        SettingsDialog.EXPORT -> ExportDialog(
+            decks = study.decks,
+            totalCards = study.totalCount,
+            onStart = { type, deckId ->
+                dialog = null
+                CardBackupService.startExport(context = context, cardTypeFilter = type, deckIdFilter = deckId)
+            },
+            onDismiss = { dialog = null }
+        )
+        SettingsDialog.IMPORT -> {
+            val uri = importUri
+            if (uri != null) {
+                ImportDialog(
+                    onStart = { mode ->
+                        dialog = null
+                        CardBackupService.startImport(context = context, importUri = uri, importMode = mode)
+                    },
+                    onDismiss = { dialog = null }
+                )
+            }
+        }
+        SettingsDialog.RESET -> ConfirmDialog(
+            title = stringResource(R.string.settings_reset_title),
+            body = stringResource(R.string.settings_reset_confirm_body),
+            confirmLabel = stringResource(R.string.settings_reset_confirm),
+            dismissLabel = stringResource(R.string.cancel),
+            destructive = true,
+            onConfirm = {
+                dialog = null
+                viewModel.resetAllData { ok, error -> notify(if (ok) context.getString(R.string.reset_done) else error.orEmpty()) }
+            },
+            onDismiss = { dialog = null }
+        )
+        SettingsDialog.SIGN_OUT -> ConfirmDialog(
+            title = stringResource(R.string.settings_sign_out_title),
+            body = stringResource(R.string.settings_sign_out_body),
+            confirmLabel = stringResource(R.string.settings_sign_out),
+            dismissLabel = stringResource(R.string.cancel),
+            onConfirm = {
+                dialog = null
+                FocusFlowApplication.instance.authRepository.signOut()
+                navController?.navigate(Routes.auth(AuthMode.SIGN_IN)) { popUpTo(0) { inclusive = true } }
+            },
+            onDismiss = { dialog = null }
+        )
+        SettingsDialog.DELETE_ACCOUNT -> {
+            val signedIn = account is AccountState.SignedIn
+            ConfirmDialog(
+                title = stringResource(if (signedIn) R.string.settings_delete_account_title else R.string.settings_erase_device_title),
+                body = stringResource(if (signedIn) R.string.settings_delete_account_body else R.string.settings_erase_device_body),
+                confirmLabel = stringResource(if (signedIn) R.string.settings_delete_account_confirm else R.string.settings_erase_device_confirm),
+                dismissLabel = stringResource(R.string.cancel),
+                destructive = true,
+                onConfirm = {
+                    dialog = null
+                    deleting = true
+                    viewModel.deleteAccount { ok, error ->
+                        deleting = false
+                        if (ok) {
+                            navController?.navigate(Routes.auth(AuthMode.SIGN_IN)) { popUpTo(0) { inclusive = true } }
+                        } else {
+                            notify(error ?: msgFailed)
                         }
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedImportMode = ImportMode.REPLACE_ALL }
-                                .padding(vertical = 4.dp)
-                        ) {
-                            RadioButton(
-                                selected = selectedImportMode == ImportMode.REPLACE_ALL,
-                                onClick = { selectedImportMode = ImportMode.REPLACE_ALL },
-                                colors = RadioButtonDefaults.colors(
-                                    selectedColor = NeumorphicColors.Primary,
-                                    unselectedColor = NeumorphicColors.TextSecondary
-                                )
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Column {
-                                Text("Replace All Cards", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFFE53935))
-                                Text("Delete current cards & replace with backup", fontSize = 11.sp, color = NeumorphicColors.TextSecondary)
-                            }
-                        }
                     }
                 },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            val uri = selectedImportUri!!
-                            isImportConfirmDialogOpen = false
-                            CardBackupService.startImport(
-                                context = context,
-                                importUri = uri,
-                                importMode = selectedImportMode
-                            )
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = NeumorphicColors.Accent)
-                    ) {
-                        Text("Restore Now", color = Color.White)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { isImportConfirmDialogOpen = false }) {
-                        Text("Cancel", color = NeumorphicColors.TextSecondary)
-                    }
-                }
+                onDismiss = { dialog = null }
             )
         }
-
-        // 5. Section: Data & Backup management
-        ExpandableSection(
-            title = "DATA & BACKUP",
-            icon = Icons.Default.Storage,
-            isExpanded = isDataBackupExpanded,
-            onHeaderClick = { isDataBackupExpanded = !isDataBackupExpanded }
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                // Card Collection Backup (.focuscards)
-                Text(text = "Card Collection Backup (.focuscards)", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = NeumorphicColors.TextPrimary)
-                Text(
-                    text = "Bundle all markdown text, images, voice notes, and review history into a single portable backup file.",
-                    fontSize = 11.sp,
-                    color = NeumorphicColors.TextSecondary
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    NeumorphicButton(
-                        label = "Create Backup",
-                        icon = Icons.Default.CloudUpload,
-                        onClick = {
-                            isExportOptionsDialogOpen = true
-                        },
-                        modifier = Modifier.weight(1f),
-                        accentColor = NeumorphicColors.Primary
-                    )
-
-                    NeumorphicButton(
-                        label = "Restore Backup",
-                        icon = Icons.Default.CloudDownload,
-                        onClick = {
-                            backupPickerLauncher.launch("*/*")
-                        },
-                        modifier = Modifier.weight(1f),
-                        accentColor = NeumorphicColors.Accent
-                    )
-                }
-
-                // Active Backup/Restore Process or Result Card
-                when (val state = backupState) {
-                    is BackupTaskState.Running -> {
-                        NeumorphicCard(
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        strokeWidth = 2.5.dp,
-                                        color = NeumorphicColors.Primary
-                                    )
-                                    Text(
-                                        text = if (state.type == BackupTaskType.EXPORT) "Creating Card Backup..." else "Restoring Flashcards...",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        color = NeumorphicColors.TextPrimary
-                                    )
-                                    Spacer(modifier = Modifier.weight(1f))
-                                    Text(
-                                        text = "${(state.progress * 100).toInt()}%",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        color = NeumorphicColors.Primary
-                                    )
-                                }
-
-                                LinearProgressIndicator(
-                                    progress = { state.progress },
-                                    modifier = Modifier.fillMaxWidth().height(6.dp),
-                                    color = NeumorphicColors.Primary,
-                                    trackColor = NeumorphicColors.SurfaceDark.copy(alpha = 0.2f)
-                                )
-
-                                Text(
-                                    text = state.statusMessage,
-                                    fontSize = 11.sp,
-                                    color = NeumorphicColors.TextSecondary
-                                )
-
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Lock,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(12.dp),
-                                        tint = NeumorphicColors.Primary
-                                    )
-                                    Text(
-                                        text = "Process continues in background even if phone is locked.",
-                                        fontSize = 10.sp,
-                                        color = NeumorphicColors.TextSecondary
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    is BackupTaskState.ExportCompleted -> {
-                        NeumorphicCard(
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = Color(0xFF4CAF50)
-                                    )
-                                    Text(
-                                        text = "Backup Ready!",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        color = NeumorphicColors.TextPrimary
-                                    )
-                                }
-
-                                Text(
-                                    text = state.result.summaryText,
-                                    fontSize = 12.sp,
-                                    color = NeumorphicColors.TextSecondary
-                                )
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Button(
-                                        onClick = {
-                                            saveDocumentLauncher.launch(state.backupFile.name)
-                                        },
-                                        modifier = Modifier.weight(1f),
-                                        colors = ButtonDefaults.buttonColors(containerColor = NeumorphicColors.Primary)
-                                    ) {
-                                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Save", fontSize = 12.sp)
-                                    }
-
-                                    OutlinedButton(
-                                        onClick = {
-                                            try {
-                                                val authority = "${context.packageName}.fileprovider"
-                                                val contentUri = FileProvider.getUriForFile(context, authority, state.backupFile)
-                                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                                    type = "application/octet-stream"
-                                                    putExtra(Intent.EXTRA_STREAM, contentUri)
-                                                    putExtra(Intent.EXTRA_SUBJECT, "Focus Island Cards Backup (.focuscards)")
-                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                                }
-                                                context.startActivity(Intent.createChooser(shareIntent, "Send Card Backup:"))
-                                            } catch (e: Exception) {
-                                                Toast.makeText(context, "Share error: ${e.message}", Toast.LENGTH_SHORT).show()
-                                            }
-                                        },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Send", fontSize = 12.sp)
-                                    }
-
-                                    TextButton(
-                                        onClick = { CardBackupStateHolder.reset() }
-                                    ) {
-                                        Text("Dismiss", fontSize = 12.sp)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    is BackupTaskState.ImportCompleted -> {
-                        NeumorphicCard(
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = Color(0xFF4CAF50)
-                                    )
-                                    Text(
-                                        text = "Import Successful!",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        color = NeumorphicColors.TextPrimary
-                                    )
-                                }
-
-                                Text(
-                                    text = state.result.summaryText,
-                                    fontSize = 12.sp,
-                                    color = NeumorphicColors.TextSecondary
-                                )
-
-                                Button(
-                                    onClick = { CardBackupStateHolder.reset() },
-                                    modifier = Modifier.align(Alignment.End),
-                                    colors = ButtonDefaults.buttonColors(containerColor = NeumorphicColors.Primary)
-                                ) {
-                                    Text("Done", fontSize = 12.sp)
-                                }
-                            }
-                        }
-                    }
-
-                    is BackupTaskState.Error -> {
-                        NeumorphicCard(
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Error,
-                                        contentDescription = null,
-                                        tint = Color.Red
-                                    )
-                                    Text(
-                                        text = if (state.type == BackupTaskType.EXPORT) "Export Error" else "Import Error",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        color = Color.Red
-                                    )
-                                }
-
-                                Text(
-                                    text = state.errorMessage,
-                                    fontSize = 12.sp,
-                                    color = Color.DarkGray
-                                )
-
-                                TextButton(
-                                    onClick = { CardBackupStateHolder.reset() },
-                                    modifier = Modifier.align(Alignment.End)
-                                ) {
-                                    Text("Dismiss", color = Color.Red, fontSize = 12.sp)
-                                }
-                            }
-                        }
-                    }
-
-                    else -> {}
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                // Clear Database / Reset Data
-                Text(text = "Database Reset", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = NeumorphicColors.TextPrimary)
-                NeumorphicButton(
-                    label = "Reset All Local Data",
-                    icon = Icons.Default.DeleteSweep,
-                    onClick = { isResetConfirmOpen = true },
-                    modifier = Modifier.fillMaxWidth(),
-                    accentColor = NeumorphicColors.Accent
-                )
-            }
-        }
-
-        // 6. Section: Forest Wallpapers Custom Setup
-        ExpandableSection(
-            title = "FOREST WALLPAPER",
-            icon = Icons.Default.Eco,
-            isExpanded = isWallpaperExpanded,
-            onHeaderClick = { isWallpaperExpanded = !isWallpaperExpanded }
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(
-                    text = "Generate and apply your fantasy Forest environment as a high-resolution wallpaper that synchronizes with your Android system theme!",
-                    fontSize = 12.sp,
-                    color = NeumorphicColors.TextSecondary,
-                    lineHeight = 16.sp
-                )
-
-                // ── Follow System Theme Switch ──
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Follow System Theme 🌓",
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            text = "Automatically use Light Forest in Day mode and Dark Moonlit Forest in Night mode.",
-                            fontSize = 11.sp,
-                            color = NeumorphicColors.TextSecondary
-                        )
-                    }
-                    Switch(
-                        checked = state.followSystemTheme,
-                        onCheckedChange = { viewModel.updateFollowSystemTheme(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = NeumorphicColors.Primary,
-                            checkedTrackColor = NeumorphicColors.Primary.copy(alpha = 0.5f)
-                        )
-                    )
-                }
-
-                // ── Manual Theme Selector (When Follow System Theme is OFF) ──
-                AnimatedVisibility(
-                    visible = !state.followSystemTheme,
-                    enter = fadeIn() + expandVertically(),
-                    exit = fadeOut() + shrinkVertically()
-                ) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
-                    ) {
-                        Text(
-                            text = "Manual Theme Selection",
-                            fontWeight = FontWeight.SemiBold,
-                            color = NeumorphicColors.TextPrimary,
-                            fontSize = 13.sp
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            // Light Option
-                            val isLightSelected = state.wallpaperTheme == com.example.ui.theme.WallpaperTheme.LIGHT
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .background(
-                                        color = if (isLightSelected) NeumorphicColors.Primary.copy(alpha = 0.15f) else NeumorphicColors.SurfaceLight,
-                                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-                                    )
-                                    .then(
-                                        if (isLightSelected) Modifier.border(
-                                            2.dp,
-                                            NeumorphicColors.Primary,
-                                            androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-                                        ) else Modifier
-                                    )
-                                    .clickable {
-                                        viewModel.updateWallpaperTheme(com.example.ui.theme.WallpaperTheme.LIGHT)
-                                    }
-                                    .padding(12.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("☀️", fontSize = 22.sp)
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        "Light Forest",
-                                        fontWeight = if (isLightSelected) FontWeight.Bold else FontWeight.Medium,
-                                        fontSize = 12.sp,
-                                        color = if (isLightSelected) NeumorphicColors.Primary else NeumorphicColors.TextPrimary
-                                    )
-                                    Text(
-                                        "Golden sunlight vista",
-                                        fontSize = 9.sp,
-                                        color = NeumorphicColors.TextSecondary
-                                    )
-                                }
-                            }
-
-                            // Dark Option
-                            val isDarkSelected = state.wallpaperTheme == com.example.ui.theme.WallpaperTheme.DARK
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .background(
-                                        color = if (isDarkSelected) NeumorphicColors.Primary.copy(alpha = 0.15f) else NeumorphicColors.SurfaceLight,
-                                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-                                    )
-                                    .then(
-                                        if (isDarkSelected) Modifier.border(
-                                            2.dp,
-                                            NeumorphicColors.Primary,
-                                            androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-                                        ) else Modifier
-                                    )
-                                    .clickable {
-                                        viewModel.updateWallpaperTheme(com.example.ui.theme.WallpaperTheme.DARK)
-                                    }
-                                    .padding(12.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("🌙", fontSize = 22.sp)
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        "Dark Forest",
-                                        fontWeight = if (isDarkSelected) FontWeight.Bold else FontWeight.Medium,
-                                        fontSize = 12.sp,
-                                        color = if (isDarkSelected) NeumorphicColors.Primary else NeumorphicColors.TextPrimary
-                                    )
-                                    Text(
-                                        "Moonlit fireflies vista",
-                                        fontSize = 9.sp,
-                                        color = NeumorphicColors.TextSecondary
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                // ── Home Screen Switch ──
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Set Home Screen",
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            text = "Apply on phone home screen launcher",
-                            fontSize = 11.sp,
-                            color = NeumorphicColors.TextSecondary
-                        )
-                    }
-                    Switch(
-                        checked = state.wallpaperHomeScreen,
-                        onCheckedChange = { viewModel.updateWallpaperHomeScreen(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = NeumorphicColors.Primary,
-                            checkedTrackColor = NeumorphicColors.Primary.copy(alpha = 0.5f)
-                        )
-                    )
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                // ── Lock Screen Switch ──
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Set Lock Screen",
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            text = "Apply on phone secure lock screen",
-                            fontSize = 11.sp,
-                            color = NeumorphicColors.TextSecondary
-                        )
-                    }
-                    Switch(
-                        checked = state.wallpaperLockScreen,
-                        onCheckedChange = { viewModel.updateWallpaperLockScreen(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = NeumorphicColors.Primary,
-                            checkedTrackColor = NeumorphicColors.Primary.copy(alpha = 0.5f)
-                        )
-                    )
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                // ── Auto-Sync Switch ──
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Auto-Sync Wallpaper",
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            text = "Automatically update device wallpaper when theme changes.",
-                            fontSize = 11.sp,
-                            color = NeumorphicColors.TextSecondary
-                        )
-                    }
-                    Switch(
-                        checked = state.autoSyncWallpaper,
-                        onCheckedChange = { checked ->
-                            viewModel.updateAutoSyncWallpaper(checked)
-                            if (checked) {
-                                val isDarkTheme = if (state.followSystemTheme) {
-                                    (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
-                                } else {
-                                    state.wallpaperTheme == com.example.ui.theme.WallpaperTheme.DARK
-                                }
-                                val effectiveTheme = if (isDarkTheme) com.example.ui.theme.WallpaperTheme.DARK else com.example.ui.theme.WallpaperTheme.LIGHT
-
-                                com.example.ui.components.WallpaperHelper.setBuildingWallpaper(
-                                    context = context,
-                                    theme = effectiveTheme,
-                                    setHomeScreen = state.wallpaperHomeScreen,
-                                    setLockScreen = state.wallpaperLockScreen,
-                                    completedSessions = dbSessionCount
-                                ) { success, error ->
-                                    if (success) {
-                                        Toast.makeText(context, "Auto-Sync Enabled & Wallpaper applied! 🌲", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        Toast.makeText(context, "Auto-Sync Enabled: $error", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            }
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = NeumorphicColors.Primary,
-                            checkedTrackColor = NeumorphicColors.Primary.copy(alpha = 0.5f)
-                        )
-                    )
-                }
-
-                Divider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.1f))
-
-                var isWallpaperApplyingNow by remember { mutableStateOf(false) }
-                if (isWallpaperApplyingNow) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(color = NeumorphicColors.Accent)
-                    }
-                } else {
-                    NeumorphicButton(
-                        label = "Apply Current Forest Wallpaper Now",
-                        icon = Icons.Default.Eco,
-                        accentColor = NeumorphicColors.Accent,
-                        onClick = {
-                            if (!state.wallpaperHomeScreen && !state.wallpaperLockScreen) {
-                                Toast.makeText(context, "Please select at least one screen!", Toast.LENGTH_SHORT).show()
-                                return@NeumorphicButton
-                            }
-                            isWallpaperApplyingNow = true
-                            val isDarkTheme = if (state.followSystemTheme) {
-                                (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
-                            } else {
-                                state.wallpaperTheme == com.example.ui.theme.WallpaperTheme.DARK
-                            }
-                            val effectiveTheme = if (isDarkTheme) com.example.ui.theme.WallpaperTheme.DARK else com.example.ui.theme.WallpaperTheme.LIGHT
-
-                            com.example.ui.components.WallpaperHelper.setBuildingWallpaper(
-                                context = context,
-                                theme = effectiveTheme,
-                                setHomeScreen = state.wallpaperHomeScreen,
-                                setLockScreen = state.wallpaperLockScreen,
-                                completedSessions = dbSessionCount
-                            ) { success, error ->
-                                isWallpaperApplyingNow = false
-                                if (success) {
-                                    Toast.makeText(context, "Forest Wallpaper Applied Successfully! 🌲", Toast.LENGTH_LONG).show()
-                                } else {
-                                    Toast.makeText(context, "Failed to apply wallpaper: $error", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                Button(
-                    onClick = {
-                        try {
-                            val intent = android.content.Intent(android.app.WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).apply {
-                                putExtra(
-                                    android.app.WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
-                                    android.content.ComponentName(context, DayNightLiveWallpaperService::class.java)
-                                )
-                            }
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            try {
-                                val intent = android.content.Intent(android.app.WallpaperManager.ACTION_LIVE_WALLPAPER_CHOOSER)
-                                context.startActivity(intent)
-                            } catch (e2: Exception) {
-                                Toast.makeText(context, "Live wallpaper chooser opened.", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E5B37))
-                ) {
-                    Icon(imageVector = Icons.Default.Wallpaper, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Set Live System-Theme Forest Wallpaper", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                }
-            }
-        }
-
-        // 7. Section: Account Controls
-        ExpandableSection(
-            title = "ACCOUNT CONTROLS",
-            icon = Icons.Default.AccountCircle,
-            isExpanded = isAccountExpanded,
-            onHeaderClick = { isAccountExpanded = !isAccountExpanded }
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                NeumorphicCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            com.google.firebase.Firebase.auth.signOut()
-                            navController?.navigate("auth") {
-                                popUpTo(0) { inclusive = true }
-                            }
-                        },
-                    cornerRadius = 12.dp,
-                    elevation = 2.dp
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Logout,
-                            contentDescription = "Logout icon",
-                            tint = Color(0xFFFF6584),
-                            modifier = Modifier.padding(end = 8.dp)
-                        )
-                        Text(
-                            text = "Sign Out / Log Out",
-                            fontWeight = FontWeight.Black,
-                            color = Color(0xFFFF6584),
-                            fontSize = 14.sp
-                        )
-                    }
-                }
-
-                NeumorphicCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            isDeleteAccountConfirmOpen = true
-                        },
-                    cornerRadius = 12.dp,
-                    elevation = 2.dp
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Block,
-                            contentDescription = "Delete Account icon",
-                            tint = Color(0xFFFF4D4D),
-                            modifier = Modifier.padding(end = 8.dp)
-                        )
-                        Text(
-                            text = "Delete My Account",
-                            fontWeight = FontWeight.Black,
-                            color = Color(0xFFFF4D4D),
-                            fontSize = 14.sp
-                        )
-                    }
-                }
-            }
-        }
-
-        // 8. Section: System Update Center
-        ExpandableSection(
-            title = "SYSTEM UPDATE CENTER",
-            icon = Icons.Default.CloudDownload,
-            isExpanded = isUpdateExpanded,
-            onHeaderClick = { isUpdateExpanded = !isUpdateExpanded }
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "Focus Island Version",
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            text = "Current: v${com.example.BuildConfig.VERSION_NAME} (Code: ${com.example.BuildConfig.VERSION_CODE})",
-                            fontSize = 11.sp,
-                            color = NeumorphicColors.TextSecondary
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.Default.Info,
-                        contentDescription = "Version details",
-                        tint = NeumorphicColors.Primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-        }
-
-        // 9. Section: Developer Credentials Bio
-        ExpandableSection(
-            title = "AUTHOR & DEVELOPER",
-            icon = Icons.Default.Info,
-            isExpanded = isDeveloperExpanded,
-            onHeaderClick = { isDeveloperExpanded = !isDeveloperExpanded }
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text(
-                    text = "Dr Merah Youcef",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Black,
-                    color = NeumorphicColors.TextPrimary,
-                    textAlign = TextAlign.Center
-                )
-                Text(
-                    text = "Orthopedic surgeon by profession, programmer at heart.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = NeumorphicColors.TextSecondary,
-                    textAlign = TextAlign.Center
-                )
-
-                Text(
-                    text = "Tel: +213558460474",
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Bold,
-                    color = NeumorphicColors.Primary,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // WhatsApp Button
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .neumorphicShadow(
-                                cornerRadius = 12.dp,
-                                elevation = 4.dp,
-                                isPressed = false
-                            )
-                            .clickable {
-                                try {
-                                    val waIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://wa.me/213558460474"))
-                                    context.startActivity(waIntent)
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "Could not open WhatsApp: ${e.message}", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                            .padding(vertical = 12.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                painter = painterResource(id = com.example.R.drawable.ic_whatsapp),
-                                contentDescription = "WhatsApp icon",
-                                tint = Color.Unspecified,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                text = "contact me",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                color = NeumorphicColors.TextPrimary
-                            )
-                        }
-                    }
-
-                    // Facebook Button
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .neumorphicShadow(
-                                cornerRadius = 12.dp,
-                                elevation = 4.dp,
-                                isPressed = false
-                            )
-                            .clickable {
-                                try {
-                                    val fbIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.facebook.com/youcef.Merahh/"))
-                                    context.startActivity(fbIntent)
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "Could not open Facebook: ${e.message}", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                            .padding(vertical = 12.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                painter = painterResource(id = com.example.R.drawable.ic_facebook),
-                                contentDescription = "Facebook icon",
-                                tint = Color.Unspecified,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                text = "contact me",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                color = NeumorphicColors.TextPrimary
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(100.dp)) // Safe bottom padding
-    }
-
-    // Reset Confirmation Dialog
-    if (isResetConfirmOpen) {
-         val dialogContext = LocalContext.current
-         AlertDialog(
-             onDismissRequest = { isResetConfirmOpen = false },
-             containerColor = NeumorphicColors.DialogBackground,
-             title = {
-                Text(
-                    text = "Confirm Hard Reset",
-                    fontWeight = FontWeight.Black,
-                    color = NeumorphicColors.TextPrimary
-                )
-            },
-            text = {
-                Text(
-                    text = "This will irreversibly delete all recorded completed sessions, statistics, streak logs and exam countdown schedules. Continue?",
-                    color = NeumorphicColors.TextSecondary
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.resetAllData {
-                            Toast.makeText(dialogContext, "Data successfully purged!", Toast.LENGTH_SHORT).show()
-                            isResetConfirmOpen = false
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = NeumorphicColors.Accent)
-                ) {
-                    Text("Delete Everything", color = Color.White)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { isResetConfirmOpen = false }) {
-                    Text("Cancel", color = NeumorphicColors.TextSecondary)
-                }
-            }
-         )
-    }
-
-    // Delete Account Confirmation Dialog
-    if (isDeleteAccountConfirmOpen) {
-         val dialogContext = LocalContext.current
-         AlertDialog(
-             onDismissRequest = { isDeleteAccountConfirmOpen = false },
-             containerColor = NeumorphicColors.DialogBackground,
-             title = {
-                Text(
-                    text = "Delete Your Account?",
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFFFF4D4D)
-                )
-            },
-            text = {
-                Text(
-                    text = "WARNING: This will permanently block and delete your user account, remove your leaderboard rank, clear your online tree count, and delete all related remote & local database data. This action cannot be undone. Are you absolutely sure?",
-                    color = NeumorphicColors.TextSecondary
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.deleteAccount { success, errorMsg ->
-                            if (success) {
-                                Toast.makeText(dialogContext, "Account permanently deleted.", Toast.LENGTH_LONG).show()
-                                isDeleteAccountConfirmOpen = false
-                                navController?.navigate("auth") {
-                                    popUpTo(0) { inclusive = true }
-                                }
-                            } else {
-                                Toast.makeText(dialogContext, "Error: $errorMsg", Toast.LENGTH_LONG).show()
-                                isDeleteAccountConfirmOpen = false
-                            }
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF4D4D))
-                ) {
-                    Text("Delete Account Permanently", color = Color.White)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { isDeleteAccountConfirmOpen = false }) {
-                    Text("Cancel", color = NeumorphicColors.TextSecondary)
-                }
-            }
-         )
+        null -> {}
     }
 }
 
+private enum class SettingsDialog { GEMINI_KEY, GEMINI_MODELS, PROMPT, EXPORT, IMPORT, RESET, SIGN_OUT, DELETE_ACCOUNT }
 
+// ---------------------------------------------------------------- system helpers
+
+private fun hasDndAccess(context: Context): Boolean =
+    (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).isNotificationPolicyAccessGranted
+
+private fun openDndAccess(context: Context) {
+    runCatching { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+}
+
+private fun openUrl(context: Context, url: String): Boolean =
+    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+
+/** What "Apply now" sets: your island, with a palm for each completed session. */
+@Composable
+private fun WallpaperPreview(sessions: Int, dark: Boolean) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = Spacing.md, vertical = Spacing.sm),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Canvas(
+            Modifier
+                .height(Spacing.wallpaperPreviewHeight)
+                .aspectRatio(9f / 19.5f)
+                .clip(MaterialTheme.shapes.medium)
+        ) {
+            with(IslandRenderer) { drawLagoonScene(sessions, if (dark) IslandPalette.Night else IslandPalette.Day) }
+        }
+        Spacer(Modifier.size(Spacing.md))
+        Text(
+            stringResource(R.string.wallpaper_preview_body, IslandRenderer.HUT_AT, IslandRenderer.LIGHTHOUSE_AT, sessions),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+private fun openLiveWallpaper(context: Context) {
+    val direct = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER)
+        .putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT, ComponentName(context, DayNightLiveWallpaperService::class.java))
+    runCatching { context.startActivity(direct) }
+        .recoverCatching { context.startActivity(Intent(WallpaperManager.ACTION_LIVE_WALLPAPER_CHOOSER)) }
+}
+
+/** Asks the launcher to add a widget. False when the launcher can't (then: long-press the home screen). */
+private fun pinWidget(context: Context, receiver: Class<*>): Boolean {
+    val manager = AppWidgetManager.getInstance(context)
+    if (!manager.isRequestPinAppWidgetSupported) return false
+    return runCatching { manager.requestPinAppWidget(ComponentName(context, receiver), null, null) }.getOrDefault(false)
+}
+
+private fun shareFile(context: Context, file: java.io.File, title: String): Boolean = runCatching {
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    val send = Intent(Intent.ACTION_SEND)
+        .setType("application/octet-stream")
+        .putExtra(Intent.EXTRA_STREAM, uri)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    context.startActivity(Intent.createChooser(send, title).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+}.isSuccess

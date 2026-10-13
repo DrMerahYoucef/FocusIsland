@@ -15,6 +15,9 @@ import java.io.ByteArrayOutputStream
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
+/** Gemini API key header (keeps the key out of request URLs). */
+internal const val API_KEY_HEADER = "x-goog-api-key"
+
 enum class ExtractionMode {
     VERBATIM, EXPLAIN
 }
@@ -46,7 +49,7 @@ data class GeminiNoteResult(
 // being embedded as "==color:x==term==" markup inside a string.
 fun GeminiNoteResult.toSingleNote(deckId: String, easeFactorDefault: Float = 2.5f): RevisionNoteEntity {
     val safeBlocks = blocks.ifEmpty {
-        listOf(GeminiBlock(type = "text", content = "No text recognized"))
+        listOf(GeminiBlock(type = "text", content = com.example.FocusFlowApplication.instance.getString(com.example.R.string.ocr_no_text)))
     }
 
     val noteBlocks: List<NoteBlock> = safeBlocks.map { block ->
@@ -100,7 +103,8 @@ interface OcrEngine {
 
 class GeminiOcrEngine(
     private val apiKeyProvider: () -> String,
-    private val selectedModelProvider: () -> String? = { null }
+    /** Models to try, best first (see [GeminiModels.attemptOrder]). */
+    private val modelOrderProvider: suspend () -> List<String> = { GeminiModels.attemptOrder(GeminiModels.AUTO_FLASH, emptyList()) }
 ) : OcrEngine {
     private val client = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
@@ -119,9 +123,16 @@ General guidelines (unless overridden by specific user instructions):
 - Preserve bold/italic/headers using Markdown syntax.
 - If a table is present and included in the requested extraction, reproduce it as a "table" block (see schema).
 
+Lists and emphasis:
+- A line that starts with "_", "–", "-" or "•" in the source is a list item: write it as "- item", one per line.
+- Underlined words are emphasis: write them in **bold**. Never use ~~strikethrough~~ unless the text is visibly crossed out.
+
 Table-specific discipline (when tables are extracted):
 - The header row is always the very FIRST row of the table as it appears in the image.
 - Preserve all columns and rows accurately in the "headers" and "rows" arrays.
+- A cell may hold several lines: keep them, separated by "\n", with list items written as "- item".
+- A page laid out as boxes (a short label on the left, its content on the right) is a 2-column table:
+  label in the first column, the full content in the second. Never put two different sections in one cell.
 
 Return ONLY valid JSON matching this schema, nothing else — no markdown code fences, no commentary:
 
@@ -268,34 +279,17 @@ Rules:
             })
         }
 
-        // Current, real, GA model IDs only (checked against Google's live model list — the
-        // previous version of this file guessed at some IDs that don't exist, which silently
-        // burned through 404 fallbacks before landing on a weaker/older model).
-        val baseModels = listOf(
-            "gemini-2.5-flash",
-            "gemini-2.5-pro",
-            "gemini-2.5-flash-lite",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
-            "gemini-2.0-flash",
-            "gemini-3.5-flash",
-            "gemini-3.5-flash-lite"
-        )
-        val selected = selectedModelProvider()?.trim().orEmpty()
-        val models = if (selected.isNotBlank()) {
-            listOf(selected) + baseModels.filter { it != selected }
-        } else {
-            baseModels
-        }
+        val models = modelOrderProvider().ifEmpty { GeminiModels.FALLBACK }
         var lastException: Exception? = null
 
         for (model in models) {
             try {
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
                 val requestBody = jsonRequest.toString().toRequestBody("application/json".toMediaType())
 
                 val request = Request.Builder()
                     .url(url)
+                    .header(API_KEY_HEADER, apiKey) // never in the URL (URLs end up in logs and proxies)
                     .post(requestBody)
                     .build()
 
@@ -304,18 +298,21 @@ Rules:
 
                 if (!response.isSuccessful) {
                     val code = response.code
-                    if (code == 404 && model != models.last()) {
-                        continue
-                    }
                     val friendlyError = try {
                         val errObj = JSONObject(responseBodyStr).optJSONObject("error")
                         errObj?.optString("message") ?: responseBodyStr
                     } catch (e: Exception) { responseBodyStr }
+                    val badKey = code == 401 || code == 403 || (code == 400 && friendlyError.contains("API key", ignoreCase = true))
 
-                    val msg = when (code) {
-                        401, 403 -> "Invalid Gemini API Key. Please verify your key in Settings."
-                        429 -> "Gemini API rate limit reached. Please try again shortly."
+                    val msg = when {
+                        badKey -> "Invalid Gemini API Key. Please verify your key in Settings."
+                        code == 429 -> "Gemini API rate limit reached. Please try again shortly."
                         else -> "Gemini API Error ($code): $friendlyError"
+                    }
+                    // Any model-side failure (retired, overloaded, quota for this model…) tries the next model.
+                    if (!badKey && model != models.last()) {
+                        lastException = IllegalStateException(msg)
+                        continue
                     }
                     throw IllegalStateException(msg)
                 }
@@ -413,7 +410,7 @@ Rules:
 // --- OCR Engine Provider: Supports Google ML Kit on-device and Gemini AI Cloud ---
 class OcrEngineProvider(
     private val apiKeyProvider: () -> String,
-    private val selectedModelProvider: () -> String? = { null }
+    private val modelOrderProvider: suspend () -> List<String> = { GeminiModels.attemptOrder(GeminiModels.AUTO_FLASH, emptyList()) }
 ) {
     private val mlKitEngine by lazy { MlKitOcrEngine() }
 
@@ -427,7 +424,7 @@ class OcrEngineProvider(
                     // Fall back cleanly to ML Kit on-device if Gemini key is missing
                     mlKitEngine
                 } else {
-                    GeminiOcrEngine(apiKeyProvider = { key }, selectedModelProvider = selectedModelProvider)
+                    GeminiOcrEngine(apiKeyProvider = { key }, modelOrderProvider = modelOrderProvider)
                 }
             }
         }
@@ -513,9 +510,9 @@ Return ONLY valid JSON: {"title": "..."}
 
         for (model in models) {
             try {
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
                 val requestBody = jsonRequest.toString().toRequestBody("application/json".toMediaType())
-                val request = Request.Builder().url(url).post(requestBody).build()
+                val request = Request.Builder().url(url).header(API_KEY_HEADER, apiKey).post(requestBody).build()
                 val response = client.newCall(request).execute()
                 val responseBodyStr = response.body?.string() ?: ""
 
@@ -561,7 +558,7 @@ suspend fun verifyGeminiModel(apiKey: String, model: String): Boolean = withCont
         .readTimeout(8, TimeUnit.SECONDS)
         .build()
     return@withContext try {
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$cleanKey"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
         val jsonRequest = JSONObject().apply {
             put("contents", JSONArray().apply {
                 put(JSONObject().apply {
@@ -575,7 +572,7 @@ suspend fun verifyGeminiModel(apiKey: String, model: String): Boolean = withCont
             })
         }
         val requestBody = jsonRequest.toString().toRequestBody("application/json".toMediaType())
-        val request = Request.Builder().url(url).post(requestBody).build()
+        val request = Request.Builder().url(url).header(API_KEY_HEADER, cleanKey).post(requestBody).build()
         val response = client.newCall(request).execute()
         val isSuccessful = response.isSuccessful
         response.close()
@@ -584,4 +581,3 @@ suspend fun verifyGeminiModel(apiKey: String, model: String): Boolean = withCont
         false
     }
 }
-

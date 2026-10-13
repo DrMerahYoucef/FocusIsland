@@ -1,19 +1,7 @@
 package com.example.ui.components
 
 import android.app.Application
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.*
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewModelScope
 import com.example.FocusFlowApplication
 import com.example.ui.theme.WallpaperTheme
@@ -47,8 +35,11 @@ class ForestViewModel(application: Application) : AndroidViewModel(application) 
             repository
                 .getSessionCount(0L, Long.MAX_VALUE)
                 .collect { count ->
+                    val planted = count != sharedPrefs.getInt("last_synced_tree_count", 0)
                     _forestState.update { it.copy(treeCount = count) }
                     sharedPrefs.edit().putInt("last_synced_tree_count", count).apply()
+                    // A new session plants a palm: refresh the wallpaper if the user asked for automatic updates.
+                    if (planted) checkAndTriggerAutoWallpaper(_forestState.value.isDarkTheme)
                 }
         }
     }
@@ -104,106 +95,14 @@ class ForestViewModel(application: Application) : AndroidViewModel(application) 
         val setLock = sharedPrefs.getBoolean("wallpaper_lock_screen", false)
         val theme = if (isDark) WallpaperTheme.DARK else WallpaperTheme.LIGHT
 
-        WallpaperHelper.setForestWallpaper(
-            context = app,
-            theme = theme,
-            setHomeScreen = setHome,
-            setLockScreen = setLock,
-            treeCount = _forestState.value.treeCount
-        ) { _, _ -> }
+        val sessions = _forestState.value.treeCount
+        viewModelScope.launch {
+            WallpaperHelper.setIslandWallpaper(app, theme, setHome, setLock, sessions)
+        }
     }
 
     override fun onCleared() {
         super.onCleared()
         sharedPrefs.unregisterOnSharedPreferenceChangeListener(prefListener)
-    }
-}
-
-@Composable
-fun ForestBackground(
-    forestState: ForestState,
-    modifier: Modifier = Modifier
-) {
-    val systemDark = isSystemInDarkTheme()
-    val isDark = if (forestState.followSystemTheme) systemDark else (forestState.manualTheme == WallpaperTheme.DARK)
-
-    ForestBackgroundContent(
-        isDark = isDark,
-        treeCount = forestState.treeCount,
-        modifier = modifier
-    )
-}
-
-@Composable
-fun ForestBackgroundContent(
-    isDark: Boolean,
-    treeCount: Int = 0,
-    modifier: Modifier = Modifier
-) {
-    val darkProgress by animateFloatAsState(
-        targetValue = if (isDark) 1f else 0f,
-        animationSpec = tween(1200, easing = LinearOutSlowInEasing),
-        label = "darkProgress"
-    )
-
-    val lifecycleOwner = LocalLifecycleOwner.current
-    var isAppResumed by remember { mutableStateOf(true) }
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            isAppResumed = event.targetState.isAtLeast(Lifecycle.State.RESUMED)
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-
-    val wavePhase = remember { Animatable(0f) }
-    LaunchedEffect(isAppResumed) {
-        if (isAppResumed) {
-            while (true) {
-                wavePhase.animateTo(
-                    targetValue = wavePhase.value + 1000f,
-                    animationSpec = tween(120000, easing = LinearEasing)
-                )
-            }
-        } else {
-            wavePhase.stop()
-        }
-    }
-
-    val currentAnimPhase = wavePhase.value
-
-    Box(modifier = modifier.fillMaxSize()) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val W = size.width
-            val H = size.height
-
-            ForestTreeRenderer.drawModernLandscape(
-                drawScope = this,
-                W = W,
-                H = H,
-                treeCount = treeCount,
-                darkProgress = darkProgress,
-                animPhase = currentAnimPhase
-            )
-
-            ForestTreeRenderer.drawAtmosphericParticles(
-                drawScope = this,
-                W = W,
-                H = H,
-                darkProgress = darkProgress,
-                animPhase = currentAnimPhase
-            )
-
-            drawRect(
-                brush = Brush.verticalGradient(
-                    colors = listOf(Color.Transparent, Color(0x60000000)),
-                    startY = H * 0.78f,
-                    endY = H
-                ),
-                size = Size(W, H)
-            )
-        }
     }
 }

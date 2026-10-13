@@ -2,108 +2,98 @@ package com.example.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.Density
+import com.example.service.Phase
 
 val LocalIsDarkTheme = staticCompositionLocalOf { false }
+val LocalExtendedColors = staticCompositionLocalOf { LagoonLightExtended }
 
+/** Legacy colour bundle still read by screens not yet redesigned. Derived from the M3 scheme. */
 data class AppThemeColors(
-    val surface: Color,         // cards, bottom nav, buttons
-    val onSurface: Color,       // primary text
-    val secondaryText: Color,   // subtitles, labels
-    val accent: Color,          // active tab, toggles, icons
-    val inputBackground: Color, // search/filter fields
+    val surface: Color,
+    val onSurface: Color,
+    val secondaryText: Color,
+    val accent: Color,
+    val inputBackground: Color,
     val divider: Color,
     val iconTint: Color
 )
 
-val LocalAppThemeColors = staticCompositionLocalOf {
-    AppThemeColors(
-        surface = Color(0xFF1C2128).copy(alpha = 0.82f),
-        onSurface = Color(0xFFE6EDF3),
-        secondaryText = Color(0xFF8B949E),
-        accent = Color(0xFF7C6AF7),
-        inputBackground = Color(0xFF0D1117).copy(alpha = 0.75f),
-        divider = Color(0xFF30363D),
-        iconTint = Color(0xFFCDD9E5)
-    )
+val LocalAppThemeColors = staticCompositionLocalOf { LagoonLightColors.toAppThemeColors() }
+
+private fun ColorScheme.toAppThemeColors() = AppThemeColors(
+    surface = surfaceContainerLow,
+    onSurface = onSurface,
+    secondaryText = onSurfaceVariant,
+    accent = primary,
+    inputBackground = surfaceContainerHighest,
+    divider = outlineVariant,
+    iconTint = onSurfaceVariant
+)
+
+/** User choice stored under the existing "theme_mode" preference. */
+enum class ThemeMode(val key: String) {
+    SYSTEM("system"), LIGHT("light"), DARK("dark");
+
+    companion object {
+        fun from(key: String?) = entries.firstOrNull { it.key == key } ?: SYSTEM
+    }
 }
 
-private val DarkColorScheme =
-  darkColorScheme(
-    primary = Color(0xFF8B84FF),      // Primary
-    secondary = Color(0xFF5CCB96),    // Success
-    tertiary = Color(0xFFFF829C),     // Accent
-    background = Color(0xFF1E222B),
-    surface = Color(0xFF1E222B),
-    onPrimary = Color(0xFF2E333F),    // SurfaceLight
-    onBackground = Color(0xFFECF0F3), // TextPrimary
-    onSurface = Color(0xFFECF0F3)     // TextPrimary
-  )
-
-private val LightColorScheme =
-  lightColorScheme(
-    primary = Color(0xFF6C63FF),
-    secondary = Color(0xFF4CAF82),
-    tertiary = Color(0xFFFF6584),
-    background = Color(0xFFE0E5EC),
-    surface = Color(0xFFE0E5EC),
-    onPrimary = Color(0xFFFFFFFF),
-    onBackground = Color(0xFF2D3142),
-    onSurface = Color(0xFF2D3142)
-  )
+@Composable
+fun FocusIslandTheme(
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
+    dynamicColor: Boolean = false,
+    content: @Composable () -> Unit
+) {
+    val dark = when (themeMode) {
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
+    FocusIslandTheme(darkTheme = dark, dynamicColor = dynamicColor, content = content)
+}
 
 @Composable
-fun MyApplicationTheme(
-  darkTheme: Boolean = isSystemInDarkTheme(),
-  dynamicColor: Boolean = false, // Disable dynamic colors to preserve our beautiful custom neumorphic palette branding
-  content: @Composable () -> Unit,
+fun FocusIslandTheme(
+    darkTheme: Boolean,
+    dynamicColor: Boolean = false,
+    content: @Composable () -> Unit
 ) {
-  val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+    val context = LocalContext.current
+    val colors = when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        darkTheme -> LagoonDarkColors
+        else -> LagoonLightColors
+    }
+    // The user's font size is always respected (WCAG 1.4.4): never override LocalDensity here.
+    CompositionLocalProvider(
+        LocalIsDarkTheme provides darkTheme,
+        LocalExtendedColors provides if (darkTheme) LagoonDarkExtended else LagoonLightExtended,
+        LocalAppThemeColors provides colors.toAppThemeColors()
+    ) {
+        MaterialTheme(colorScheme = colors, typography = Typography, shapes = Shapes, content = content)
+    }
+}
 
-  val defaultThemeColors = if (darkTheme) {
-    AppThemeColors(
-      surface = Color(0xFF1C2128).copy(alpha = 0.82f),
-      onSurface = Color(0xFFE6EDF3),
-      secondaryText = Color(0xFF8B949E),
-      accent = Color(0xFF7C6AF7),
-      inputBackground = Color(0xFF0D1117).copy(alpha = 0.75f),
-      divider = Color(0xFF30363D),
-      iconTint = Color(0xFFCDD9E5)
-    )
-  } else {
-    AppThemeColors(
-      surface = Color(0xFFFFFFFF).copy(alpha = 0.82f),
-      onSurface = Color(0xFF1A1A2E),
-      secondaryText = Color(0xFF57606A),
-      accent = Color(0xFF7C6AF7),
-      inputBackground = Color(0xFFF0F2F5).copy(alpha = 0.80f),
-      divider = Color(0xFFD0D7DE),
-      iconTint = Color(0xFF1A1A2E)
-    )
-  }
+val MaterialTheme.extendedColors: ExtendedColors
+    @Composable @ReadOnlyComposable get() = LocalExtendedColors.current
 
-  val currentDensity = LocalDensity.current
-  val fixedDensity = Density(
-    density = currentDensity.density,
-    fontScale = 1.0f
-  )
-
-  CompositionLocalProvider(
-    LocalDensity provides fixedDensity,
-    LocalIsDarkTheme provides darkTheme,
-    LocalAppThemeColors provides defaultThemeColors
-  ) {
-    MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
-  }
+/** Focus = primary, short break = secondary (sand), long break = rest (blue). */
+@Composable
+@ReadOnlyComposable
+fun phaseColor(phase: Phase): Color = when (phase) {
+    Phase.FOCUS -> MaterialTheme.colorScheme.primary
+    Phase.SHORT_BREAK -> MaterialTheme.colorScheme.secondary
+    Phase.LONG_BREAK -> LocalExtendedColors.current.rest
 }

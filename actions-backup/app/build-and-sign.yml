@@ -1,58 +1,66 @@
-name: Auto-Build and Sign Native Android App
+name: Build, test and sign Focus Island
 
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      - name: Restore original Gradle files from backup
+      - name: Restore root Gradle files from backup
         run: |
-          echo "Overwriting any accidental AI Studio modifications with pristine backups..."
-
-          # 1. Restore root level configuration files
+          # Root build files and the version catalog come from actions-backup/ (protects against
+          # accidental edits). The app module's own app/build.gradle.kts is used as is.
           cp actions-backup/build.gradle.kts ./build.gradle.kts
           cp actions-backup/settings.gradle.kts ./settings.gradle.kts
           cp actions-backup/gradle.properties ./gradle.properties
           cp actions-backup/gradlew ./gradlew
-
-          # 2. Restore the gradle wrapper files
           cp -r actions-backup/gradle/. ./gradle/
-
-          # 3. Restore the app-level build configuration safely (keeps your UI code intact)
-          cp actions-backup/app/build.gradle.kts ./app/build.gradle.kts 2>/dev/null || true
-
-          # 4. Fix permissions just in case the executable bit was dropped
           chmod +x gradlew
 
-      - name: Set up Java JDK
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      # Configures Gradle for the workflow
-      - name: Setup Gradle
+      - name: Set up Gradle (with cache)
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
+      # Unit tests (stats, widgets, contrast, auth validation, Robolectric). A failing test stops the release.
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --no-configuration-cache
 
-      # Runs the build using the Gradle wrapper
-      - name: Build Native Release APK
-        run: ./gradlew assembleRelease --no-configuration-cache
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
 
-      - name: Install Android Build Tools 29.0.3
+      # Release builds are shrunk with R8 (see app/proguard-rules.pro). APK for direct install,
+      # AAB for Google Play. Pull requests stop here: secrets are not available to them.
+      - name: Build release APK and App Bundle
+        if: github.event_name != 'pull_request'
+        run: ./gradlew assembleRelease bundleRelease --no-configuration-cache
+
+      - name: Install Android Build Tools 29.0.3 (used by the signing action)
+        if: github.event_name != 'pull_request'
         run: /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager "build-tools;29.0.3" --sdk_root=/usr/local/lib/android/sdk
 
-      - name: Sign Android APK
+      - name: Sign APK
+        if: github.event_name != 'pull_request'
         uses: r0adkll/sign-android-release@v1
-        id: sign_app
+        id: sign_apk
         with:
           releaseDirectory: app/build/outputs/apk/release
           signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -60,8 +68,35 @@ jobs:
           keyStorePassword: ${{ secrets.RELEASE_SIGNING_PASSWORD }}
           keyPassword: ${{ secrets.RELEASE_KEY_PASSWORD }}
 
-      - name: Upload Signed APK Artifact
+      - name: Sign App Bundle
+        if: github.event_name != 'pull_request'
+        uses: r0adkll/sign-android-release@v1
+        id: sign_aab
+        with:
+          releaseDirectory: app/build/outputs/bundle/release
+          signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
+          alias: ${{ secrets.RELEASE_ALIAS }}
+          keyStorePassword: ${{ secrets.RELEASE_SIGNING_PASSWORD }}
+          keyPassword: ${{ secrets.RELEASE_KEY_PASSWORD }}
+
+      - name: Upload signed APK
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: FocusFlow-Signed-APK
-          path: ${{ steps.sign_app.outputs.signedReleaseFile }}
+          name: FocusIsland-Signed-APK
+          path: ${{ steps.sign_apk.outputs.signedReleaseFile }}
+
+      - name: Upload signed App Bundle (Google Play)
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FocusIsland-Signed-AAB
+          path: ${{ steps.sign_aab.outputs.signedReleaseFile }}
+
+      # Needed to read crash stack traces from Play Console (upload it with the AAB).
+      - name: Upload R8 mapping file
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FocusIsland-R8-mapping
+          path: app/build/outputs/mapping/release/mapping.txt

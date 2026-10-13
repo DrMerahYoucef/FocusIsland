@@ -1,31 +1,50 @@
 package com.example.ui.revisions
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.example.data.repository.NoteBlock
 import com.example.data.repository.NoteBlocksSerializer
 import com.example.data.repository.NoteHighlight
 import com.example.ui.components.parseMarkdownWithHighlights
+import com.example.ui.designsystem.ThemePreviews
+import com.example.ui.theme.FocusIslandTheme
 import com.example.ui.theme.LocalIsDarkTheme
-import com.example.ui.theme.NeumorphicColors
-import com.example.ui.theme.RevisionHeadingColors
+import com.example.ui.theme.Spacing
+import com.example.ui.theme.ThemeMode
+import com.example.ui.theme.noteHeadingColor
+import com.example.ui.theme.noteHeadingContainer
 
 // --- Structured Note Line Classification ---------------------------------------------------
 sealed class FormattedNoteLine {
@@ -45,7 +64,8 @@ sealed class FormattedNoteLine {
 fun parseNoteLines(content: String): List<FormattedNoteLine> {
     if (content.isBlank()) return emptyList()
 
-    val lines = content.replace("\r\n", "\n").replace("\r", "\n").lines()
+    // A lone "_" between words is a dash in course notes ("Fréquence: _ Affection grave").
+    val lines = content.replace("\r\n", "\n").replace("\r", "\n").replace(LONE_UNDERSCORE, "–").lines()
     val result = mutableListOf<FormattedNoteLine>()
     val paragraphBuffer = StringBuilder()
 
@@ -59,7 +79,7 @@ fun parseNoteLines(content: String): List<FormattedNoteLine> {
 
     // Matches "# Title", "## Subtitle", "### Topic", "#Title", etc.
     val headingRegex = Regex("""^(\s*#{1,6})\s*(.*)$""")
-    val bulletRegex = Regex("""^(\s*)(?:[-*•+]|\(?[•*-]\)?)\s+(.*)$""")
+    val bulletRegex = Regex("""^(\s*)(?:[-*•+–]|\(?[•*-]\)?)\s+(.*)$""")
     val numberedRegex = Regex("""^(\s*)(\d+[\.\)]|\(\d+\)|\d+-\s)\s*(.*)$""")
     val blockquoteRegex = Regex("""^>\s*(.*)$""")
     val hrRegex = Regex("""^(\s*[-*_]\s*){3,}$""")
@@ -101,6 +121,16 @@ fun parseNoteLines(content: String): List<FormattedNoteLine> {
             continue
         }
 
+        // 4a. "_ text" (or "_text" with no closing underscore) is how course notes write a dash.
+        if (trimmed.startsWith("_") && !trimmed.startsWith("__") && trimmed.length > 1 &&
+            (trimmed[1].isWhitespace() || trimmed.indexOf('_', 1) < 0)
+        ) {
+            flushParagraph()
+            val indent = (line.length - line.trimStart().length) / 2
+            result.add(FormattedNoteLine.BulletList(trimmed.drop(1).trim(), indent))
+            continue
+        }
+
         // 4. Check for Bullet list
         val bulletMatch = bulletRegex.matchEntire(line)
         if (bulletMatch != null) {
@@ -132,7 +162,11 @@ fun parseNoteLines(content: String): List<FormattedNoteLine> {
     return result
 }
 
-// --- Authoritative Structured Note Renderer -----------------------------------------------
+private val LONE_UNDERSCORE = Regex("""(?<=\S[ \t])_(?=[ \t])""")
+
+// --- Authoritative structured note renderer ----------------------------------------------
+
+/** Renders a card's structured blocks (text with headings/lists/highlights, and tables). */
 @Composable
 fun NoteBlocksRenderer(
     blocksJson: String,
@@ -140,37 +174,34 @@ fun NoteBlocksRenderer(
     fontSize: TextUnit = 16.sp
 ) {
     val blocks = remember(blocksJson) { NoteBlocksSerializer.fromJson(blocksJson) }
-
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    // Highlights are stored with the text blocks; tables use the same terms.
+    val allHighlights = remember(blocks) { blocks.filterIsInstance<NoteBlock.TextBlock>().flatMap { it.highlights }.distinct() }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
         blocks.forEach { block ->
             when (block) {
-                is NoteBlock.TextBlock -> {
-                    if (block.content.isNotBlank()) {
-                        RichTextBlockRenderer(
-                            content = block.content,
-                            highlights = block.highlights,
-                            fontSize = fontSize,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-                is NoteBlock.TableBlock -> {
-                    NativeTableRenderer(
-                        headers = block.headers,
-                        rows = block.rows,
+                is NoteBlock.TextBlock -> if (block.content.isNotBlank()) {
+                    RichTextBlockRenderer(
+                        content = block.content,
+                        highlights = block.highlights,
                         fontSize = fontSize,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
+                is NoteBlock.TableBlock -> NativeTableRenderer(
+                    headers = block.headers,
+                    rows = block.rows,
+                    fontSize = fontSize,
+                    highlights = allHighlights,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
     }
 }
 
 /**
- * Renders a text block with colored titles, subtitles, styled lists, and rich highlights.
- * Titles and subtitles are rendered without raw '#' characters, instead using distinctive
- * color palettes and background containers.
+ * A text block: headings (no raw '#'), bullet and numbered lists, quotes, dividers and
+ * paragraphs, with highlights. All sizes scale with [fontSize] so the reader's zoom works.
  */
 @Composable
 fun RichTextBlockRenderer(
@@ -181,301 +212,191 @@ fun RichTextBlockRenderer(
 ) {
     val isDark = LocalIsDarkTheme.current
     val parsedLines = remember(content) { parseNoteLines(content) }
-    val defaultTextColor = NeumorphicColors.TextPrimary
+    val textColor = MaterialTheme.colorScheme.onSurface
 
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    @Composable
+    fun annotate(text: String, color: Color): AnnotatedString = remember(text, highlights, isDark, color) {
+        parseMarkdownWithHighlights(input = text, defaultTextColor = color, highlights = highlights, isDark = isDark)
+    }
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
         parsedLines.forEachIndexed { index, line ->
             when (line) {
                 is FormattedNoteLine.Heading -> {
-                    val headingAnnotated = remember(line.text, highlights, isDark) {
-                        parseMarkdownWithHighlights(
-                            input = line.text,
-                            defaultTextColor = Color.Unspecified,
-                            highlights = highlights,
-                            isDark = isDark
-                        )
-                    }
+                    val text = annotate(line.text, Color.Unspecified)
                     when (line.level) {
-                        1 -> NoteHeading1(
-                            text = headingAnnotated,
-                            fontSize = (fontSize.value * 1.30f).sp,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        2 -> NoteHeading2(
-                            text = headingAnnotated,
-                            fontSize = (fontSize.value * 1.16f).sp,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        3 -> NoteHeading3(
-                            text = headingAnnotated,
-                            fontSize = (fontSize.value * 1.06f).sp,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        4 -> NoteHeading4(
-                            text = headingAnnotated,
-                            fontSize = fontSize,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        else -> NoteHeadingSmall(
-                            text = headingAnnotated,
-                            level = line.level,
-                            fontSize = (fontSize.value * 0.95f).sp,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        1 -> NoteHeading1(text, fontSize = (fontSize.value * 1.30f).sp, modifier = Modifier.fillMaxWidth())
+                        2 -> NoteHeading2(text, fontSize = (fontSize.value * 1.16f).sp, modifier = Modifier.fillMaxWidth())
+                        3 -> NoteHeading3(text, fontSize = (fontSize.value * 1.06f).sp, modifier = Modifier.fillMaxWidth())
+                        4 -> NoteHeading4(text, fontSize = fontSize, modifier = Modifier.fillMaxWidth())
+                        else -> NoteHeadingSmall(text, level = line.level, fontSize = (fontSize.value * 0.95f).sp, modifier = Modifier.fillMaxWidth())
                     }
                 }
-                is FormattedNoteLine.BulletList -> {
-                    val itemAnnotated = remember(line.text, highlights, isDark, defaultTextColor) {
-                        parseMarkdownWithHighlights(
-                            input = line.text,
-                            defaultTextColor = defaultTextColor,
-                            highlights = highlights,
-                            isDark = isDark
-                        )
-                    }
-                    NoteBulletItem(
-                        text = itemAnnotated,
-                        indentLevel = line.indentLevel,
-                        fontSize = fontSize,
-                        textColor = defaultTextColor,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                is FormattedNoteLine.NumberedList -> {
-                    val itemAnnotated = remember(line.text, highlights, isDark, defaultTextColor) {
-                        parseMarkdownWithHighlights(
-                            input = line.text,
-                            defaultTextColor = defaultTextColor,
-                            highlights = highlights,
-                            isDark = isDark
-                        )
-                    }
-                    NoteNumberedItem(
-                        numberStr = line.numberStr,
-                        text = itemAnnotated,
-                        fontSize = fontSize,
-                        textColor = defaultTextColor,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                is FormattedNoteLine.Blockquote -> {
-                    val quoteAnnotated = remember(line.text, highlights, isDark, defaultTextColor) {
-                        parseMarkdownWithHighlights(
-                            input = line.text,
-                            defaultTextColor = defaultTextColor,
-                            highlights = highlights,
-                            isDark = isDark
-                        )
-                    }
-                    NoteBlockquote(
-                        text = quoteAnnotated,
-                        fontSize = fontSize,
-                        textColor = defaultTextColor,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                is FormattedNoteLine.Divider -> {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                }
-                is FormattedNoteLine.Paragraph -> {
-                    val paragraphAnnotated = remember(line.text, highlights, isDark, defaultTextColor) {
-                        parseMarkdownWithHighlights(
-                            input = line.text,
-                            defaultTextColor = defaultTextColor,
-                            highlights = highlights,
-                            isDark = isDark
-                        )
-                    }
-                    Text(
-                        text = paragraphAnnotated,
-                        fontSize = fontSize,
-                        color = defaultTextColor,
-                        lineHeight = (fontSize.value * 1.48).sp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 3.dp)
-                            .testTag("note_paragraph_$index")
-                    )
-                }
+                is FormattedNoteLine.BulletList -> NoteBulletItem(
+                    text = annotate(line.text, textColor),
+                    indentLevel = line.indentLevel,
+                    fontSize = fontSize,
+                    textColor = textColor,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                is FormattedNoteLine.NumberedList -> NoteNumberedItem(
+                    numberStr = line.numberStr,
+                    text = annotate(line.text, textColor),
+                    fontSize = fontSize,
+                    textColor = textColor,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                is FormattedNoteLine.Blockquote -> NoteBlockquote(
+                    text = annotate(line.text, textColor),
+                    fontSize = fontSize,
+                    textColor = textColor,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                is FormattedNoteLine.Divider -> HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                    modifier = Modifier.padding(vertical = Spacing.xs)
+                )
+                is FormattedNoteLine.Paragraph -> Text(
+                    text = annotate(line.text, textColor),
+                    fontSize = fontSize,
+                    color = textColor,
+                    lineHeight = 1.5.em,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = Spacing.xxs)
+                        .testTag("note_paragraph_$index")
+                )
             }
         }
     }
 }
 
-// --- Styled Heading Composables -----------------------------------------------------------
+// --- Headings -----------------------------------------------------------------------------
 
-/**
- * Title (Heading 1 / #)
- * Prominent Royal Blue accent with left color bar and soft background pill container.
- */
+/** Level 1: teal band with an accent bar. Announced as a heading by TalkBack. */
 @Composable
 fun NoteHeading1(
     text: AnnotatedString,
     modifier: Modifier = Modifier,
     fontSize: TextUnit = 21.sp,
-    color: Color = RevisionHeadingColors.getHeadingColor(1),
-    bgColor: Color = RevisionHeadingColors.getHeadingBgColor(1)
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(top = 16.dp, bottom = 6.dp)
-            .background(bgColor, shape = RoundedCornerShape(10.dp))
-            .padding(horizontal = 12.dp, vertical = 9.dp)
-            .testTag("heading_level_1")
-    ) {
-        Box(
-            modifier = Modifier
-                .width(4.5.dp)
-                .height(24.dp)
-                .background(color, shape = RoundedCornerShape(2.5.dp))
-        )
-        Spacer(modifier = Modifier.width(10.dp))
-        Text(
-            text = text,
-            fontSize = fontSize,
-            fontWeight = FontWeight.ExtraBold,
-            color = color,
-            lineHeight = (fontSize.value * 1.3).sp
-        )
-    }
-}
+    color: Color = noteHeadingColor(1),
+    bgColor: Color = noteHeadingContainer(1)
+) = BandHeading(text, fontSize, FontWeight.ExtraBold, color, bgColor, Spacing.md, "heading_level_1", modifier)
 
-/**
- * Subtitle 1 (Heading 2 / ##)
- * Mint Teal / Deep Emerald accent with left color bar and soft background pill container.
- */
+/** Level 2: coral band with an accent bar. */
 @Composable
 fun NoteHeading2(
     text: AnnotatedString,
     modifier: Modifier = Modifier,
     fontSize: TextUnit = 18.5.sp,
-    color: Color = RevisionHeadingColors.getHeadingColor(2),
-    bgColor: Color = RevisionHeadingColors.getHeadingBgColor(2)
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(top = 14.dp, bottom = 5.dp)
-            .background(bgColor, shape = RoundedCornerShape(8.dp))
-            .padding(horizontal = 10.dp, vertical = 7.dp)
-            .testTag("heading_level_2")
-    ) {
-        Box(
-            modifier = Modifier
-                .width(3.5.dp)
-                .height(20.dp)
-                .background(color, shape = RoundedCornerShape(2.dp))
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = text,
-            fontSize = fontSize,
-            fontWeight = FontWeight.Bold,
-            color = color,
-            lineHeight = (fontSize.value * 1.3).sp
-        )
-    }
-}
+    color: Color = noteHeadingColor(2),
+    bgColor: Color = noteHeadingContainer(2)
+) = BandHeading(text, fontSize, FontWeight.Bold, color, bgColor, Spacing.sm, "heading_level_2", modifier)
 
-/**
- * Subtitle 2 (Heading 3 / ###)
- * Purple / Lavender accent with colored bullet indicator and clean styling.
- */
+/** Level 3: sand text with a dot. */
 @Composable
 fun NoteHeading3(
     text: AnnotatedString,
     modifier: Modifier = Modifier,
     fontSize: TextUnit = 17.sp,
-    color: Color = RevisionHeadingColors.getHeadingColor(3),
-    bgColor: Color = RevisionHeadingColors.getHeadingBgColor(3)
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp, bottom = 4.dp)
-            .background(bgColor, shape = RoundedCornerShape(6.dp))
-            .padding(horizontal = 8.dp, vertical = 5.dp)
-            .testTag("heading_level_3")
-    ) {
-        Box(
-            modifier = Modifier
-                .size(7.5.dp)
-                .background(color, shape = CircleShape)
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = text,
-            fontSize = fontSize,
-            fontWeight = FontWeight.Bold,
-            color = color,
-            lineHeight = (fontSize.value * 1.35).sp
-        )
-    }
-}
+    color: Color = noteHeadingColor(3),
+    bgColor: Color = noteHeadingContainer(3)
+) = DotHeading(text, fontSize, FontWeight.Bold, color, bgColor, Spacing.noteBullet + Spacing.xxs / 2, "heading_level_3", modifier)
 
-/**
- * Subtitle 3 (Heading 4 / ####)
- * Warm Amber / Gold accent with subtle bullet.
- */
+/** Level 4: slate text with a small dot, no band. */
 @Composable
 fun NoteHeading4(
     text: AnnotatedString,
     modifier: Modifier = Modifier,
     fontSize: TextUnit = 16.sp,
-    color: Color = RevisionHeadingColors.getHeadingColor(4)
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(top = 10.dp, bottom = 3.dp)
-            .testTag("heading_level_4")
-    ) {
-        Box(
-            modifier = Modifier
-                .size(5.5.dp)
-                .background(color, shape = CircleShape)
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = text,
-            fontSize = fontSize,
-            fontWeight = FontWeight.SemiBold,
-            color = color,
-            lineHeight = (fontSize.value * 1.35).sp
-        )
-    }
-}
+    color: Color = noteHeadingColor(4)
+) = DotHeading(text, fontSize, FontWeight.SemiBold, color, Color.Transparent, Spacing.noteBullet, "heading_level_4", modifier)
 
+/** Levels 5–6: plain semibold line. */
 @Composable
 fun NoteHeadingSmall(
     text: AnnotatedString,
     level: Int,
     modifier: Modifier = Modifier,
     fontSize: TextUnit = 15.sp,
-    color: Color = RevisionHeadingColors.getHeadingColor(level)
+    color: Color = noteHeadingColor(level)
 ) {
     Text(
         text = text,
         fontSize = fontSize,
         fontWeight = FontWeight.SemiBold,
         color = color,
-        lineHeight = (fontSize.value * 1.35).sp,
+        lineHeight = 1.35.em,
         modifier = modifier
             .fillMaxWidth()
-            .padding(top = 8.dp, bottom = 2.dp)
+            .padding(top = Spacing.xs, bottom = Spacing.xxs / 2)
+            .semantics { heading() }
             .testTag("heading_level_$level")
     )
 }
 
-// --- Styled List and Quote Composables ----------------------------------------------------
+@Composable
+private fun BandHeading(
+    text: AnnotatedString,
+    fontSize: TextUnit,
+    weight: FontWeight,
+    color: Color,
+    bgColor: Color,
+    topSpace: androidx.compose.ui.unit.Dp,
+    tag: String,
+    modifier: Modifier
+) {
+    Surface(
+        color = bgColor,
+        shape = MaterialTheme.shapes.small,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = topSpace, bottom = Spacing.xxs)
+            .semantics { heading() }
+            .testTag(tag)
+    ) {
+        // IntrinsicSize lets the accent bar follow headings that wrap onto several lines.
+        Row(Modifier.height(IntrinsicSize.Min).padding(horizontal = Spacing.sm, vertical = Spacing.xs)) {
+            Box(
+                Modifier
+                    .width(Spacing.noteAccentBar)
+                    .fillMaxHeight()
+                    .background(color, CircleShape)
+            )
+            Spacer(Modifier.width(Spacing.sm))
+            Text(text, fontSize = fontSize, fontWeight = weight, color = color, lineHeight = 1.3.em, modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun DotHeading(
+    text: AnnotatedString,
+    fontSize: TextUnit,
+    weight: FontWeight,
+    color: Color,
+    bgColor: Color,
+    dot: androidx.compose.ui.unit.Dp,
+    tag: String,
+    modifier: Modifier
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = Spacing.sm, bottom = Spacing.xxs / 2)
+            .background(bgColor, MaterialTheme.shapes.extraSmall)
+            .padding(horizontal = Spacing.xs, vertical = Spacing.xxs)
+            .semantics { heading() }
+            .testTag(tag)
+    ) {
+        Box(Modifier.size(dot).background(color, CircleShape))
+        Spacer(Modifier.width(Spacing.xs))
+        Text(text, fontSize = fontSize, fontWeight = weight, color = color, lineHeight = 1.35.em, modifier = Modifier.weight(1f))
+    }
+}
+
+// --- Lists and quotes ---------------------------------------------------------------------
 
 @Composable
 fun NoteBulletItem(
@@ -483,30 +404,23 @@ fun NoteBulletItem(
     indentLevel: Int = 0,
     modifier: Modifier = Modifier,
     fontSize: TextUnit = 15.sp,
-    textColor: Color = NeumorphicColors.TextPrimary,
-    bulletColor: Color = RevisionHeadingColors.getHeadingColor(2)
+    textColor: Color = MaterialTheme.colorScheme.onSurface,
+    bulletColor: Color = noteHeadingColor(1)
 ) {
-    val startPadding = (indentLevel * 12 + 2).dp
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = startPadding, top = 2.dp, bottom = 2.dp)
+            .padding(start = Spacing.sm * indentLevel + Spacing.xxs / 2, top = Spacing.xxs / 2, bottom = Spacing.xxs / 2)
             .testTag("note_bullet_item"),
         verticalAlignment = Alignment.Top
     ) {
-        Box(
-            modifier = Modifier
-                .padding(top = 7.5.dp, end = 8.dp)
-                .size(5.5.dp)
-                .background(bulletColor, shape = CircleShape)
-        )
-        Text(
-            text = text,
-            fontSize = fontSize,
-            color = textColor,
-            lineHeight = (fontSize.value * 1.45).sp,
-            modifier = Modifier.weight(1f)
-        )
+        // Centre the dot on the first line, whatever the zoom level.
+        val lineHeightDp = with(LocalDensity.current) { (fontSize.value * 1.45f).sp.toDp() }
+        Box(Modifier.height(lineHeightDp), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(Spacing.noteBullet).background(bulletColor, CircleShape))
+        }
+        Spacer(Modifier.width(Spacing.xs))
+        Text(text = text, fontSize = fontSize, color = textColor, lineHeight = 1.45.em, modifier = Modifier.weight(1f))
     }
 }
 
@@ -516,13 +430,13 @@ fun NoteNumberedItem(
     text: AnnotatedString,
     modifier: Modifier = Modifier,
     fontSize: TextUnit = 15.sp,
-    textColor: Color = NeumorphicColors.TextPrimary,
-    numberColor: Color = RevisionHeadingColors.getHeadingColor(1)
+    textColor: Color = MaterialTheme.colorScheme.onSurface,
+    numberColor: Color = noteHeadingColor(1)
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp, horizontal = 2.dp)
+            .padding(vertical = Spacing.xxs / 2, horizontal = Spacing.xxs / 2)
             .testTag("note_numbered_item"),
         verticalAlignment = Alignment.Top
     ) {
@@ -531,17 +445,10 @@ fun NoteNumberedItem(
             fontWeight = FontWeight.Bold,
             fontSize = fontSize,
             color = numberColor,
-            modifier = Modifier
-                .padding(end = 8.dp)
-                .widthIn(min = 20.dp)
+            lineHeight = 1.45.em,
+            modifier = Modifier.padding(end = Spacing.xs).widthIn(min = Spacing.md + Spacing.xxs)
         )
-        Text(
-            text = text,
-            fontSize = fontSize,
-            color = textColor,
-            lineHeight = (fontSize.value * 1.45).sp,
-            modifier = Modifier.weight(1f)
-        )
+        Text(text = text, fontSize = fontSize, color = textColor, lineHeight = 1.45.em, modifier = Modifier.weight(1f))
     }
 }
 
@@ -550,31 +457,43 @@ fun NoteBlockquote(
     text: AnnotatedString,
     modifier: Modifier = Modifier,
     fontSize: TextUnit = 15.sp,
-    textColor: Color = NeumorphicColors.TextPrimary,
-    accentColor: Color = RevisionHeadingColors.getHeadingColor(3)
+    textColor: Color = MaterialTheme.colorScheme.onSurface,
+    accentColor: Color = noteHeadingColor(3)
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .background(accentColor.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
-            .padding(horizontal = 10.dp, vertical = 8.dp)
-            .testTag("note_blockquote"),
-        verticalAlignment = Alignment.CenterVertically
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = MaterialTheme.shapes.small,
+        modifier = modifier.fillMaxWidth().padding(vertical = Spacing.xxs).testTag("note_blockquote")
     ) {
-        Box(
-            modifier = Modifier
-                .width(3.5.dp)
-                .height(28.dp)
-                .background(accentColor, RoundedCornerShape(1.5.dp))
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = text,
-            fontSize = fontSize,
-            fontStyle = FontStyle.Italic,
-            color = textColor,
-            lineHeight = (fontSize.value * 1.45).sp
-        )
+        Row(Modifier.height(IntrinsicSize.Min).padding(horizontal = Spacing.sm, vertical = Spacing.xs)) {
+            Box(Modifier.width(Spacing.noteAccentBar).fillMaxHeight().background(accentColor, CircleShape))
+            Spacer(Modifier.width(Spacing.sm))
+            Text(text = text, fontSize = fontSize, fontStyle = FontStyle.Italic, color = textColor, lineHeight = 1.45.em, modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+// --- Previews -----------------------------------------------------------------------------
+
+@ThemePreviews
+@Composable
+private fun RichTextBlockPreview() {
+    FocusIslandTheme(themeMode = ThemeMode.SYSTEM) {
+        Surface {
+            RichTextBlockRenderer(
+                content = """
+                    # Photosynthesis
+                    ## Light reactions
+                    Light energy splits ==water== and makes **ATP** and NADPH.
+                    ### Where
+                    - In the ==color:green==thylakoid membranes==
+                    - Needs chlorophyll a and b
+                    1. Photon absorbed
+                    2. Electron transport chain
+                    > Oxygen is a by-product.
+                """.trimIndent(),
+                modifier = Modifier.padding(Spacing.md)
+            )
+        }
     }
 }

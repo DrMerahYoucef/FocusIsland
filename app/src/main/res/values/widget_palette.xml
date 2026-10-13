@@ -1,16 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Opaque base tones. Alpha is applied by the res/color/ selectors. -->
-    <color name="wgt_surface_base">#F5F7FA</color>
-    <color name="wgt_hue_veil_base">#DBE7FF</color>
+    <!-- Widget colours: the app's Lagoon palette, fixed (no system dynamic colours) so widgets look the
+         same on every brand. Light/dark is picked by the launcher from values / values-night.
+         Opaque base tones; alpha is applied by the res/color/ selectors. -->
+    <color name="wgt_surface_base">#F4F8F7</color>
+    <color name="wgt_hue_veil_base">#CDEDE8</color>
     <color name="wgt_rim_base">#FFFFFF</color>
 
-    <!-- Foreground roles: fully opaque, consumed directly. -->
-    <color name="wgt_on_surface">#111827</color>
-    <color name="wgt_on_surface_variant">#4B5563</color>
-    <color name="wgt_accent">#2563EB</color>
-    <color name="wgt_accent_soft">#60A5FA</color>
-    <color name="wgt_secondary">#7C3AED</color>
-    <color name="wgt_critical">#DC2626</color>
-    <color name="wgt_track">#CBD5E1</color>
+    <!-- Foreground roles: fully opaque. Checked ≥ 4.5:1 over the card on a black or white wallpaper. -->
+    <color name="wgt_on_surface">#0F1F1D</color>
+    <color name="wgt_on_surface_variant">#3A4543</color>
+    <color name="wgt_accent">#155049</color>
+    <color name="wgt_accent_soft">#2E8A80</color>
+    <color name="wgt_secondary">#6B4E00</color>
+    <color name="wgt_critical">#9C3324</color>
+    <color name="wgt_track">#C3D1CE</color>
 </resources>

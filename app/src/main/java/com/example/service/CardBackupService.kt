@@ -1,5 +1,6 @@
 package com.example.service
 
+import com.example.R
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -117,7 +118,7 @@ class CardBackupService : Service() {
     }
 
     private fun runExportTask(cardTypeFilter: CardTypeFilter, deckIdFilter: String) {
-        val initialNotification = createProgressNotification("Starting backup export...", 0)
+        val initialNotification = createProgressNotification(getString(R.string.backup_notif_export_start), 0)
         startForeground(NOTIFICATION_ID, initialNotification)
 
         serviceScope.launch {
@@ -129,7 +130,7 @@ class CardBackupService : Service() {
                 val backupFile = File(cacheDir, "FocusCards_Backup_$timestamp.focuscards")
 
                 CardBackupStateHolder.updateState(
-                    BackupTaskState.Running(BackupTaskType.EXPORT, 0.05f, "Preparing backup...")
+                    BackupTaskState.Running(BackupTaskType.EXPORT, 0.05f, getString(R.string.backup_notif_export_start))
                 )
 
                 val result = CardBackupEngine.createBackup(
@@ -142,7 +143,7 @@ class CardBackupService : Service() {
                     CardBackupStateHolder.updateState(
                         BackupTaskState.Running(BackupTaskType.EXPORT, progress, status)
                     )
-                    updateNotification("Exporting: $status", (progress * 100).toInt())
+                    updateNotification(status, (progress * 100).toInt())
                 }
 
                 CardBackupStateHolder.updateState(
@@ -150,17 +151,17 @@ class CardBackupService : Service() {
                 )
 
                 showCompletionNotification(
-                    title = "Backup Export Complete! 📦",
-                    contentText = "${result.notesCount} cards exported (${result.mediaCount} media files)."
+                    title = getString(R.string.backup_export_done),
+                    contentText = result.summaryText
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "Export failed", e)
                 CardBackupStateHolder.updateState(
-                    BackupTaskState.Error(BackupTaskType.EXPORT, e.message ?: "Export failed unexpectedly")
+                    BackupTaskState.Error(BackupTaskType.EXPORT, e.localizedMessage ?: e.javaClass.simpleName)
                 )
                 showCompletionNotification(
-                    title = "Backup Export Failed ❌",
-                    contentText = e.message ?: "An error occurred during export."
+                    title = getString(R.string.backup_export_failed),
+                    contentText = getString(R.string.backup_notif_open_app)
                 )
             } finally {
                 stopForegroundService()
@@ -169,7 +170,7 @@ class CardBackupService : Service() {
     }
 
     private fun runImportTask(importUri: Uri, importMode: ImportMode) {
-        val initialNotification = createProgressNotification("Starting card restoration...", 0)
+        val initialNotification = createProgressNotification(getString(R.string.backup_notif_import_start), 0)
         startForeground(NOTIFICATION_ID, initialNotification)
 
         serviceScope.launch {
@@ -178,7 +179,7 @@ class CardBackupService : Service() {
 
             try {
                 CardBackupStateHolder.updateState(
-                    BackupTaskState.Running(BackupTaskType.IMPORT, 0.05f, "Opening backup file...")
+                    BackupTaskState.Running(BackupTaskType.IMPORT, 0.05f, getString(R.string.backup_notif_import_start))
                 )
 
                 val result = CardBackupEngine.restoreBackup(
@@ -190,7 +191,7 @@ class CardBackupService : Service() {
                     CardBackupStateHolder.updateState(
                         BackupTaskState.Running(BackupTaskType.IMPORT, progress, status)
                     )
-                    updateNotification("Importing: $status", (progress * 100).toInt())
+                    updateNotification(status, (progress * 100).toInt())
                 }
 
                 CardBackupStateHolder.updateState(
@@ -198,17 +199,17 @@ class CardBackupService : Service() {
                 )
 
                 showCompletionNotification(
-                    title = "Cards Restored Successfully! 🎉",
-                    contentText = "${result.notesCount} cards & ${result.decksCount} decks imported."
+                    title = getString(R.string.backup_import_done),
+                    contentText = result.summaryText
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "Import failed", e)
                 CardBackupStateHolder.updateState(
-                    BackupTaskState.Error(BackupTaskType.IMPORT, e.message ?: "Import failed unexpectedly")
+                    BackupTaskState.Error(BackupTaskType.IMPORT, e.localizedMessage ?: e.javaClass.simpleName)
                 )
                 showCompletionNotification(
-                    title = "Import Failed ❌",
-                    contentText = e.message ?: "An error occurred during import."
+                    title = getString(R.string.backup_import_failed),
+                    contentText = getString(R.string.backup_notif_open_app)
                 )
             } finally {
                 stopForegroundService()
@@ -239,10 +240,10 @@ class CardBackupService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Card Backup & Restore Service",
+                getString(R.string.backup_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Shows real-time progress of flashcard backup export and import tasks"
+                description = getString(R.string.backup_channel_body)
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
@@ -251,7 +252,7 @@ class CardBackupService : Service() {
 
     private fun createProgressNotification(contentText: String, progressPercent: Int) =
         NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Focus Island Backup & Restore")
+            .setContentTitle(getString(R.string.backup_channel_name))
             .setContentText(contentText)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setProgress(100, progressPercent, progressPercent == 0)

@@ -3,4 +3,5 @@
     <dimen name="wgt_card_radius">24dp</dimen>
     <dimen name="wgt_inner_radius">16dp</dimen>
     <dimen name="wgt_content_padding">16dp</dimen>
+    <dimen name="wgt_matrix_padding">12dp</dimen>
 </resources>

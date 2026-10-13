@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 4 × 3 by default (70 × n − 30 dp rule), resizable; the calendar picture is redrawn at the new size. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:minWidth="180dp"
-    android:minHeight="110dp"
+    android:minWidth="250dp"
+    android:minHeight="180dp"
     android:minResizeWidth="180dp"
     android:minResizeHeight="110dp"
+    android:maxResizeWidth="600dp"
+    android:maxResizeHeight="600dp"
     android:targetCellWidth="4"
     android:targetCellHeight="3"
-    android:updatePeriodMillis="0"
+    android:updatePeriodMillis="3600000"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen"
     android:description="@string/matrix_widget_description"
-    android:previewLayout="@layout/widget_exam_matrix_layout"
+    android:previewImage="@drawable/widget_preview_matrix"
     android:initialLayout="@layout/widget_exam_matrix_layout" />

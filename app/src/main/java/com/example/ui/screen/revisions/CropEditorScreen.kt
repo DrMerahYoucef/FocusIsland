@@ -1,1018 +1,662 @@
 package com.example.ui.screen.revisions
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffXfermode
-import android.media.ExifInterface
-import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.CropFree
+import androidx.compose.material.icons.rounded.DocumentScanner
+import androidx.compose.material.icons.rounded.Gesture
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Restore
+import androidx.compose.material.icons.rounded.Rotate90DegreesCw
+import androidx.compose.material.icons.rounded.Crop
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.*
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ClipOp
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.example.ui.theme.NeumorphicColors
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.style.TextAlign
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.R
+import com.example.data.db.entity.RevisionDeckEntity
 import com.example.data.repository.OcrEngineChoice
-import com.example.data.repository.toSingleNote
-import java.io.File
-
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import com.example.ui.designsystem.EmptyState
+import com.example.ui.designsystem.LoadingState
+import com.example.ui.designsystem.ThemePreviews
+import com.example.ui.theme.CameraPalette
+import com.example.ui.theme.FocusIslandTheme
+import com.example.ui.theme.Spacing
+import com.example.ui.theme.ThemeMode
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class CropMode { RECTANGLE, LASSO, QUADRILATERAL }
-enum class HandleType { TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT, MOVE }
 
+/** How the card is made from the cropped photo. */
+enum class CardSource { ON_DEVICE, GEMINI, PHOTO }
+
+private val DEFAULT_RECT = listOf(0.1f, 0.15f, 0.9f, 0.85f)
+private val WHOLE_RECT = listOf(0f, 0f, 1f, 1f)
+private val DEFAULT_CORNERS = listOf(Offset(0.12f, 0.15f), Offset(0.88f, 0.15f), Offset(0.88f, 0.85f), Offset(0.12f, 0.85f))
+
+private val FloatListSaver = listSaver<List<Float>, Float>(save = { it }, restore = { it.toList() })
+
+private val OffsetListSaver = listSaver<List<Offset>, Float>(
+    save = { pts -> pts.flatMap { listOf(it.x, it.y) } },
+    restore = { flat -> flat.chunked(2).map { Offset(it[0], it[1]) } }
+)
+
+private sealed interface PhotoLoad {
+    data object Loading : PhotoLoad
+    data object Failed : PhotoLoad
+    data class Ready(val bitmap: Bitmap) : PhotoLoad
+}
+
+/**
+ * Crop the photo (rectangle, free shape, or page corners with straightening), rotate it, then
+ * "Next" opens the Create card sheet: deck, how to read it (on device, Gemini, keep as photo),
+ * optional title or Gemini instructions. The card is made in the background; the Study tab
+ * shows its progress. Selection, mode and rotation survive rotation and process death.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CropEditorScreen(
     imagePath: String,
+    wholePage: Boolean = false,
     viewModel: RevisionsViewModel,
     onCropConfirmed: () -> Unit,
     onBack: () -> Unit
 ) {
-    val context = LocalContext.current
-    val state by viewModel.uiState.collectAsState()
-    val primaryColor = NeumorphicColors.Primary
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+    val appColors = MaterialTheme.colorScheme
 
-    val sourceFile = remember(imagePath) { File(imagePath) }
-    val baseBitmap = remember(imagePath) {
-        if (sourceFile.exists()) {
-            loadOrientedBitmap(imagePath)
-        } else null
+    var quarterTurns by rememberSaveable { mutableIntStateOf(0) }
+    var mode by rememberSaveable { mutableStateOf(CropMode.RECTANGLE) }
+    val initialRect = if (wholePage) WHOLE_RECT else DEFAULT_RECT
+    var rect by rememberSaveable(stateSaver = FloatListSaver) { mutableStateOf(initialRect) }
+    var corners by rememberSaveable(stateSaver = OffsetListSaver) { mutableStateOf(DEFAULT_CORNERS) }
+    var lasso by rememberSaveable(stateSaver = OffsetListSaver) { mutableStateOf(emptyList<Offset>()) }
+
+    var base by remember(imagePath) { mutableStateOf<PhotoLoad>(PhotoLoad.Loading) }
+    var shown by remember { mutableStateOf<Bitmap?>(null) }
+    var cropping by remember { mutableStateOf(false) }
+    var cropped by remember { mutableStateOf<Bitmap?>(null) }
+    val msgCropFailed = stringResource(R.string.crop_failed)
+
+    LaunchedEffect(imagePath) {
+        base = ImageTools.loadUpright(imagePath)?.let { PhotoLoad.Ready(it) } ?: PhotoLoad.Failed
     }
-    var workingBitmap by remember(baseBitmap) { mutableStateOf(baseBitmap) }
-
-    var cropMode by remember { mutableStateOf(CropMode.RECTANGLE) }
-    var showModeDialog by remember { mutableStateOf(false) }
-    var selectedExplainMode by remember { mutableStateOf(false) }
-    var pendingCroppedBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var errorMessageToShow by remember { mutableStateOf<String?>(null) }
-
-    // Rectangle crop state (normalized 0..1 scale relative to bitmap)
-    var rectNormLeft by remember { mutableStateOf(0.1f) }
-    var rectNormTop by remember { mutableStateOf(0.2f) }
-    var rectNormRight by remember { mutableStateOf(0.9f) }
-    var rectNormBottom by remember { mutableStateOf(0.8f) }
-
-    // Lasso path points state
-    var lassoNormPoints by remember { mutableStateOf<List<Offset>>(emptyList()) }
-
-    // Quadrilateral 4 corners state
-    var quadNormTL by remember { mutableStateOf(Offset(0.15f, 0.2f)) }
-    var quadNormTR by remember { mutableStateOf(Offset(0.85f, 0.2f)) }
-    var quadNormBR by remember { mutableStateOf(Offset(0.85f, 0.8f)) }
-    var quadNormBL by remember { mutableStateOf(Offset(0.15f, 0.8f)) }
-
-    if (workingBitmap == null) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black),
-            contentAlignment = Alignment.Center
-        ) {
-            Text("Impossible de charger l'image", color = Color.White)
-        }
-        return
+    LaunchedEffect(base, quarterTurns) {
+        val b = (base as? PhotoLoad.Ready)?.bitmap ?: return@LaunchedEffect
+        shown = withContext(Dispatchers.Default) { ImageTools.rotate(b, quarterTurns * 90) }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
-        BoxWithConstraints(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            val containerWidthPx = constraints.maxWidth.toFloat()
-            val containerHeightPx = constraints.maxHeight.toFloat()
+    fun resetSelection() {
+        rect = initialRect
+        corners = DEFAULT_CORNERS
+        lasso = emptyList()
+    }
 
-            val bmp = workingBitmap!!
-            val bmpW = bmp.width.toFloat()
-            val bmpH = bmp.height.toFloat()
+    val discard = {
+        ImageTools.deleteQuietly(imagePath)
+        onBack()
+    }
 
-            // Calculate exact displayed size and letterbox offsets under ContentScale.Fit
-            val scale = minOf(containerWidthPx / bmpW, containerHeightPx / bmpH)
-            val displayedW = bmpW * scale
-            val displayedH = bmpH * scale
-            val offsetX = (containerWidthPx - displayedW) / 2f
-            val offsetY = (containerHeightPx - displayedH) / 2f
-
-            fun normToScreenX(nx: Float): Float = offsetX + nx * displayedW
-            fun normToScreenY(ny: Float): Float = offsetY + ny * displayedH
-
-            fun screenToNormX(sx: Float): Float = ((sx - offsetX) / displayedW).coerceIn(0f, 1f)
-            fun screenToNormY(sy: Float): Float = ((sy - offsetY) / displayedH).coerceIn(0f, 1f)
-
-            // Draw image scaled to fit
-            Image(
-                bitmap = bmp.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
-            )
-
-            // Overlays based on mode
-            if (cropMode == CropMode.RECTANGLE) {
-                val currentLeft by rememberUpdatedState(rectNormLeft)
-                val currentTop by rememberUpdatedState(rectNormTop)
-                val currentRight by rememberUpdatedState(rectNormRight)
-                val currentBottom by rememberUpdatedState(rectNormBottom)
-
-                var draggedHandle by remember { mutableStateOf<HandleType?>(null) }
-
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) {
-                            detectDragGestures(
-                                onDragStart = { offset ->
-                                    val rLeft = normToScreenX(currentLeft)
-                                    val rTop = normToScreenY(currentTop)
-                                    val rRight = normToScreenX(currentRight)
-                                    val rBottom = normToScreenY(currentBottom)
-                                    val threshold = 70f
-
-                                    draggedHandle = when {
-                                        (offset - Offset(rLeft, rTop)).getDistance() < threshold -> HandleType.TOP_LEFT
-                                        (offset - Offset(rRight, rTop)).getDistance() < threshold -> HandleType.TOP_RIGHT
-                                        (offset - Offset(rLeft, rBottom)).getDistance() < threshold -> HandleType.BOTTOM_LEFT
-                                        (offset - Offset(rRight, rBottom)).getDistance() < threshold -> HandleType.BOTTOM_RIGHT
-                                        offset.x in rLeft..rRight && offset.y in rTop..rBottom -> HandleType.MOVE
-                                        else -> null
-                                    }
-                                },
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    val dx = dragAmount.x / displayedW
-                                    val dy = dragAmount.y / displayedH
-
-                                    when (draggedHandle) {
-                                        HandleType.TOP_LEFT -> {
-                                            rectNormLeft = (currentLeft + dx).coerceIn(0f, currentRight - 0.05f)
-                                            rectNormTop = (currentTop + dy).coerceIn(0f, currentBottom - 0.05f)
-                                        }
-                                        HandleType.TOP_RIGHT -> {
-                                            rectNormRight = (currentRight + dx).coerceIn(currentLeft + 0.05f, 1f)
-                                            rectNormTop = (currentTop + dy).coerceIn(0f, currentBottom - 0.05f)
-                                        }
-                                        HandleType.BOTTOM_LEFT -> {
-                                            rectNormLeft = (currentLeft + dx).coerceIn(0f, currentRight - 0.05f)
-                                            rectNormBottom = (currentBottom + dy).coerceIn(currentTop + 0.05f, 1f)
-                                        }
-                                        HandleType.BOTTOM_RIGHT -> {
-                                            rectNormRight = (currentRight + dx).coerceIn(currentLeft + 0.05f, 1f)
-                                            rectNormBottom = (currentBottom + dy).coerceIn(currentTop + 0.05f, 1f)
-                                        }
-                                        HandleType.MOVE -> {
-                                            val w = currentRight - currentLeft
-                                            val h = currentBottom - currentTop
-                                            val newL = (currentLeft + dx).coerceIn(0f, 1f - w)
-                                            val newT = (currentTop + dy).coerceIn(0f, 1f - h)
-                                            rectNormLeft = newL
-                                            rectNormTop = newT
-                                            rectNormRight = newL + w
-                                            rectNormBottom = newT + h
-                                        }
-                                        null -> {}
-                                    }
-                                },
-                                onDragEnd = { draggedHandle = null },
-                                onDragCancel = { draggedHandle = null }
-                            )
-                        }
-                ) {
-                    val rLeft = normToScreenX(rectNormLeft)
-                    val rTop = normToScreenY(rectNormTop)
-                    val rRight = normToScreenX(rectNormRight)
-                    val rBottom = normToScreenY(rectNormBottom)
-
-                    val rect = Rect(rLeft, rTop, rRight, rBottom)
-
-                    clipRect(rect.left, rect.top, rect.right, rect.bottom, clipOp = ClipOp.Difference) {
-                        drawRect(Color.Black.copy(alpha = 0.6f))
+    val canContinue = shown != null && !cropping && (mode != CropMode.LASSO || lasso.size >= 3)
+    fun next() {
+        val bmp = shown ?: return
+        cropping = true
+        scope.launch {
+            val result = withContext(Dispatchers.Default) {
+                runCatching {
+                    when (mode) {
+                        CropMode.RECTANGLE -> ImageTools.cropRect(bmp, rect[0], rect[1], rect[2], rect[3])
+                        CropMode.LASSO -> ImageTools.cropFreeShape(bmp, lasso)
+                        CropMode.QUADRILATERAL -> ImageTools.cropCorners(bmp, corners[0], corners[1], corners[2], corners[3])
                     }
-
-                    drawRect(
-                        color = Color.White,
-                        topLeft = rect.topLeft,
-                        size = rect.size,
-                        style = Stroke(width = 4f)
-                    )
-
-                    listOf(rect.topLeft, rect.topRight, rect.bottomLeft, rect.bottomRight).forEach { handle ->
-                        drawCircle(color = Color.White, radius = 18f, center = handle)
-                        drawCircle(color = primaryColor, radius = 14f, center = handle)
-                    }
-                }
-            } else if (cropMode == CropMode.LASSO) {
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) {
-                            detectDragGestures(
-                                onDragStart = { offset ->
-                                    val nx = screenToNormX(offset.x)
-                                    val ny = screenToNormY(offset.y)
-                                    lassoNormPoints = listOf(Offset(nx, ny))
-                                },
-                                onDrag = { change, _ ->
-                                    change.consume()
-                                    val nx = screenToNormX(change.position.x)
-                                    val ny = screenToNormY(change.position.y)
-                                    lassoNormPoints = lassoNormPoints + Offset(nx, ny)
-                                }
-                            )
-                        }
-                ) {
-                    if (lassoNormPoints.size >= 2) {
-                        val path = Path().apply {
-                            val p0 = lassoNormPoints.first()
-                            moveTo(normToScreenX(p0.x), normToScreenY(p0.y))
-                            for (i in 1 until lassoNormPoints.size) {
-                                val pt = lassoNormPoints[i]
-                                lineTo(normToScreenX(pt.x), normToScreenY(pt.y))
-                            }
-                            close()
-                        }
-
-                        clipPath(path, clipOp = ClipOp.Difference) {
-                            drawRect(Color.Black.copy(alpha = 0.6f))
-                        }
-
-                        drawPath(path = path, color = Color.White, style = Stroke(width = 4f))
-                    } else {
-                        drawRect(Color.Black.copy(alpha = 0.4f))
-                    }
-                }
-            } else {
-                // QUADRILATERAL 4-Corner Free Drag Mode
-                var activeCornerIndex by remember { mutableStateOf(-1) }
-
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) {
-                            detectDragGestures(
-                                onDragStart = { offset ->
-                                    val pTL = Offset(normToScreenX(quadNormTL.x), normToScreenY(quadNormTL.y))
-                                    val pTR = Offset(normToScreenX(quadNormTR.x), normToScreenY(quadNormTR.y))
-                                    val pBR = Offset(normToScreenX(quadNormBR.x), normToScreenY(quadNormBR.y))
-                                    val pBL = Offset(normToScreenX(quadNormBL.x), normToScreenY(quadNormBL.y))
-
-                                    val threshold = 70f
-                                    activeCornerIndex = when {
-                                        (offset - pTL).getDistance() < threshold -> 0
-                                        (offset - pTR).getDistance() < threshold -> 1
-                                        (offset - pBR).getDistance() < threshold -> 2
-                                        (offset - pBL).getDistance() < threshold -> 3
-                                        else -> -1
-                                    }
-                                },
-                                onDrag = { change, _ ->
-                                    change.consume()
-                                    val nx = screenToNormX(change.position.x)
-                                    val ny = screenToNormY(change.position.y)
-                                    val newOffset = Offset(nx, ny)
-
-                                    when (activeCornerIndex) {
-                                        0 -> quadNormTL = newOffset
-                                        1 -> quadNormTR = newOffset
-                                        2 -> quadNormBR = newOffset
-                                        3 -> quadNormBL = newOffset
-                                    }
-                                },
-                                onDragEnd = { activeCornerIndex = -1 },
-                                onDragCancel = { activeCornerIndex = -1 }
-                            )
-                        }
-                ) {
-                    val pTL = Offset(normToScreenX(quadNormTL.x), normToScreenY(quadNormTL.y))
-                    val pTR = Offset(normToScreenX(quadNormTR.x), normToScreenY(quadNormTR.y))
-                    val pBR = Offset(normToScreenX(quadNormBR.x), normToScreenY(quadNormBR.y))
-                    val pBL = Offset(normToScreenX(quadNormBL.x), normToScreenY(quadNormBL.y))
-
-                    val quadPath = Path().apply {
-                        moveTo(pTL.x, pTL.y)
-                        lineTo(pTR.x, pTR.y)
-                        lineTo(pBR.x, pBR.y)
-                        lineTo(pBL.x, pBL.y)
-                        close()
-                    }
-
-                    clipPath(quadPath, clipOp = ClipOp.Difference) {
-                        drawRect(Color.Black.copy(alpha = 0.6f))
-                    }
-
-                    drawPath(path = quadPath, color = Color.White, style = Stroke(width = 4f))
-
-                    listOf(pTL, pTR, pBR, pBL).forEach { handle ->
-                        drawCircle(color = Color.White, radius = 20f, center = handle)
-                        drawCircle(color = primaryColor, radius = 15f, center = handle)
-                    }
-                }
+                }.getOrNull()
             }
+            cropping = false
+            if (result != null) cropped = result else snackbar.showSnackbar(msgCropFailed)
         }
+    }
 
-        // Top Toolbar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 40.dp, start = 16.dp, end = 16.dp)
-                .align(Alignment.TopCenter),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(
-                onClick = onBack,
-                colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black.copy(alpha = 0.5f))
-            ) {
-                Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
-            }
-
-            Text("Crop Image", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-
-            IconButton(
-                onClick = {
-                    workingBitmap?.let {
-                        val matrix = android.graphics.Matrix().apply { postRotate(90f) }
-                        workingBitmap = Bitmap.createBitmap(it, 0, 0, it.width, it.height, matrix, true)
-                    }
-                },
-                colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black.copy(alpha = 0.5f))
-            ) {
-                Icon(Icons.Default.RotateRight, contentDescription = "Rotate 90°", tint = Color.White)
-            }
-        }
-
-        // Bottom Control Bar
-        Surface(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth(),
-            color = Color.Black.copy(alpha = 0.85f)
-        ) {
-            Column(
-                modifier = Modifier
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-                    .navigationBarsPadding()
-            ) {
-                // Mode Selector Bar (3 Cropping Modes)
+    CameraTheme {
+        Box(Modifier.fillMaxSize().background(CameraPalette.background)) {
+            Column(Modifier.fillMaxSize()) {
+                // Top bar
                 Row(
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    FilterChip(
-                        selected = cropMode == CropMode.RECTANGLE,
-                        onClick = { cropMode = CropMode.RECTANGLE },
-                        label = { Text("Rectangle") },
-                        leadingIcon = { Icon(Icons.Default.CropLandscape, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = primaryColor, selectedLabelColor = Color.White)
-                    )
-
-                    FilterChip(
-                        selected = cropMode == CropMode.LASSO,
-                        onClick = { cropMode = CropMode.LASSO },
-                        label = { Text("Lasso") },
-                        leadingIcon = { Icon(Icons.Default.Gesture, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = primaryColor, selectedLabelColor = Color.White)
-                    )
-
-                    FilterChip(
-                        selected = cropMode == CropMode.QUADRILATERAL,
-                        onClick = { cropMode = CropMode.QUADRILATERAL },
-                        label = { Text("4-Corner Quad") },
-                        leadingIcon = { Icon(Icons.Default.Crop, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = primaryColor, selectedLabelColor = Color.White)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Button(
-                    onClick = {
-                        try {
-                            val bitmapToCrop = workingBitmap ?: return@Button
-                            val croppedBitmap = cropBitmap(
-                                originalBitmap = bitmapToCrop,
-                                mode = cropMode,
-                                rectNormLeft = rectNormLeft,
-                                rectNormTop = rectNormTop,
-                                rectNormRight = rectNormRight,
-                                rectNormBottom = rectNormBottom,
-                                lassoNormPoints = lassoNormPoints,
-                                quadNormTL = quadNormTL,
-                                quadNormTR = quadNormTR,
-                                quadNormBR = quadNormBR,
-                                quadNormBL = quadNormBL
-                            )
-
-                            pendingCroppedBitmap = croppedBitmap
-                            selectedExplainMode = false
-                            showModeDialog = true
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "Crop error: ${e.message}", Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = primaryColor),
-                    shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Confirm Crop & Continue", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                }
-            }
-        }
-
-        // Extraction Mode & Cropped Image Preview Dialog (Card Creation & Options)
-        if (showModeDialog && pendingCroppedBitmap != null) {
-            var selectedDeckId by remember { mutableStateOf(state.selectedDeckId) }
-            var temporaryPromptAddendum by remember { mutableStateOf("") }
-            var cardCreationType by remember { mutableStateOf(if (state.hasApiKey) "ML_KIT" else "ML_KIT") }
-            var isDeckDropdownExpanded by remember { mutableStateOf(false) }
-
-            var showCreateDeckInlineDialog by remember { mutableStateOf(false) }
-            var inlineDeckName by remember { mutableStateOf("") }
-
-            Dialog(
-                onDismissRequest = {
-                    showModeDialog = false
-                    pendingCroppedBitmap = null
-                },
-                properties = DialogProperties(usePlatformDefaultWidth = false)
-            ) {
-                Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.5f))
-                        .padding(16.dp)
-                        .navigationBarsPadding()
-                        .imePadding(),
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = Spacing.xs, vertical = Spacing.xxs),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = discard) {
+                        Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.crop_close), tint = CameraPalette.onChrome)
+                    }
+                    Text(
+                        stringResource(R.string.crop_title),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = CameraPalette.onChrome,
+                        modifier = Modifier.weight(1f).padding(start = Spacing.xs)
+                    )
+                    IconButton(onClick = { resetSelection() }, enabled = shown != null) {
+                        Icon(Icons.Rounded.Restore, contentDescription = stringResource(R.string.crop_reset), tint = CameraPalette.onChrome)
+                    }
+                    IconButton(onClick = { quarterTurns = (quarterTurns + 1) % 4; resetSelection() }, enabled = shown != null) {
+                        Icon(Icons.Rounded.Rotate90DegreesCw, contentDescription = stringResource(R.string.crop_rotate), tint = CameraPalette.onChrome)
+                    }
+                }
+
+                // Photo + crop overlay
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(Spacing.lg),
                     contentAlignment = Alignment.Center
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(24.dp),
-                        color = NeumorphicColors.Background,
-                        shadowElevation = 12.dp,
+                    val bmp = shown
+                    when {
+                        base is PhotoLoad.Failed -> EmptyState(
+                            icon = Icons.Rounded.Image,
+                            title = stringResource(R.string.crop_load_failed_title),
+                            body = stringResource(R.string.crop_load_failed_body),
+                            actionLabel = stringResource(R.string.back),
+                            onAction = onBack
+                        )
+                        bmp == null -> LoadingState()
+                        else -> CropCanvas(
+                            bitmap = bmp,
+                            mode = mode,
+                            rect = rect,
+                            onRect = { rect = it },
+                            corners = corners,
+                            onCorners = { corners = it },
+                            lasso = lasso,
+                            onLasso = { lasso = it }
+                        )
+                    }
+                }
+
+                // Bottom panel
+                Surface(color = CameraPalette.chrome, contentColor = CameraPalette.onChrome) {
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 660.dp)
+                            .navigationBarsPadding()
+                            .padding(Spacing.md),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(20.dp),
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        val modes = listOf(
+                            Triple(CropMode.RECTANGLE, Icons.Rounded.Crop, R.string.crop_mode_rect),
+                            Triple(CropMode.LASSO, Icons.Rounded.Gesture, R.string.crop_mode_free),
+                            Triple(CropMode.QUADRILATERAL, Icons.Rounded.CropFree, R.string.crop_mode_corners)
+                        )
+                        SingleChoiceSegmentedButtonRow(Modifier.widthIn(max = Spacing.formMaxWidth).fillMaxWidth()) {
+                            modes.forEachIndexed { i, (m, icon, label) ->
+                                SegmentedButton(
+                                    selected = mode == m,
+                                    onClick = { mode = m },
+                                    shape = SegmentedButtonDefaults.itemShape(i, modes.size),
+                                    icon = { SegmentedButtonDefaults.Icon(active = mode == m) { Icon(icon, contentDescription = null, modifier = Modifier.size(SegmentedButtonDefaults.IconSize)) } }
+                                ) { Text(stringResource(label), maxLines = 1) }
+                            }
+                        }
+                        Text(
+                            stringResource(
+                                when (mode) {
+                                    CropMode.RECTANGLE -> R.string.crop_hint_rect
+                                    CropMode.LASSO -> R.string.crop_hint_free
+                                    CropMode.QUADRILATERAL -> R.string.crop_hint_corners
+                                }
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = CameraPalette.onChromeVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        Button(
+                            onClick = ::next,
+                            enabled = canContinue,
+                            modifier = Modifier.widthIn(max = Spacing.formMaxWidth).fillMaxWidth().height(Spacing.buttonHeight)
                         ) {
-                            // Header Title Row
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.CropLandscape,
-                                        contentDescription = null,
-                                        tint = NeumorphicColors.Primary
-                                    )
-                                    Text(
-                                        text = "Card Creation & Options",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 18.sp,
-                                        color = NeumorphicColors.TextPrimary
-                                    )
-                                }
-                                IconButton(onClick = {
-                                    showModeDialog = false
-                                    pendingCroppedBitmap = null
-                                }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Close", tint = NeumorphicColors.TextPrimary)
-                                }
-                            }
-
-                            // Inner Scrollable Form
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(16.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f, fill = false)
-                                    .verticalScroll(rememberScrollState())
-                            ) {
-                                Surface(
-                                    shape = RoundedCornerShape(16.dp),
-                                    color = Color.Black.copy(alpha = 0.05f),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, NeumorphicColors.Primary.copy(alpha = 0.25f)),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = 130.dp, max = 200.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(8.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Image(
-                                            bitmap = pendingCroppedBitmap!!.asImageBitmap(),
-                                            contentDescription = "Cropped Image Preview",
-                                            contentScale = ContentScale.Fit,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    }
-                                }
-
-                                // Target Deck Selector with Inline Deck Creation
-                                Text("Target Deck (Mandatory):", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = NeumorphicColors.TextPrimary)
-                                
-                                Column(modifier = Modifier.fillMaxWidth()) {
-                                    val activeDeckName = state.decks.find { it.id == selectedDeckId }?.name ?: "Select Deck (Required)"
-                                    
-                                    OutlinedButton(
-                                        onClick = { isDeckDropdownExpanded = true },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = ButtonDefaults.outlinedButtonColors(
-                                            contentColor = if (selectedDeckId.isBlank()) MaterialTheme.colorScheme.error else NeumorphicColors.TextPrimary
-                                        )
-                                    ) {
-                                        Text(activeDeckName, modifier = Modifier.weight(1f))
-                                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = NeumorphicColors.Primary)
-                                    }
-
-                                    DropdownMenu(
-                                        expanded = isDeckDropdownExpanded,
-                                        onDismissRequest = { isDeckDropdownExpanded = false }
-                                    ) {
-                                        state.decks.forEach { deck ->
-                                            DropdownMenuItem(
-                                                text = { Text(deck.name) },
-                                                onClick = {
-                                                    selectedDeckId = deck.id
-                                                    isDeckDropdownExpanded = false
-                                                }
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(4.dp))
-
-                                    // Inline "+ Add New Deck" Button
-                                    TextButton(
-                                        onClick = { showCreateDeckInlineDialog = true },
-                                        modifier = Modifier.align(Alignment.End)
-                                    ) {
-                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Add New Deck", fontSize = 12.sp, color = NeumorphicColors.Primary)
-                                    }
-                                }
-
-                                // Card Creation Type Options
-                                Text("Extraction & Card Type:", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = NeumorphicColors.TextPrimary)
-                                
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        FilterChip(
-                                            selected = cardCreationType == "ML_KIT",
-                                            onClick = { cardCreationType = "ML_KIT" },
-                                            label = { Text("OCR (ML Kit On-Device)") },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Default.DocumentScanner,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            },
-                                            colors = FilterChipDefaults.filterChipColors(
-                                                selectedContainerColor = NeumorphicColors.Primary.copy(alpha = 0.15f),
-                                                selectedLabelColor = NeumorphicColors.Primary
-                                            )
-                                        )
-
-                                        FilterChip(
-                                            selected = cardCreationType == "GEMINI",
-                                            onClick = {
-                                                if (state.hasApiKey) {
-                                                    cardCreationType = "GEMINI"
-                                                } else {
-                                                    Toast.makeText(context, "Clé Gemini API requise pour le Cloud IA. Utilisez ML Kit (gratuit & hors-ligne) !", Toast.LENGTH_LONG).show()
-                                                }
-                                            },
-                                            label = { Text(if (state.hasApiKey) "OCR (Gemini IA)" else "OCR Gemini (Clé requise)") },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Default.AutoAwesome,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            }
-                                        )
-                                    }
-
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        FilterChip(
-                                            selected = cardCreationType == "LOCAL_IMAGE",
-                                            onClick = { cardCreationType = "LOCAL_IMAGE" },
-                                            label = { Text("Photo Card (Image pure)") },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Default.Image,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            }
-                                        )
-                                    }
-                                }
-
-                                if (cardCreationType == "ML_KIT") {
-                                    Surface(
-                                        color = NeumorphicColors.Primary.copy(alpha = 0.08f),
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(10.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.CheckCircle,
-                                                contentDescription = null,
-                                                tint = NeumorphicColors.Primary,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                            Text(
-                                                text = "Google ML Kit (Modèle sur appareil) : Numérisation instantanée hors-ligne, optimisée pour les cartes en français (accents, listes, définitions).",
-                                                fontSize = 12.sp,
-                                                color = NeumorphicColors.TextPrimary,
-                                                lineHeight = 16.sp
-                                            )
-                                        }
-                                    }
-
-                                    OutlinedTextField(
-                                        value = temporaryPromptAddendum,
-                                        onValueChange = { temporaryPromptAddendum = it },
-                                        label = { Text("Titre de la carte (Optionnel)") },
-                                        placeholder = { Text("Laisser vide pour détecter le titre sur l'image") },
-                                        singleLine = true,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                } else if (cardCreationType == "GEMINI") {
-                                    OutlinedTextField(
-                                        value = temporaryPromptAddendum,
-                                        onValueChange = { temporaryPromptAddendum = it },
-                                        label = { Text("Temporary Prompt Note (Optional)") },
-                                        placeholder = { Text("e.g., Focus on equations or vocabulary only") },
-                                        singleLine = true,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { selectedExplainMode = !selectedExplainMode }
-                                    ) {
-                                        Checkbox(
-                                            checked = selectedExplainMode,
-                                            onCheckedChange = { selectedExplainMode = it },
-                                            colors = CheckboxDefaults.colors(checkedColor = NeumorphicColors.Primary)
-                                        )
-                                        Text("Mode Explication (IA Q&R Synthesis)", fontSize = 13.sp, color = NeumorphicColors.TextPrimary)
-                                    }
-                                } else {
-                                    OutlinedTextField(
-                                        value = temporaryPromptAddendum,
-                                        onValueChange = { temporaryPromptAddendum = it },
-                                        label = { Text("Card Title (Optional)") },
-                                        placeholder = { Text("Leave blank for auto-generated title") },
-                                        singleLine = true,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-                            }
-
-                            // Card Action Buttons attached to form
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        showModeDialog = false
-                                        pendingCroppedBitmap = null
-                                    },
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text("Cancel")
-                                }
-
-                                Button(
-                                    onClick = {
-                                        if (selectedDeckId.isBlank()) {
-                                            Toast.makeText(context, "Please select a Target Deck first!", Toast.LENGTH_SHORT).show()
-                                            return@Button
-                                        }
-
-                                        val bitmapToProcess = pendingCroppedBitmap!!
-                                        val targetDeck = selectedDeckId
-                                        val promptAddendumVal = temporaryPromptAddendum.trim().ifBlank { null }
-                                        showModeDialog = false
-                                        pendingCroppedBitmap = null
-
-                                        when (cardCreationType) {
-                                            "ML_KIT" -> {
-                                                viewModel.launchBackgroundOcrCardCreation(
-                                                    croppedBitmap = bitmapToProcess,
-                                                    temporaryPromptAddendum = promptAddendumVal,
-                                                    explainMode = false,
-                                                    targetDeckId = targetDeck,
-                                                    engineChoice = OcrEngineChoice.ML_KIT
-                                                )
-                                                try {
-                                                    if (sourceFile.exists()) sourceFile.delete()
-                                                } catch (e: Exception) {}
-                                                Toast.makeText(context, "Numérisation OCR lancée en arrière-plan ✨", Toast.LENGTH_SHORT).show()
-                                                onCropConfirmed()
-                                            }
-                                            "GEMINI" -> {
-                                                viewModel.launchBackgroundOcrCardCreation(
-                                                    croppedBitmap = bitmapToProcess,
-                                                    temporaryPromptAddendum = promptAddendumVal,
-                                                    explainMode = selectedExplainMode,
-                                                    targetDeckId = targetDeck,
-                                                    engineChoice = OcrEngineChoice.GEMINI
-                                                )
-                                                try {
-                                                    if (sourceFile.exists()) sourceFile.delete()
-                                                } catch (e: Exception) {}
-                                                Toast.makeText(context, "Analyse Gemini lancée en arrière-plan ✨", Toast.LENGTH_SHORT).show()
-                                                onCropConfirmed()
-                                            }
-                                            else -> {
-                                                viewModel.launchBackgroundLocalImageCardCreation(
-                                                    bitmap = bitmapToProcess,
-                                                    userTitle = promptAddendumVal,
-                                                    deckId = targetDeck
-                                                )
-                                                try {
-                                                    if (sourceFile.exists()) sourceFile.delete()
-                                                } catch (e: Exception) {}
-                                                Toast.makeText(context, "Enregistrement de la photo en arrière-plan 📷", Toast.LENGTH_SHORT).show()
-                                                onCropConfirmed()
-                                            }
-                                        }
-                                    },
-                                    enabled = selectedDeckId.isNotBlank(),
-                                    colors = ButtonDefaults.buttonColors(containerColor = primaryColor),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Confirm & Create")
-                                }
+                            if (cropping) {
+                                CircularProgressIndicator(strokeWidth = Spacing.progressStroke, modifier = Modifier.size(ButtonDefaults.IconSize))
+                            } else {
+                                Text(stringResource(R.string.crop_next))
+                                Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                                Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
                             }
                         }
                     }
                 }
             }
+            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = Spacing.xxl * 3))
+        }
+    }
 
-            // Inline Deck Creation Dialog
-            if (showCreateDeckInlineDialog) {
-                AlertDialog(
-                    onDismissRequest = { showCreateDeckInlineDialog = false },
-                    containerColor = NeumorphicColors.DialogBackground,
-                    titleContentColor = NeumorphicColors.TextPrimary,
-                    textContentColor = NeumorphicColors.TextSecondary,
-                    title = { Text("Add New Deck", color = NeumorphicColors.TextPrimary) },
-                    text = {
-                        OutlinedTextField(
-                            value = inlineDeckName,
-                            onValueChange = { inlineDeckName = it },
-                            label = { Text("Deck Name") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
+    // The sheet uses the app's own colours, like every other form.
+    cropped?.let { bmp ->
+        MaterialTheme(colorScheme = appColors) {
+            CreateCardSheet(
+                preview = bmp,
+                viewModel = viewModel,
+                onDismiss = { cropped = null },
+                onCreate = { source, deckId, text, explain ->
+                    when (source) {
+                        CardSource.ON_DEVICE, CardSource.GEMINI -> viewModel.launchBackgroundOcrCardCreation(
+                            croppedBitmap = bmp,
+                            temporaryPromptAddendum = text,
+                            explainMode = source == CardSource.GEMINI && explain,
+                            targetDeckId = deckId,
+                            engineChoice = if (source == CardSource.GEMINI) OcrEngineChoice.GEMINI else OcrEngineChoice.ML_KIT
                         )
-                    },
-                    confirmButton = {
-                        Button(
-                            onClick = {
-                                if (inlineDeckName.isNotBlank()) {
-                                    viewModel.addDeckAndSelect(inlineDeckName.trim()) { newId ->
-                                        selectedDeckId = newId
-                                        inlineDeckName = ""
-                                        showCreateDeckInlineDialog = false
-                                        Toast.makeText(context, "Deck created & selected!", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = NeumorphicColors.Primary)
-                        ) { Text("Create", color = Color.White) }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showCreateDeckInlineDialog = false }) { Text("Cancel", color = NeumorphicColors.TextSecondary) }
+                        CardSource.PHOTO -> viewModel.launchBackgroundLocalImageCardCreation(bitmap = bmp, userTitle = text, deckId = deckId)
                     }
+                    ImageTools.deleteQuietly(imagePath)
+                    cropped = null
+                    onCropConfirmed()
+                }
+            )
+        }
+    }
+}
+
+/** Photo letterboxed in the available space, with the crop overlay for the current mode. */
+@Composable
+private fun CropCanvas(
+    bitmap: Bitmap,
+    mode: CropMode,
+    rect: List<Float>,
+    onRect: (List<Float>) -> Unit,
+    corners: List<Offset>,
+    onCorners: (List<Offset>) -> Unit,
+    lasso: List<Offset>,
+    onLasso: (List<Offset>) -> Unit
+) {
+    val density = LocalDensity.current
+    val handleR = with(density) { Spacing.cropHandle.toPx() }
+    val hitR = with(density) { Spacing.cropHandleHit.toPx() }
+    val stroke = with(density) { Spacing.cropStroke.toPx() }
+    val image = remember(bitmap) { bitmap.asImageBitmap() }
+    val a11y = stringResource(R.string.crop_area_a11y)
+
+    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        val cw = constraints.maxWidth.toFloat()
+        val ch = constraints.maxHeight.toFloat()
+        val scale = minOf(cw / bitmap.width, ch / bitmap.height)
+        val dw = bitmap.width * scale
+        val dh = bitmap.height * scale
+        val ox = (cw - dw) / 2f
+        val oy = (ch - dh) / 2f
+        fun toScreen(p: Offset) = Offset(ox + p.x * dw, oy + p.y * dh)
+        fun toNorm(s: Offset) = Offset(((s.x - ox) / dw).coerceIn(0f, 1f), ((s.y - oy) / dh).coerceIn(0f, 1f))
+
+        Image(image, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+
+        val currentRect by rememberUpdatedState(rect)
+        val currentCorners by rememberUpdatedState(corners)
+        val currentLasso by rememberUpdatedState(lasso)
+        val minSize = 0.05f
+
+        Canvas(
+            Modifier
+                .fillMaxSize()
+                .semantics { contentDescription = a11y }
+                .pointerInput(mode, dw, dh) {
+                    when (mode) {
+                        CropMode.RECTANGLE -> {
+                            var handle = -1 // 0 TL, 1 TR, 2 BR, 3 BL, 4 move
+                            detectDragGestures(
+                                onDragStart = { at ->
+                                    val r = currentRect
+                                    val pts = listOf(Offset(r[0], r[1]), Offset(r[2], r[1]), Offset(r[2], r[3]), Offset(r[0], r[3])).map(::toScreen)
+                                    handle = pts.indexOfFirst { (it - at).getDistance() < hitR }
+                                    if (handle == -1 && Rect(pts[0], pts[2]).contains(at)) handle = 4
+                                },
+                                onDrag = { change, drag ->
+                                    change.consume()
+                                    val dx = drag.x / dw
+                                    val dy = drag.y / dh
+                                    var (l, t, r, b) = currentRect
+                                    when (handle) {
+                                        0 -> { l = (l + dx).coerceIn(0f, r - minSize); t = (t + dy).coerceIn(0f, b - minSize) }
+                                        1 -> { r = (r + dx).coerceIn(l + minSize, 1f); t = (t + dy).coerceIn(0f, b - minSize) }
+                                        2 -> { r = (r + dx).coerceIn(l + minSize, 1f); b = (b + dy).coerceIn(t + minSize, 1f) }
+                                        3 -> { l = (l + dx).coerceIn(0f, r - minSize); b = (b + dy).coerceIn(t + minSize, 1f) }
+                                        4 -> {
+                                            val w = r - l
+                                            val h = b - t
+                                            l = (l + dx).coerceIn(0f, 1f - w); t = (t + dy).coerceIn(0f, 1f - h)
+                                            r = l + w; b = t + h
+                                        }
+                                        else -> return@detectDragGestures
+                                    }
+                                    onRect(listOf(l, t, r, b))
+                                },
+                                onDragEnd = { handle = -1 },
+                                onDragCancel = { handle = -1 }
+                            )
+                        }
+                        CropMode.QUADRILATERAL -> {
+                            var handle = -1
+                            detectDragGestures(
+                                onDragStart = { at -> handle = currentCorners.map(::toScreen).indexOfFirst { (it - at).getDistance() < hitR } },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    if (handle >= 0) onCorners(currentCorners.toMutableList().also { it[handle] = toNorm(change.position) })
+                                },
+                                onDragEnd = { handle = -1 },
+                                onDragCancel = { handle = -1 }
+                            )
+                        }
+                        CropMode.LASSO -> detectDragGestures(
+                            onDragStart = { at -> onLasso(listOf(toNorm(at))) },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                val p = toNorm(change.position)
+                                val last = currentLasso.lastOrNull()
+                                // Skip points closer than ~0.5 % to keep the outline (and saved state) small.
+                                if (last == null || (p - last).getDistance() > 0.005f) onLasso(currentLasso + p)
+                            }
+                        )
+                    }
+                }
+        ) {
+            when (mode) {
+                CropMode.RECTANGLE -> {
+                    val tl = toScreen(Offset(rect[0], rect[1]))
+                    val br = toScreen(Offset(rect[2], rect[3]))
+                    clipRect(tl.x, tl.y, br.x, br.y, clipOp = ClipOp.Difference) { drawRect(CameraPalette.scrim) }
+                    drawRect(CameraPalette.handle, topLeft = tl, size = androidx.compose.ui.geometry.Size(br.x - tl.x, br.y - tl.y), style = Stroke(stroke))
+                    // Thirds grid helps line up a page.
+                    for (i in 1..2) {
+                        val x = tl.x + (br.x - tl.x) * i / 3f
+                        val y = tl.y + (br.y - tl.y) * i / 3f
+                        drawLine(CameraPalette.shutterRing, Offset(x, tl.y), Offset(x, br.y), strokeWidth = stroke / 2)
+                        drawLine(CameraPalette.shutterRing, Offset(tl.x, y), Offset(br.x, y), strokeWidth = stroke / 2)
+                    }
+                    listOf(tl, Offset(br.x, tl.y), br, Offset(tl.x, br.y)).forEach { drawHandle(it, handleR) }
+                }
+                CropMode.QUADRILATERAL -> {
+                    val pts = corners.map(::toScreen)
+                    val path = Path().apply {
+                        moveTo(pts[0].x, pts[0].y); pts.drop(1).forEach { lineTo(it.x, it.y) }; close()
+                    }
+                    clipPath(path, clipOp = ClipOp.Difference) { drawRect(CameraPalette.scrim) }
+                    drawPath(path, CameraPalette.handle, style = Stroke(stroke))
+                    pts.forEach { drawHandle(it, handleR) }
+                }
+                CropMode.LASSO -> {
+                    if (lasso.size >= 2) {
+                        val pts = lasso.map(::toScreen)
+                        val path = Path().apply {
+                            moveTo(pts[0].x, pts[0].y); pts.drop(1).forEach { lineTo(it.x, it.y) }; close()
+                        }
+                        clipPath(path, clipOp = ClipOp.Difference) { drawRect(CameraPalette.scrim) }
+                        drawPath(path, CameraPalette.accent, style = Stroke(stroke))
+                    } else {
+                        drawRect(CameraPalette.scrim, topLeft = Offset(ox, oy), size = androidx.compose.ui.geometry.Size(dw, dh))
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun DrawScope.drawHandle(center: Offset, radius: Float) {
+    drawCircle(CameraPalette.handle, radius = radius, center = center)
+    drawCircle(CameraPalette.accent, radius = radius * 0.7f, center = center)
+}
+
+/** Final step: deck, how to make the card, optional title / Gemini instructions, then Create. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CreateCardSheet(
+    preview: Bitmap,
+    viewModel: RevisionsViewModel,
+    onDismiss: () -> Unit,
+    onCreate: (source: CardSource, deckId: String, text: String?, explain: Boolean) -> Unit
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var deckId by rememberSaveable { mutableStateOf(state.selectedDeckId) }
+    var source by rememberSaveable { mutableStateOf(CardSource.ON_DEVICE) }
+    var text by rememberSaveable { mutableStateOf("") }
+    var explain by rememberSaveable { mutableStateOf(false) }
+    var newDeck by rememberSaveable { mutableStateOf(false) }
+    val image = remember(preview) { preview.asImageBitmap() }
+    val deckOk = state.decks.any { it.id == deckId }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = Spacing.lg)
+                .padding(bottom = Spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(Spacing.md)
+        ) {
+            CreateCardForm(
+                image = { mod -> Image(image, contentDescription = stringResource(R.string.create_preview_a11y), contentScale = ContentScale.Fit, modifier = mod) },
+                decks = state.decks,
+                deckId = deckId,
+                onDeck = { deckId = it },
+                onNewDeck = { newDeck = true },
+                hasApiKey = state.hasApiKey,
+                source = source,
+                onSource = { source = it },
+                text = text,
+                onText = { text = it },
+                explain = explain,
+                onExplain = { explain = it }
+            )
+            Button(
+                onClick = { onCreate(source, deckId, text.trim().ifBlank { null }, explain) },
+                enabled = deckOk && (source != CardSource.GEMINI || state.hasApiKey),
+                modifier = Modifier.fillMaxWidth().height(Spacing.buttonHeight)
+            ) { Text(stringResource(R.string.create_button)) }
+        }
+    }
+
+    if (newDeck) {
+        DeckDialog(
+            title = stringResource(R.string.study_new_deck),
+            confirmLabel = stringResource(R.string.study_create),
+            onConfirm = { name, color ->
+                viewModel.addDeckAndSelect(name, color) { id -> deckId = id }
+                newDeck = false
+            },
+            onDismiss = { newDeck = false }
+        )
+    }
+}
+
+/** Stateless body of the Create card sheet (previewable). */
+@Composable
+private fun CreateCardForm(
+    image: @Composable (Modifier) -> Unit,
+    decks: List<RevisionDeckEntity>,
+    deckId: String,
+    onDeck: (String) -> Unit,
+    onNewDeck: () -> Unit,
+    hasApiKey: Boolean,
+    source: CardSource,
+    onSource: (CardSource) -> Unit,
+    text: String,
+    onText: (String) -> Unit,
+    explain: Boolean,
+    onExplain: (Boolean) -> Unit
+) {
+    Text(stringResource(R.string.create_title), style = MaterialTheme.typography.titleLarge)
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth()) {
+        image(Modifier.fillMaxWidth().height(Spacing.cropPreviewHeight).padding(Spacing.xs))
+    }
+    DeckPicker(decks = decks, selectedId = deckId, onSelect = onDeck, onNewDeck = onNewDeck, modifier = Modifier.fillMaxWidth())
+
+    Text(stringResource(R.string.create_how), style = MaterialTheme.typography.titleSmall)
+    Column(Modifier.selectableGroup()) {
+        SourceOption(CardSource.ON_DEVICE, Icons.Rounded.DocumentScanner, R.string.create_on_device, R.string.create_on_device_body, source, true, onSource)
+        SourceOption(
+            CardSource.GEMINI, Icons.Rounded.AutoAwesome, R.string.create_gemini,
+            if (hasApiKey) R.string.create_gemini_body else R.string.create_gemini_no_key,
+            source, hasApiKey, onSource
+        )
+        SourceOption(CardSource.PHOTO, Icons.Rounded.Image, R.string.create_photo, R.string.create_photo_body, source, true, onSource)
+    }
+
+    if (source == CardSource.GEMINI) {
+        OutlinedTextField(
+            value = text,
+            onValueChange = onText,
+            label = { Text(stringResource(R.string.create_instructions)) },
+            placeholder = { Text(stringResource(R.string.create_instructions_example)) },
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        ListItem(
+            headlineContent = { Text(stringResource(R.string.create_explain)) },
+            supportingContent = { Text(stringResource(R.string.create_explain_body)) },
+            trailingContent = { Switch(checked = explain, onCheckedChange = null) },
+            colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+            modifier = Modifier
+                .fillMaxWidth()
+                .selectable(selected = explain, role = Role.Switch, onClick = { onExplain(!explain) })
+        )
+    } else {
+        OutlinedTextField(
+            value = text,
+            onValueChange = onText,
+            label = { Text(stringResource(R.string.study_field_title_optional)) },
+            supportingText = {
+                Text(stringResource(if (source == CardSource.ON_DEVICE) R.string.create_title_detect else R.string.study_field_title_auto))
+            },
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun SourceOption(
+    value: CardSource,
+    icon: ImageVector,
+    title: Int,
+    body: Int,
+    selected: CardSource,
+    enabled: Boolean,
+    onSelect: (CardSource) -> Unit
+) {
+    ListItem(
+        leadingContent = { Icon(icon, contentDescription = null) },
+        headlineContent = { Text(stringResource(title)) },
+        supportingContent = { Text(stringResource(body)) },
+        trailingContent = { RadioButton(selected = selected == value, onClick = null, enabled = enabled) },
+        colors = ListItemDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = if (selected == value) 1f else 0f)
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(selected = selected == value, enabled = enabled, role = Role.RadioButton, onClick = { onSelect(value) })
+    )
+}
+
+@ThemePreviews
+@Composable
+private fun CreateCardFormPreview() {
+    FocusIslandTheme(themeMode = ThemeMode.SYSTEM) {
+        Surface {
+            Column(Modifier.padding(Spacing.lg), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                CreateCardForm(
+                    image = { mod -> Box(mod.background(MaterialTheme.colorScheme.surfaceContainerHighest)) },
+                    decks = listOf(RevisionDeckEntity(id = "d", name = "Biology", colorHex = "#1F6A64")),
+                    deckId = "d",
+                    onDeck = {}, onNewDeck = {},
+                    hasApiKey = false,
+                    source = CardSource.ON_DEVICE, onSource = {},
+                    text = "", onText = {},
+                    explain = false, onExplain = {}
                 )
             }
         }
-
-        // Detailed OCR Error Dialog
-        if (errorMessageToShow != null) {
-            AlertDialog(
-                onDismissRequest = { errorMessageToShow = null },
-                containerColor = NeumorphicColors.DialogBackground,
-                titleContentColor = NeumorphicColors.TextPrimary,
-                textContentColor = NeumorphicColors.TextSecondary,
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Warning,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "OCR / Scan Error",
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary
-                        )
-                    }
-                },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = errorMessageToShow!!,
-                            fontSize = 14.sp,
-                            color = NeumorphicColors.TextPrimary
-                        )
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = { errorMessageToShow = null },
-                        colors = ButtonDefaults.buttonColors(containerColor = NeumorphicColors.Primary)
-                    ) {
-                        Text("OK", color = Color.White)
-                    }
-                }
-            )
-        }
-
-    }
-}
-
-private fun cropBitmap(
-    originalBitmap: Bitmap,
-    mode: CropMode,
-    rectNormLeft: Float,
-    rectNormTop: Float,
-    rectNormRight: Float,
-    rectNormBottom: Float,
-    lassoNormPoints: List<Offset>,
-    quadNormTL: Offset = Offset(0.15f, 0.2f),
-    quadNormTR: Offset = Offset(0.85f, 0.2f),
-    quadNormBR: Offset = Offset(0.85f, 0.8f),
-    quadNormBL: Offset = Offset(0.15f, 0.8f)
-): Bitmap {
-    val w = originalBitmap.width
-    val h = originalBitmap.height
-
-    return when (mode) {
-        CropMode.RECTANGLE -> {
-            val x = (rectNormLeft * w).toInt().coerceIn(0, w - 1)
-            val y = (rectNormTop * h).toInt().coerceIn(0, h - 1)
-            val cropW = ((rectNormRight - rectNormLeft) * w).toInt().coerceIn(1, w - x)
-            val cropH = ((rectNormBottom - rectNormTop) * h).toInt().coerceIn(1, h - y)
-
-            Bitmap.createBitmap(originalBitmap, x, y, cropW, cropH)
-        }
-        CropMode.LASSO -> {
-            if (lassoNormPoints.size < 3) return originalBitmap
-
-            val resultBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(resultBitmap)
-
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK }
-            val path = android.graphics.Path()
-
-            val p0 = lassoNormPoints.first()
-            path.moveTo(p0.x * w, p0.y * h)
-            for (i in 1 until lassoNormPoints.size) {
-                val pt = lassoNormPoints[i]
-                path.lineTo(pt.x * w, pt.y * h)
-            }
-            path.close()
-
-            canvas.drawPath(path, paint)
-            paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
-            canvas.drawBitmap(originalBitmap, 0f, 0f, paint)
-
-            val bounds = android.graphics.RectF()
-            path.computeBounds(bounds, true)
-
-            val bx = bounds.left.toInt().coerceIn(0, w - 1)
-            val by = bounds.top.toInt().coerceIn(0, h - 1)
-            val bw = bounds.width().toInt().coerceIn(1, w - bx)
-            val bh = bounds.height().toInt().coerceIn(1, h - by)
-
-            Bitmap.createBitmap(resultBitmap, bx, by, bw, bh)
-        }
-        CropMode.QUADRILATERAL -> {
-            val resultBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(resultBitmap)
-
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK }
-            val path = android.graphics.Path()
-
-            path.moveTo(quadNormTL.x * w, quadNormTL.y * h)
-            path.lineTo(quadNormTR.x * w, quadNormTR.y * h)
-            path.lineTo(quadNormBR.x * w, quadNormBR.y * h)
-            path.lineTo(quadNormBL.x * w, quadNormBL.y * h)
-            path.close()
-
-            canvas.drawPath(path, paint)
-            paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
-            canvas.drawBitmap(originalBitmap, 0f, 0f, paint)
-
-            val bounds = android.graphics.RectF()
-            path.computeBounds(bounds, true)
-
-            val bx = bounds.left.toInt().coerceIn(0, w - 1)
-            val by = bounds.top.toInt().coerceIn(0, h - 1)
-            val bw = bounds.width().toInt().coerceIn(1, w - bx)
-            val bh = bounds.height().toInt().coerceIn(1, h - by)
-
-            Bitmap.createBitmap(resultBitmap, bx, by, bw, bh)
-        }
-    }
-}
-
-private fun loadOrientedBitmap(filePath: String): Bitmap? {
-    val file = File(filePath)
-    if (!file.exists()) return null
-    val bitmap = BitmapFactory.decodeFile(filePath) ?: return null
-    return try {
-        val exif = ExifInterface(filePath)
-        val orientation = exif.getAttributeInt(
-            ExifInterface.TAG_ORIENTATION,
-            ExifInterface.ORIENTATION_NORMAL
-        )
-        val degrees = when (orientation) {
-            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
-            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
-            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
-            else -> 0f
-        }
-        if (degrees != 0f) {
-            val matrix = android.graphics.Matrix().apply { postRotate(degrees) }
-            val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-            if (rotated != bitmap) {
-                bitmap.recycle()
-            }
-            rotated
-        } else {
-            bitmap
-        }
-    } catch (e: Exception) {
-        bitmap
     }
 }

@@ -6,486 +6,298 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import android.widget.ImageView
-import android.widget.Toast
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Block
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Android
+import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Layers
+import androidx.compose.material.icons.rounded.NotificationsOff
+import androidx.compose.material.icons.rounded.QueryStats
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavController
-import com.example.ui.components.NeumorphicCard
-import com.example.ui.components.neumorphicShadow
-import com.example.ui.theme.NeumorphicColors
+import com.example.R
+import com.example.data.db.entity.BlockedAppEntity
+import com.example.ui.designsystem.BannerTone
+import com.example.ui.designsystem.EmptyState
+import com.example.ui.designsystem.InfoBanner
+import com.example.ui.designsystem.LoadingState
+import com.example.ui.designsystem.SectionHeader
+import com.example.ui.designsystem.ThemePreviews
+import com.example.ui.theme.FocusIslandTheme
+import com.example.ui.theme.Spacing
+import com.example.ui.theme.ThemeMode
+import com.example.ui.theme.extendedColors
 
+/** Which system access each blocking feature needs. */
+private data class BlockerAccess(val notifications: Boolean, val usage: Boolean, val overlay: Boolean) {
+    val launchReady get() = usage && overlay
+}
+
+/**
+ * App blocker: per app, "Hide notifications" and/or "Block opening" during focus sessions.
+ * Missing system access is shown at the top with one button each, and re-checked when the user
+ * comes back from system settings. Apps you block are listed first.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppBlockerScreen(
-    navController: NavController,
-    modifier: Modifier = Modifier,
+    onBack: () -> Unit,
     viewModel: AppBlockerViewModel = viewModel()
 ) {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
+    val blocked by viewModel.blockedApps.collectAsStateWithLifecycle()
+    val apps by viewModel.installedApps.collectAsStateWithLifecycle()
+    var query by rememberSaveable { mutableStateOf("") }
+    var access by remember { mutableStateOf(readAccess(context)) }
+    LifecycleResumeEffect(Unit) { access = readAccess(context); onPauseOrDispose { } }
 
-    val blockedList by viewModel.blockedApps.collectAsState()
-    val allApps by viewModel.installedApps.collectAsState()
-
-    var searchQuery by remember { mutableStateOf("") }
-    
-    var hasNotifPerm by remember { mutableStateOf(false) }
-    var hasUsagePerm by remember { mutableStateOf(false) }
-    var hasOverlayPerm by remember { mutableStateOf(false) }
-
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                hasNotifPerm = checkNotificationListenerPermission(context)
-                hasUsagePerm = checkUsageStatsPermission(context)
-                hasOverlayPerm = checkOverlayPermission(context)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
+    val byPackage = remember(blocked) { blocked.associateBy { it.packageName } }
+    val visible = remember(apps, byPackage, query) {
+        apps.orEmpty()
+            .filter { query.isBlank() || it.appName.contains(query.trim(), ignoreCase = true) }
+            .sortedWith(compareByDescending<InstalledAppInfo> { it.packageName in byPackage }.thenBy { it.appName.lowercase() })
     }
-
-    val filteredApps by remember(allApps, blockedList, searchQuery) {
-        derivedStateOf {
-            allApps.filter {
-                searchQuery.isEmpty() || it.appName.contains(searchQuery, ignoreCase = true)
-            }.sortedWith(compareByDescending<InstalledAppInfo> { info ->
-                blockedList.any { it.packageName == info.packageName }
-            }.thenBy { it.appName })
-        }
-    }
+    val needsNotifAccess = blocked.any { it.blockNotifications } && !access.notifications
+    val needsLaunchAccess = blocked.any { it.blockLaunch } && !access.launchReady
 
     Scaffold(
-        modifier = modifier
-            .fillMaxSize()
-            .background(NeumorphicColors.Background)
-            .statusBarsPadding(),
         topBar = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = { navController.popBackStack() },
-                    modifier = Modifier
-                        .neumorphicShadow(cornerRadius = 12.dp, elevation = 4.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Go Back",
-                        tint = NeumorphicColors.TextPrimary
-                    )
+            TopAppBar(
+                title = { Text(stringResource(R.string.settings_app_blocker)) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.back)) }
                 }
-                Spacer(modifier = Modifier.width(16.dp))
-                Text(
-                    text = "App Blocker",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = NeumorphicColors.TextPrimary
-                )
-            }
+            )
         }
-    ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(NeumorphicColors.Background)
-                .padding(innerPadding),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // Header Info Card
-            item {
-                NeumorphicCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 16.dp,
-                    elevation = 4.dp
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Focus App Blocker",
-                            fontWeight = FontWeight.Bold,
-                            color = NeumorphicColors.TextPrimary,
-                            fontSize = 16.sp
-                        )
-                        Text(
-                            text = "Choose applications to silence and block during active focus sessions. If you try to open them, they will be intercepted with a reminder to stay on task.",
-                            fontSize = 12.sp,
-                            color = NeumorphicColors.TextSecondary,
-                            lineHeight = 18.sp
-                        )
-                    }
-                }
-            }
-
-            // Permissions checklist section
-            item {
-                Text(
-                    text = "REQUIRED PERMISSIONS",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = NeumorphicColors.TextSecondary,
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
-
-                NeumorphicCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 16.dp,
-                    elevation = 5.dp
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        PermissionRow(
-                            title = "Notification Access",
-                            description = "Allows Focus Island to block app push alerts.",
-                            isGranted = hasNotifPerm,
-                            onGrantClick = {
-                                try {
-                                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "Search Notification Access in system settings to grant.", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        )
-                        
-                        HorizontalDivider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.2f))
-
-                        PermissionRow(
-                            title = "Usage Stats Access",
-                            description = "Allows detecting when a blocked app opens.",
-                            isGranted = hasUsagePerm,
-                            onGrantClick = {
-                                try {
-                                    context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "Search Usage Access in system settings to grant.", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        )
-
-                        HorizontalDivider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.2f))
-
-                        PermissionRow(
-                            title = "Draw Over Apps (Overlay)",
-                            description = "Allows displaying the lock status screen.",
-                            isGranted = hasOverlayPerm,
-                            onGrantClick = {
-                                try {
-                                    context.startActivity(
-                                        Intent(
-                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                            Uri.parse("package:${context.packageName}")
-                                        )
-                                    )
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "Search Overlay/Draw Over Apps in system settings to grant.", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-
-            // Search Filter
-            item {
-                Text(
-                    text = "CONFIGURED APPLICATIONS",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = NeumorphicColors.TextSecondary,
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
-
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("Filter installed apps...") },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = NeumorphicColors.TextPrimary,
-                        unfocusedTextColor = NeumorphicColors.TextPrimary,
-                        focusedLabelColor = NeumorphicColors.Primary,
-                        unfocusedLabelColor = NeumorphicColors.TextSecondary,
-                        focusedBorderColor = NeumorphicColors.Primary,
-                        unfocusedBorderColor = NeumorphicColors.TextSecondary.copy(alpha = 0.5f),
-                        focusedPlaceholderColor = NeumorphicColors.TextSecondary,
-                        unfocusedPlaceholderColor = NeumorphicColors.TextSecondary.copy(alpha = 0.7f)
-                    ),
-                    singleLine = true
-                )
-            }
-
-            // Search Results/App lists
-            if (filteredApps.isEmpty()) {
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
+            LazyColumn(
+                modifier = Modifier.widthIn(max = Spacing.contentMaxWidth).fillMaxSize(),
+                contentPadding = PaddingValues(start = Spacing.md, end = Spacing.md, bottom = Spacing.xl),
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+            ) {
                 item {
                     Text(
-                        text = if (searchQuery.isEmpty()) "Loading apps list..." else "No matching apps found",
+                        stringResource(R.string.blocker_intro),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = NeumorphicColors.TextSecondary,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 24.dp)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = Spacing.xs)
                     )
                 }
+                if (needsNotifAccess || needsLaunchAccess) {
+                    item {
+                        InfoBanner(
+                            text = stringResource(R.string.blocker_not_working),
+                            tone = BannerTone.Warning
+                        )
+                    }
+                }
+                item { AccessCard(access) { openAccessScreen(context, it) } }
+                item {
+                    SectionHeader(
+                        if (blocked.isEmpty()) stringResource(R.string.blocker_apps)
+                        else pluralStringResource(R.plurals.blocker_apps_blocked, blocked.size, blocked.size)
+                    )
+                }
+                item {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        label = { Text(stringResource(R.string.blocker_search)) },
+                        leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                        trailingIcon = if (query.isNotEmpty()) {
+                            { IconButton(onClick = { query = "" }) { Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.community_clear)) } }
+                        } else null,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                when {
+                    apps == null -> item { Box(Modifier.fillMaxWidth().padding(Spacing.xl)) { LoadingState() } }
+                    visible.isEmpty() -> item {
+                        EmptyState(
+                            icon = Icons.Rounded.SearchOff,
+                            title = stringResource(R.string.blocker_no_match_title),
+                            body = stringResource(R.string.blocker_no_match_body)
+                        )
+                    }
+                    else -> items(visible, key = { it.packageName }) { app ->
+                        AppRow(
+                            app = app,
+                            rule = byPackage[app.packageName],
+                            onNotifications = { viewModel.toggleNotifBlock(app.packageName, app.appName, it) },
+                            onLaunch = { viewModel.toggleLaunchBlock(app.packageName, app.appName, it) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private enum class AccessKind { NOTIFICATIONS, USAGE, OVERLAY }
+
+/** The three system permissions, each with what it enables and a button while missing. */
+@Composable
+private fun AccessCard(access: BlockerAccess, onOpen: (AccessKind) -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column {
+            AccessRow(Icons.Rounded.NotificationsOff, R.string.blocker_access_notifications, R.string.blocker_access_notifications_body, access.notifications) { onOpen(AccessKind.NOTIFICATIONS) }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            AccessRow(Icons.Rounded.QueryStats, R.string.blocker_access_usage, R.string.blocker_access_usage_body, access.usage) { onOpen(AccessKind.USAGE) }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            AccessRow(Icons.Rounded.Layers, R.string.blocker_access_overlay, R.string.blocker_access_overlay_body, access.overlay) { onOpen(AccessKind.OVERLAY) }
+        }
+    }
+}
+
+@Composable
+private fun AccessRow(icon: ImageVector, title: Int, body: Int, granted: Boolean, onAllow: () -> Unit) {
+    ListItem(
+        leadingContent = { Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+        headlineContent = { Text(stringResource(title)) },
+        supportingContent = { Text(stringResource(body)) },
+        trailingContent = {
+            if (granted) {
+                Icon(Icons.Rounded.CheckCircle, contentDescription = stringResource(R.string.blocker_access_granted), tint = MaterialTheme.extendedColors.success)
             } else {
-                items(filteredApps, key = { it.packageName }) { appInfo ->
-                    val blockCfg = blockedList.find { it.packageName == appInfo.packageName }
-
-                    val isNotifBlocked = blockCfg?.blockNotifications ?: false
-                    val isLaunchBlocked = blockCfg?.blockLaunch ?: false
-
-                    AppConfigCard(
-                        appInfo = appInfo,
-                        isNotifBlocked = isNotifBlocked,
-                        onNotifBlockedChange = { block ->
-                            viewModel.toggleNotifBlock(appInfo.packageName, appInfo.appName, block)
-                        },
-                        isLaunchBlocked = isLaunchBlocked,
-                        onLaunchBlockedChange = { block ->
-                            viewModel.toggleLaunchBlock(appInfo.packageName, appInfo.appName, block)
-                        }
-                    )
-                }
+                FilledTonalButton(onClick = onAllow) { Text(stringResource(R.string.blocker_allow)) }
             }
-        }
-    }
-}
-
-@Composable
-fun PermissionRow(
-    title: String,
-    description: String,
-    isGranted: Boolean,
-    onGrantClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                fontWeight = FontWeight.Bold,
-                color = NeumorphicColors.TextPrimary,
-                fontSize = 14.sp
-            )
-            Text(
-                text = description,
-                fontSize = 11.sp,
-                color = NeumorphicColors.TextSecondary
-            )
-        }
-        
-        Spacer(modifier = Modifier.width(12.dp))
-
-        if (isGranted) {
-            Icon(
-                imageVector = Icons.Default.CheckCircle,
-                contentDescription = "Permission Granted",
-                tint = Color(0xFF4CAF50),
-                modifier = Modifier.size(28.dp)
-            )
-        } else {
-            Button(
-                onClick = onGrantClick,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = NeumorphicColors.Accent,
-                    contentColor = Color.White
-                ),
-                shape = RoundedCornerShape(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Text("Grant →", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-}
-
-@Composable
-fun AppConfigCard(
-    appInfo: InstalledAppInfo,
-    isNotifBlocked: Boolean,
-    onNotifBlockedChange: (Boolean) -> Unit,
-    isLaunchBlocked: Boolean,
-    onLaunchBlockedChange: (Boolean) -> Unit
-) {
-    NeumorphicCard(
-        modifier = Modifier.fillMaxWidth(),
-        cornerRadius = 16.dp,
-        elevation = 3.dp
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                appInfo.icon?.let { drawable ->
-                    AndroidView(
-                        factory = { ctx ->
-                            ImageView(ctx).apply {
-                                scaleType = ImageView.ScaleType.FIT_CENTER
-                            }
-                        },
-                        update = { imageView ->
-                            imageView.setImageDrawable(drawable)
-                        },
-                        modifier = Modifier.size(36.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = appInfo.appName,
-                        fontWeight = FontWeight.Bold,
-                        color = NeumorphicColors.TextPrimary,
-                        fontSize = 14.sp
-                    )
-                    Text(
-                        text = appInfo.packageName,
-                        fontSize = 10.sp,
-                        color = NeumorphicColors.TextSecondary
-                    )
-                }
-            }
-
-            HorizontalDivider(color = NeumorphicColors.SurfaceDark.copy(alpha = 0.15f))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.NotificationsActive,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = if (isNotifBlocked) NeumorphicColors.Primary else NeumorphicColors.TextSecondary
-                    )
-                    Text(
-                        text = "Block notifications",
-                        fontSize = 12.sp,
-                        color = if (isNotifBlocked) NeumorphicColors.TextPrimary else NeumorphicColors.TextSecondary
-                    )
-                }
-                Switch(
-                    checked = isNotifBlocked,
-                    onCheckedChange = onNotifBlockedChange,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = NeumorphicColors.Primary,
-                        checkedTrackColor = NeumorphicColors.Primary.copy(alpha = 0.5f)
-                    )
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Block,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = if (isLaunchBlocked) NeumorphicColors.Primary else NeumorphicColors.TextSecondary
-                    )
-                    Text(
-                        text = "Block application launch",
-                        fontSize = 12.sp,
-                        color = if (isLaunchBlocked) NeumorphicColors.TextPrimary else NeumorphicColors.TextSecondary
-                    )
-                }
-                Switch(
-                    checked = isLaunchBlocked,
-                    onCheckedChange = onLaunchBlockedChange,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = NeumorphicColors.Primary,
-                        checkedTrackColor = NeumorphicColors.Primary.copy(alpha = 0.5f)
-                    )
-                )
-            }
-        }
-    }
-}
-
-private fun checkNotificationListenerPermission(context: Context): Boolean {
-    val enabledListeners = Settings.Secure.getString(
-        context.contentResolver, "enabled_notification_listeners"
+        },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
     )
-    return enabledListeners?.contains(context.packageName) == true
 }
 
-private fun checkUsageStatsPermission(context: Context): Boolean {
+/** App icon and name, then two chips: hide its notifications, block opening it. */
+@Composable
+private fun AppRow(
+    app: InstalledAppInfo,
+    rule: BlockedAppEntity?,
+    onNotifications: (Boolean) -> Unit,
+    onLaunch: (Boolean) -> Unit
+) {
+    val notif = rule?.blockNotifications == true
+    val launch = rule?.blockLaunch == true
+    ListItem(
+        leadingContent = {
+            val icon = app.icon
+            if (icon != null) Image(icon, contentDescription = null, modifier = Modifier.size(Spacing.xl + Spacing.xs))
+            else Icon(Icons.Rounded.Android, contentDescription = null, modifier = Modifier.size(Spacing.xl + Spacing.xs))
+        },
+        headlineContent = { Text(app.appName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        supportingContent = {
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                FilterChip(
+                    selected = notif,
+                    onClick = { onNotifications(!notif) },
+                    label = { Text(stringResource(R.string.blocker_hide_notifications), maxLines = 1) },
+                    leadingIcon = { Icon(Icons.Rounded.NotificationsOff, contentDescription = null, modifier = Modifier.size(Spacing.iconSm - Spacing.xxs)) }
+                )
+                FilterChip(
+                    selected = launch,
+                    onClick = { onLaunch(!launch) },
+                    label = { Text(stringResource(R.string.blocker_block_opening), maxLines = 1) },
+                    leadingIcon = { Icon(Icons.Rounded.Block, contentDescription = null, modifier = Modifier.size(Spacing.iconSm - Spacing.xxs)) }
+                )
+            }
+        },
+        colors = ListItemDefaults.colors(
+            containerColor = if (notif || launch) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f) else Color.Transparent
+        )
+    )
+}
+
+// ---------------------------------------------------------------- system access
+
+private fun readAccess(context: Context) = BlockerAccess(
+    notifications = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")?.contains(context.packageName) == true,
+    usage = hasUsageAccess(context),
+    overlay = Settings.canDrawOverlays(context)
+)
+
+private fun hasUsageAccess(context: Context): Boolean {
     val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
     val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        appOps.unsafeCheckOpNoThrow(
-            AppOpsManager.OPSTR_GET_USAGE_STATS,
-            android.os.Process.myUid(), context.packageName
-        )
+        appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), context.packageName)
     } else {
         @Suppress("DEPRECATION")
-        appOps.checkOpNoThrow(
-            AppOpsManager.OPSTR_GET_USAGE_STATS,
-            android.os.Process.myUid(), context.packageName
-        )
+        appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), context.packageName)
     }
     return mode == AppOpsManager.MODE_ALLOWED
 }
 
-private fun checkOverlayPermission(context: Context): Boolean =
-    Settings.canDrawOverlays(context)
+private fun openAccessScreen(context: Context, kind: AccessKind) {
+    val intent = when (kind) {
+        AccessKind.NOTIFICATIONS -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        AccessKind.USAGE -> Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+        AccessKind.OVERLAY -> Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+    }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    // Some phones lack the specific screen: fall back to the app's system page.
+    runCatching { context.startActivity(intent) }.onFailure {
+        runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
+}
+
+@ThemePreviews
+@Composable
+private fun AppBlockerPiecesPreview() {
+    FocusIslandTheme(themeMode = ThemeMode.SYSTEM) {
+        Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            AccessCard(BlockerAccess(notifications = true, usage = false, overlay = false)) {}
+            AppRow(InstalledAppInfo("com.a", "Instagram", null), BlockedAppEntity("com.a", "Instagram", "", blockNotifications = true, blockLaunch = false), {}, {})
+            AppRow(InstalledAppInfo("com.b", "YouTube", null), null, {}, {})
+        }
+    }
+}

@@ -24,10 +24,6 @@
     <!-- Post notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Exact alarm for timer precision -->
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-
     <!-- Wake lock to keep timer alive on screen off -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
@@ -41,11 +37,13 @@
     <!-- Foreground service for background audio -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
-    <!-- Keep WiFi alive during streaming -->
-    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
-
-    <!-- Read installed apps list -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- App blocker lists apps that have a launcher icon (no QUERY_ALL_PACKAGES needed) -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <!-- Usage stats — detect which app is in foreground (app launch blocking) -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
@@ -66,6 +64,8 @@
         android:label="@string/app_name" />
 
     <application
+        android:localeConfig="@xml/locales_config"
+        android:enableOnBackInvokedCallback="true"
         android:name="com.example.FocusFlowApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -84,13 +84,20 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode"
-            android:theme="@style/Theme.MyApplication">
+            android:theme="@style/Theme.FocusIsland.Starting">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- In-app deep links: focusisland://app/focus | study | progress | exams | community -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="focusisland" android:host="app" />
             </intent-filter>
         </activity>
 
@@ -101,7 +108,7 @@
             android:exported="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Pomodoro timer service to track focused sessions and break cycles" />
+                android:value="Pomodoro focus timer: counts down focus and break phases, plays optional ambient sound and pauses apps the user chose to block during focus" />
         </service>
 
         <!-- Notification listener (block notifications from specific apps) -->
@@ -112,16 +119,6 @@
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
-        </service>
-
-        <!-- App monitor foreground service -->
-        <service
-            android:name=".service.AppMonitorService"
-            android:foregroundServiceType="specialUse"
-            android:exported="false">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Monitors app launch to protect users focus sessions" />
         </service>
 
         <!-- Media player service declaration -->
@@ -165,8 +162,19 @@
         <activity
             android:name=".FocusOverlayActivity"
             android:exported="false"
+            android:excludeFromRecents="true"
             android:theme="@style/Theme.MyApplication"
             android:launchMode="singleTop" />
+
+        <!-- Challenge deadline, "Goal reached" action, and re-arming after a reboot -->
+        <receiver
+            android:name=".service.ChallengeAlarmReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Home Screen Widget Receivers -->
         <receiver
@@ -179,7 +187,7 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
-                <action android:name="android.intent.action.WALLPAPER_CHANGED" />
+                <action android:name="android.intent.action.LOCALE_CHANGED" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
@@ -197,7 +205,7 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
-                <action android:name="android.intent.action.WALLPAPER_CHANGED" />
+                <action android:name="android.intent.action.LOCALE_CHANGED" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"

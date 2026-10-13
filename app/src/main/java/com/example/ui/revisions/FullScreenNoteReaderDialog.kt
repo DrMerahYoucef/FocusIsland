@@ -1,48 +1,72 @@
 package com.example.ui.revisions
 
-import android.graphics.BitmapFactory
-import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.TextDecrease
+import androidx.compose.material.icons.rounded.TextIncrease
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.R
 import com.example.data.db.entity.RevisionNoteEntity
-import com.example.ui.screen.revisions.AudioCardPlayerView
-import com.example.ui.theme.LocalIsDarkTheme
-import com.example.ui.theme.NeumorphicColors
+import com.example.ui.screen.revisions.CardContent
+import com.example.ui.screen.revisions.ZoomableImageDialog
+import com.example.ui.theme.Spacing
+import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.math.roundToInt
 
+private const val MIN_SCALE = 0.7f
+private const val MAX_SCALE = 3.0f
+private const val SCALE_STEP = 0.15f
+private const val BASE_FONT_SP = 18f
+
+/**
+ * Distraction-free reading of one card. Text size: buttons in the app bar or pinch with two
+ * fingers (tap the percentage to reset). Tap a photo to zoom it. Text cards can be edited here.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FullScreenNoteReaderDialog(
@@ -51,330 +75,126 @@ fun FullScreenNoteReaderDialog(
     onDismiss: () -> Unit,
     onSaveNote: ((RevisionNoteEntity) -> Unit)? = null
 ) {
-    val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
-    val isDark = LocalIsDarkTheme.current
-
-    var currentNote by remember(note) { mutableStateOf(note) }
-    var isEditMode by remember { mutableStateOf(false) }
-    var textScale by remember { mutableFloatStateOf(1.0f) }
-    var imageScale by remember { mutableFloatStateOf(1.0f) }
-    var showZoomHint by remember { mutableStateOf(true) }
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+    var current by remember(note) { mutableStateOf(note) }
+    var editing by rememberSaveable { mutableStateOf(false) }
+    var textScale by rememberSaveable { mutableFloatStateOf(1f) }
+    var zoomFile by remember { mutableStateOf<File?>(null) }
+    val msgCopied = stringResource(R.string.study_text_copied)
+    val msgSaved = stringResource(R.string.study_card_saved)
+    val canEdit = onSaveNote != null && current.mediaType == null
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
-        )
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
     ) {
-        val scrollState = rememberScrollState()
-
-        if (isEditMode) {
+        if (editing) {
             CardInlineEditor(
-                note = currentNote,
-                onSave = { updatedNote ->
-                    currentNote = updatedNote
-                    onSaveNote?.invoke(updatedNote)
-                    isEditMode = false
-                    Toast.makeText(context, "Carte modifiée et enregistrée ! ✨", Toast.LENGTH_SHORT).show()
+                note = current,
+                onSave = { updated ->
+                    current = updated
+                    onSaveNote?.invoke(updated)
+                    editing = false
+                    scope.launch { snackbar.showSnackbar(msgSaved) }
                 },
-                onCancel = { isEditMode = false },
+                onCancel = { editing = false },
                 modifier = Modifier.fillMaxSize()
             )
-        } else {
-            Scaffold(
-                topBar = {
-                    TopAppBar(
-                        title = {
-                            Column {
+            return@Dialog
+        }
+        Scaffold(
+            snackbarHost = { SnackbarHost(snackbar) },
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(
+                                current.title.ifBlank { stringResource(R.string.study_untitled) },
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.semantics { heading() }
+                            )
+                            if (deckName.isNotBlank()) {
                                 Text(
-                                    text = currentNote.title,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
+                                    deckName,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
                                     maxLines = 1,
-                                    color = NeumorphicColors.TextPrimary
-                                )
-                                if (deckName.isNotBlank()) {
-                                    Text(
-                                        text = deckName.uppercase(),
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Black,
-                                        color = NeumorphicColors.Primary,
-                                        letterSpacing = 0.8.sp
-                                    )
-                                }
-                            }
-                        },
-                        navigationIcon = {
-                            IconButton(
-                                onClick = onDismiss,
-                                modifier = Modifier.testTag("fullscreen_exit_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = stringResource(R.string.exit_full_screen),
-                                    tint = NeumorphicColors.TextPrimary
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
-                        },
-                        actions = {
-                            // Edit Card Toggle Button
-                            FilledTonalIconButton(
-                                onClick = { isEditMode = true },
-                                modifier = Modifier
-                                    .padding(end = 4.dp)
-                                    .testTag("fullscreen_edit_toggle_button"),
-                                colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                    containerColor = NeumorphicColors.Primary.copy(alpha = 0.15f),
-                                    contentColor = NeumorphicColors.Primary
-                                )
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = "Edit Card",
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-
-                            // Zoom Controls Pill
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .padding(end = 6.dp)
-                                    .background(
-                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isDark) 0.45f else 0.7f),
-                                        shape = RoundedCornerShape(20.dp)
-                                    )
-                                    .padding(horizontal = 4.dp, vertical = 2.dp)
-                            ) {
-                                // Zoom Out (-)
-                                IconButton(
-                                    onClick = {
-                                        textScale = (textScale - 0.15f).coerceIn(0.7f, 3.5f)
-                                        imageScale = (imageScale - 0.2f).coerceIn(0.8f, 4.0f)
-                                    },
-                                    modifier = Modifier.size(32.dp).testTag("zoom_out_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Remove,
-                                        contentDescription = stringResource(R.string.zoom_out),
-                                        modifier = Modifier.size(16.dp),
-                                        tint = NeumorphicColors.TextPrimary
-                                    )
-                                }
-
-                                // Zoom Percentage badge / Reset button
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = if (textScale != 1.0f) NeumorphicColors.Primary.copy(alpha = 0.2f) else Color.Transparent,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .clickable {
-                                            textScale = 1.0f
-                                            imageScale = 1.0f
-                                        }
-                                        .padding(horizontal = 6.dp, vertical = 4.dp)
-                                        .testTag("zoom_percentage_badge")
-                                ) {
-                                    Text(
-                                        text = "${(textScale * 100).roundToInt()}%",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (textScale != 1.0f) NeumorphicColors.Primary else NeumorphicColors.TextSecondary
-                                    )
-                                }
-
-                                // Zoom In (+)
-                                IconButton(
-                                    onClick = {
-                                        textScale = (textScale + 0.15f).coerceIn(0.7f, 3.5f)
-                                        imageScale = (imageScale + 0.2f).coerceIn(0.8f, 4.0f)
-                                    },
-                                    modifier = Modifier.size(32.dp).testTag("zoom_in_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Add,
-                                        contentDescription = stringResource(R.string.zoom_in),
-                                        modifier = Modifier.size(16.dp),
-                                        tint = NeumorphicColors.TextPrimary
-                                    )
-                                }
-                            }
-
-                            // Copy Text Action
-                            IconButton(
-                                onClick = {
-                                    val textToCopy = currentNote.plainTextPreview.ifBlank { currentNote.contentMarkdown }
-                                    clipboardManager.setText(AnnotatedString(textToCopy))
-                                    Toast.makeText(context, "Copied to clipboard! 📋", Toast.LENGTH_SHORT).show()
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "Copy Text",
-                                    tint = NeumorphicColors.TextPrimary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        },
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = NeumorphicColors.Background,
-                            titleContentColor = NeumorphicColors.TextPrimary,
-                            navigationIconContentColor = NeumorphicColors.TextPrimary
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onDismiss, modifier = Modifier.testTag("fullscreen_exit_button")) {
+                            Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.exit_full_screen))
+                        }
+                    },
+                    actions = {
+                        TextSizeControl(
+                            scale = textScale,
+                            onScale = { textScale = it.coerceIn(MIN_SCALE, MAX_SCALE) }
                         )
-                    )
-                },
-                containerColor = NeumorphicColors.Background
-            ) { padding ->
-                Box(
+                        if (canEdit) {
+                            IconButton(onClick = { editing = true }, modifier = Modifier.testTag("fullscreen_edit_toggle_button")) {
+                                Icon(Icons.Rounded.Edit, contentDescription = stringResource(R.string.edit))
+                            }
+                        }
+                        if (current.mediaType == null) {
+                            IconButton(onClick = {
+                                clipboard.setText(AnnotatedString(current.plainTextPreview.ifBlank { current.contentMarkdown }))
+                                scope.launch { snackbar.showSnackbar(msgCopied) }
+                            }) {
+                                Icon(Icons.Rounded.ContentCopy, contentDescription = stringResource(R.string.study_copy_text))
+                            }
+                        }
+                    }
+                )
+            }
+        ) { padding ->
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
+                CardContent(
+                    note = current,
+                    onZoomImage = { zoomFile = it },
+                    fontSize = (BASE_FONT_SP * textScale).sp,
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                ) {
-                    // Two-finger pinch gesture detector on the whole content container
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(Unit) {
-                                detectTransformGestures { _, _, zoom, _ ->
-                                    if (zoom != 1.0f) {
-                                        textScale = (textScale * zoom).coerceIn(0.7f, 3.5f)
-                                        imageScale = (imageScale * zoom).coerceIn(0.8f, 4.0f)
-                                    }
-                                }
-                            }
-                            .verticalScroll(scrollState)
-                            .padding(horizontal = 20.dp, vertical = 16.dp)
-                            .testTag("fullscreen_note_content_container")
-                    ) {
-                        val imageFile = currentNote.mediaFilePath?.let { File(it) }
-                        val isImage = currentNote.mediaType == "IMAGE" && imageFile != null && imageFile.exists()
-                        val isAudio = currentNote.mediaType == "AUDIO" && imageFile != null && imageFile.exists()
-
-                        // IMAGE Card in Fullscreen
-                        if (isImage) {
-                            val bitmap = remember(currentNote.mediaFilePath) {
-                                BitmapFactory.decodeFile(imageFile!!.absolutePath)
-                            }
-                            if (bitmap != null) {
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(bottom = 16.dp)
-                                ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(16.dp),
-                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .graphicsLayer(
-                                                scaleX = imageScale,
-                                                scaleY = imageScale
-                                            )
-                                    ) {
-                                        Image(
-                                            bitmap = bitmap.asImageBitmap(),
-                                            contentDescription = "Card Photo Fullscreen",
-                                            contentScale = ContentScale.Fit,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .heightIn(min = 200.dp, max = 500.dp)
-                                        )
-                                    }
-                                }
+                        .widthIn(max = Spacing.contentMaxWidth)
+                        .fillMaxWidth()
+                        .pointerInput(Unit) {
+                            // Two-finger pinch changes the text size; one finger still scrolls.
+                            detectTransformGestures { _, _, zoom, _ ->
+                                if (zoom != 1f) textScale = (textScale * zoom).coerceIn(MIN_SCALE, MAX_SCALE)
                             }
                         }
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = Spacing.lg, vertical = Spacing.md)
+                        .testTag("fullscreen_note_content_container")
+                )
+            }
+        }
+        zoomFile?.let { ZoomableImageDialog(it) { zoomFile = null } }
+    }
+}
 
-                        // AUDIO Card in Fullscreen
-                        if (isAudio) {
-                            AudioCardPlayerView(
-                                audioFile = imageFile!!,
-                                context = context,
-                                autoPlay = false
-                            )
-                            Spacer(modifier = Modifier.height(16.dp))
-                        }
-
-                        // Structured Text Content with Pinch Zoom Font Scaling
-                        val baseFontSize = 17.sp
-                        val scaledFontSize = (baseFontSize.value * textScale).sp
-
-                        val hasBlocks = currentNote.contentBlocksJson.isNotBlank() && currentNote.contentBlocksJson != "[]"
-                        val plainText = currentNote.plainTextPreview.ifBlank { currentNote.contentMarkdown }.trim()
-                        val showPlainText = !hasBlocks && plainText.isNotBlank() &&
-                                !plainText.equals("Photo Card", ignoreCase = true) &&
-                                !plainText.equals("Voice Note Card", ignoreCase = true)
-
-                        if (hasBlocks) {
-                            NoteBlocksRenderer(
-                                blocksJson = currentNote.contentBlocksJson,
-                                fontSize = scaledFontSize,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        } else if (showPlainText) {
-                            HighlightedMarkdownWithTables(
-                                markdown = plainText,
-                                fontSize = scaledFontSize,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(80.dp))
-                    }
-
-                    // Floating Bottom Pinch-to-Zoom Helper Pill
-                    AnimatedVisibility(
-                        visible = showZoomHint,
-                        enter = fadeIn(),
-                        exit = fadeOut(),
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 20.dp)
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(24.dp),
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = if (isDark) 0.90f else 0.95f),
-                            shadowElevation = 6.dp,
-                            tonalElevation = 4.dp,
-                            border = androidx.compose.foundation.BorderStroke(
-                                width = 1.dp,
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                            )
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-                            ) {
-                                Text(
-                                    text = "🤏 Pinch to zoom • ${(textScale * 100).roundToInt()}%",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = NeumorphicColors.TextPrimary
-                                )
-                                if (textScale != 1.0f || imageScale != 1.0f) {
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    TextButton(
-                                        onClick = {
-                                            textScale = 1.0f
-                                            imageScale = 1.0f
-                                        },
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                        modifier = Modifier.height(28.dp)
-                                    ) {
-                                        Text(
-                                            text = "Reset",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = NeumorphicColors.Primary
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+/** − 100 % + ; tapping the percentage resets to 100 %. */
+@Composable
+private fun TextSizeControl(scale: Float, onScale: (Float) -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.extraLarge) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            IconButton(onClick = { onScale(scale - SCALE_STEP) }, enabled = scale > MIN_SCALE, modifier = Modifier.testTag("zoom_out_button")) {
+                Icon(Icons.Rounded.TextDecrease, contentDescription = stringResource(R.string.zoom_out))
+            }
+            TextButton(onClick = { onScale(1f) }, modifier = Modifier.testTag("zoom_percentage_badge")) {
+                Text(
+                    stringResource(R.string.reader_text_size, (scale * 100).roundToInt()),
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+            IconButton(onClick = { onScale(scale + SCALE_STEP) }, enabled = scale < MAX_SCALE, modifier = Modifier.testTag("zoom_in_button")) {
+                Icon(Icons.Rounded.TextIncrease, contentDescription = stringResource(R.string.zoom_in))
             }
         }
     }

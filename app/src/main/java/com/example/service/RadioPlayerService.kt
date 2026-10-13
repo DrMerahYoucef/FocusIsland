@@ -200,11 +200,16 @@ class RadioPlayerService : MediaLibraryService() {
             .build()
     }
 
+    /** Shares the station with friends only if the user opted in (Community → Friends). */
     private fun updateRadioStatus(stationName: String) {
         try {
-            val uid = auth.currentUser?.uid ?: return
-            firestore.collection("users").document(uid)
-                .update("currentRadio", stationName)
+            val user = auth.currentUser ?: return
+            if (user.isAnonymous) return
+            val share = getSharedPreferences(
+                com.example.ui.screen.community.CommunityViewModel.PREFS, Context.MODE_PRIVATE
+            ).getBoolean(com.example.ui.screen.community.CommunityViewModel.KEY_SHARE_LISTENING, false)
+            firestore.collection("users").document(user.uid)
+                .update("currentRadio", if (share) stationName else "")
                 .addOnFailureListener { /* silent fail — not critical */ }
         } catch (e: Exception) {
             android.util.Log.e("RadioPlayerService", "Failed to update radio status on Firestore (offline/uninitialized)", e)

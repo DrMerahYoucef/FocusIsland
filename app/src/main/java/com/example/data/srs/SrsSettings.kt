@@ -12,7 +12,8 @@ data class SrsSettings(
     val geminiApiKey: String = "",
     val explainModeEnabled: Boolean = false,
     val customPromptOverride: String? = null,
-    val selectedGeminiModel: String = "gemini-2.5-flash",
+    /** A model id, or "newest of a family" (see GeminiModels.AUTO_CHOICES). */
+    val selectedGeminiModel: String = "auto:flash",
     val availableGeminiModels: List<String> = listOf(
         "gemini-2.5-flash",
         "gemini-2.5-pro",
@@ -23,4 +24,11 @@ data class SrsSettings(
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite"
     )
-)
+) {
+    /** Model ids the user added by hand (the built-in defaults are not "custom"). */
+    val customGeminiModels: List<String> get() = availableGeminiModels.filter { it !in DEFAULT_MODELS }
+
+    companion object {
+        val DEFAULT_MODELS = SrsSettings(selectedGeminiModel = "").availableGeminiModels
+    }
+}

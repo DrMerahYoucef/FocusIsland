@@ -1,12 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Secure access to all app file locations -->
-    <files-path name="files" path="." />
+<!-- Only the folders the app actually shares: backup exports (cache) and card media. -->
+<paths>
     <cache-path name="cache" path="." />
-    <cache-path name="update_apks" path="update_apks" />
-    <cache-path name="revision_exports" path="." />
-    <external-path name="external" path="." />
-    <external-files-path name="external_files" path="." />
-    <external-cache-path name="external_cache" path="." />
-    <root-path name="root" path="." />
+    <files-path name="revision_media" path="revision_media/" />
+    <files-path name="restored_media" path="revisions_media/" />
 </paths>

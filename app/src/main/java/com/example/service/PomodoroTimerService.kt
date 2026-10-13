@@ -7,654 +7,678 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.media.AudioAttributes
+import android.content.SharedPreferences
+import android.content.pm.ServiceInfo
 import android.media.RingtoneManager
 import android.os.Build
-import android.os.CountDownTimer
 import android.os.IBinder
+import android.os.PowerManager
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
+import androidx.core.content.edit
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 import com.example.FocusFlowApplication
 import com.example.MainActivity
 import com.example.R
 import com.example.data.db.entity.SessionEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+/**
+ * Pomodoro engine. The single source of truth is [state] plus the phase end time, which is
+ * measured on the monotonic clock and persisted, so the countdown never drifts and survives
+ * process death. App-launch blocking runs inside this service (see [AppLaunchMonitor]).
+ */
 class PomodoroTimerService : Service() {
 
-    private var countdownTimer: CountDownTimer? = null
-    private val serviceScope = CoroutineScope(Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var tickerJob: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private lateinit var launchMonitor: AppLaunchMonitor
+    private var settings = TimerSettings()
+    private var lastAmbientRotationElapsed = 0L
+    private var exoPlayer: ExoPlayer? = null
 
-    // Cached settings (loaded from SharedPreferences)
-    private var focusDurationMs = 25 * 60 * 1000L
-    private var shortBreakDurationMs = 5 * 60 * 1000L
-    private var longBreakDurationMs = 15 * 60 * 1000L
-    private var sessionsBeforeLongBreak = 4
-    private var dndEnabled = false
-    private var vibrateEnabled = true
-    private var ambientRotationMin = 5
-    private var ambientSecondsElapsed = 0L
+    // ------------------------------------------------------------------ lifecycle
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannels()
-        loadSettings()
-        
-        // Push initial state
-        val prefs = getSharedPreferences("focusflow_prefs", Context.MODE_PRIVATE)
-        val savedAmbient = prefs.getString("selected_ambient_id", "none") ?: "none"
-        _state.update {
-            it.copy(
-                remainingMs = focusDurationMs,
-                focusDurationMs = focusDurationMs,
-                shortBreakDurationMs = shortBreakDurationMs,
-                longBreakDurationMs = longBreakDurationMs,
-                sessionsBeforeLongBreak = sessionsBeforeLongBreak,
-                currentAmbientId = savedAmbient
-            )
-        }
+        serviceAlive = true
+        createNotificationChannel()
+        loadPersisted(this)
+        settings = TimerSettings.load(this)
+        launchMonitor = AppLaunchMonitor(
+            context = this,
+            scope = scope,
+            blockedPackages = FocusFlowApplication.instance.database.blockedAppDao().getAllBlocked()
+                .map { apps -> apps.filter { it.blockLaunch }.mapTo(HashSet()) { it.packageName } }
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        loadSettings() // load fresh user preferences just in case they modified settings
-
+        settings = TimerSettings.load(this)
         when (intent?.action) {
-            ACTION_START -> {
-                if (!companionIsRunning) {
-                    startTimer()
-                } else {
-                    startForeground(NOTIF_ID, buildTimerNotification())
-                }
-            }
-            ACTION_PAUSE -> {
-                pauseTimer()
-            }
-            ACTION_RESUME -> {
-                resumeTimer()
-            }
-            ACTION_SKIP -> {
-                skipPhase()
-            }
+            ACTION_START, ACTION_RESUME -> start()
+            ACTION_PAUSE -> pause()
+            ACTION_SKIP -> skip()
             ACTION_STOP -> {
-                stopTimerEngine()
+                stopTimer()
                 stopSelf()
             }
-            ACTION_SET_AMBIENT -> {
-                val ambientId = intent.getStringExtra(EXTRA_AMBIENT_ID) ?: "none"
-                setAmbientSoundInternal(ambientId)
+            ACTION_SET_AMBIENT -> setAmbientSound(intent.getStringExtra(EXTRA_AMBIENT_ID) ?: AMBIENT_NONE)
+            else -> { // ACTION_RESTORE or a system restart after the process was killed
+                if (_state.value.isRunning) start() else if (!_state.value.isUntouched) showPausedForeground() else stopSelf()
             }
         }
         return START_STICKY
     }
 
-    private fun loadSettings() {
-        val prefs = getSharedPreferences("focusflow_prefs", Context.MODE_PRIVATE)
-        val focusMin = prefs.getInt("focus_duration_min", 25)
-        val shortMin = prefs.getInt("short_break_min", 5)
-        val longMin = prefs.getInt("long_break_min", 15)
-        
-        focusDurationMs = focusMin * 60 * 1000L
-        shortBreakDurationMs = shortMin * 60 * 1000L
-        longBreakDurationMs = longMin * 60 * 1000L
-        sessionsBeforeLongBreak = prefs.getInt("sessions_before_long", 4)
-        dndEnabled = prefs.getBoolean("block_notifications", false)
-        vibrateEnabled = prefs.getBoolean("vibrate_on_complete", true)
-        ambientRotationMin = prefs.getInt("ambient_rotation_min", 5)
-    }
-
-    private fun startTimer() {
-        companionIsRunning = true
-        val currentRemaining = _state.value.remainingMs
-        launchCountdown(currentRemaining)
-        startForeground(NOTIF_ID, buildTimerNotification())
-        
-        if (_state.value.phase == Phase.FOCUS) {
-            if (dndEnabled) {
-                blockNotifications(true)
-            }
-            AppMonitorService.start(this)
-            FocusNotificationListenerService.refresh(this)
-        }
-        syncAmbientPlayback()
-    }
-
-    private fun pauseTimer() {
-        companionIsRunning = false
-        countdownTimer?.cancel()
-        _state.update { it.copy(isRunning = false) }
-        updateNotification()
-        syncAmbientPlayback()
-    }
-
-    private fun resumeTimer() {
-        startTimer()
-    }
-
-    private fun skipPhase() {
-        countdownTimer?.cancel()
-        
-        // Record as uncompleted session if we were in Focus phase
-        if (_state.value.phase == Phase.FOCUS) {
-            val focusSecondsCompleted = ((focusDurationMs - _state.value.remainingMs) / 1000).toInt()
-            if (focusSecondsCompleted > 30) { // save partial focus attempt if more than 30s
-                saveSessionToDb(durationSecs = focusSecondsCompleted, completed = false)
-            }
-            if (dndEnabled) {
-                blockNotifications(false)
-            }
-            AppMonitorService.stop(this)
-        }
-
-        advancePhase()
-    }
-
-    private fun stopTimerEngine() {
-        companionIsRunning = false
-        countdownTimer?.cancel()
-        if (dndEnabled) {
-            blockNotifications(false)
-        }
-        AppMonitorService.stop(this)
-        _state.update {
-            it.copy(
-                isRunning = false,
-                remainingMs = focusDurationMs,
-                phase = Phase.FOCUS
-            )
-        }
-        syncAmbientPlayback()
-    }
-
-    private fun launchCountdown(durationMs: Long) {
-        countdownTimer?.cancel()
-        
-        _state.update { it.copy(isRunning = true) }
-        
-        countdownTimer = object : CountDownTimer(durationMs, 1000L) {
-            override fun onTick(millisLeft: Long) {
-                val totalFocusDiff = if (_state.value.phase == Phase.FOCUS) 1L else 0L
-
-                _state.update {
-                    it.copy(
-                        remainingMs = millisLeft,
-                        isRunning = true,
-                        totalFocusSecs = it.totalFocusSecs + totalFocusDiff
-                    )
-                }
-                
-                if (_state.value.currentAmbientId != "none") {
-                    ambientSecondsElapsed++
-                    val rotationPeriodSecs = ambientRotationMin * 60L
-                    if (ambientSecondsElapsed >= rotationPeriodSecs) {
-                        ambientSecondsElapsed = 0L
-                        val sounds = listOf("rain", "white_noise", "campfire", "stream", "space")
-                        val currentId = _state.value.currentAmbientId
-                        val nextSounds = sounds.filter { it != currentId }
-                        val nextId = if (nextSounds.isNotEmpty()) nextSounds.random() else currentId
-                        setAmbientSoundInternal(nextId)
-                    }
-                }
-                
-                updateNotification()
-            }
-
-            override fun onFinish() {
-                onPhaseFinished()
-            }
-        }.start()
-    }
-
-    private fun onPhaseFinished() {
-        countdownTimer?.cancel()
-        val currentPhase = _state.value.phase
-
-        if (currentPhase == Phase.FOCUS) {
-            // Focus session completed! Save with 100% completions
-            val completedSeconds = (focusDurationMs / 1000).toInt()
-            saveSessionToDb(durationSecs = completedSeconds, completed = true)
-            
-            val updatedCount = _state.value.sessionCount + 1
-            _state.update { it.copy(sessionCount = updatedCount) }
-            
-            if (dndEnabled) {
-                blockNotifications(false)
-            }
-            AppMonitorService.stop(this)
-            
-            vibrateDevice()
-            playAlertSound()
-        } else {
-            vibrateDevice()
-            playAlertSound()
-        }
-
-        advancePhase()
-    }
-
-    private fun advancePhase() {
-        val nextPhase = when (_state.value.phase) {
-            Phase.FOCUS -> {
-                val count = _state.value.sessionCount
-                if (count > 0 && count % sessionsBeforeLongBreak == 0) {
-                    Phase.LONG_BREAK
-                } else {
-                    Phase.SHORT_BREAK
-                }
-            }
-            Phase.SHORT_BREAK, Phase.LONG_BREAK -> {
-                Phase.FOCUS
-            }
-        }
-
-        val nextDuration = when (nextPhase) {
-            Phase.FOCUS -> focusDurationMs
-            Phase.SHORT_BREAK -> shortBreakDurationMs
-            Phase.LONG_BREAK -> longBreakDurationMs
-        }
-
-        _state.update {
-            it.copy(
-                phase = nextPhase,
-                remainingMs = nextDuration,
-                isRunning = companionIsRunning
-            )
-        }
-
-        if (companionIsRunning) {
-            startTimer()
-        } else {
-            updateNotification()
-        }
-    }
-
-    private fun saveSessionToDb(durationSecs: Int, completed: Boolean) {
-        if (durationSecs <= 0) return
-        val score = durationSecs / 60 // 1 point per focus minute
-        val session = SessionEntity(
-            date = System.currentTimeMillis(),
-            durationSeconds = durationSecs,
-            completed = completed,
-            focusScore = score
-        )
-        serviceScope.launch {
-            FocusFlowApplication.instance.sessionRepository.insert(session)
-        }
-    }
-
-    private fun vibrateDevice() {
-        if (!vibrateEnabled) return
-        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-            vibratorManager?.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        }
-
-        vibrator?.let {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                it.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 300, 150, 300), -1))
-            } else {
-                @Suppress("DEPRECATION")
-                it.vibrate(200)
-            }
-        }
-    }
-
-    private fun playAlertSound() {
-        try {
-            val notificationUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            val ringtone = RingtoneManager.getRingtone(applicationContext, notificationUri)
-            ringtone?.play()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    private fun blockNotifications(block: Boolean) {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (nm.isNotificationPolicyAccessGranted) {
-            try {
-                nm.setInterruptionFilter(
-                    if (block) NotificationManager.INTERRUPTION_FILTER_NONE
-                    else NotificationManager.INTERRUPTION_FILTER_ALL
-                )
-                _state.update { it.copy(isDndActive = block) }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
-    // Notification handling
-    private fun createNotificationChannels() {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val timerChannel = NotificationChannel(
-                CHANNEL_ID,
-                "Timer Running",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Shows countdown while Focus Island is active"
-                setShowBadge(false)
-            }
-            nm.createNotificationChannel(timerChannel)
-        }
-    }
-
-    private fun buildTimerNotification(): Notification {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val minutes = (_state.value.remainingMs / 1000) / 60
-        val seconds = (_state.value.remainingMs / 1000) % 60
-        val timeStr = String.format("%02d:%02d", minutes, seconds)
-        val titleText = when (_state.value.phase) {
-            Phase.FOCUS -> "Focused Work"
-            Phase.SHORT_BREAK -> "Short Break Time"
-            Phase.LONG_BREAK -> "Long Break Time"
-        }
-
-        val dndStatus = if (_state.value.isDndActive) " 🔕 DND Enabled" else ""
-
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("$titleText: $timeStr")
-            .setContentText("Focus Completed: ${_state.value.sessionCount} session(s)$dndStatus")
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .build()
-    }
-
-    private fun updateNotification() {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (companionIsRunning) {
-            nm.notify(NOTIF_ID, buildTimerNotification())
-        }
-    }
-
-    private var exoPlayer: androidx.media3.exoplayer.ExoPlayer? = null
-
-    private fun isNetworkAvailable(): Boolean {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return false
-        val network = cm.activeNetwork ?: return false
-        val caps    = cm.getNetworkCapabilities(network) ?: return false
-        return caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
-    }
-
-    private fun getOrCreatePlayer(): androidx.media3.exoplayer.ExoPlayer {
-        val currentExo = exoPlayer
-        if (currentExo == null) {
-            val newExo = androidx.media3.exoplayer.ExoPlayer.Builder(this)
-                .setAudioAttributes(
-                    androidx.media3.common.AudioAttributes.Builder()
-                        .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MUSIC)
-                        .setUsage(androidx.media3.common.C.USAGE_MEDIA)
-                        .build(),
-                    /* handleAudioFocus = */ true
-                )
-                .setHandleAudioBecomingNoisy(true)
-                .build().apply {
-                    repeatMode = androidx.media3.common.Player.REPEAT_MODE_ALL
-                    addListener(object : androidx.media3.common.Player.Listener {
-                        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                            android.util.Log.e("Ambient", "Primary URL failed: ${error.message}, trying fallback")
-                            val currentId = _state.value.currentAmbientId
-                            val fallbackUrl = getAmbientFallbackUrl(currentId)
-                            if (fallbackUrl != null) {
-                                try {
-                                    val fallbackMediaItem = androidx.media3.common.MediaItem.Builder()
-                                        .setMediaId(currentId)
-                                        .setUri(fallbackUrl)
-                                        .setMediaMetadata(
-                                            androidx.media3.common.MediaMetadata.Builder()
-                                                .setTitle(getAmbientName(currentId))
-                                                .setArtist("Ambient Flow (Fallback)")
-                                                .build()
-                                        )
-                                        .build()
-                                    setMediaItem(fallbackMediaItem)
-                                    prepare()
-                                    play()
-                                } catch (e: Exception) {
-                                    android.util.Log.e("Ambient", "Fallback also failed: ${e.message}")
-                                }
-                            }
-                        }
-                    })
-                }
-            exoPlayer = newExo
-            return newExo
-        }
-        return currentExo
-    }
-
-    private fun setAmbientSoundInternal(ambientId: String) {
-        val currentId = _state.value.currentAmbientId
-        val player = exoPlayer
-        
-        ambientSecondsElapsed = 0L // Reset rotation progress on any manual or auto sound change
-        
-        if (ambientId == "none") {
-            if (player != null && player.isPlaying) {
-                serviceScope.launch(Dispatchers.Main) {
-                    val steps = 15
-                    val fadeDurationMs = 1000L
-                    val stepDelay = fadeDurationMs / steps
-                    for (i in 0..steps) {
-                        val volume = 1f - (i.toFloat() / steps)
-                        player.volume = volume
-                        kotlinx.coroutines.delay(stepDelay)
-                    }
-                    player.pause()
-                    _state.update { it.copy(currentAmbientId = "none") }
-                    val prefs = getSharedPreferences("focusflow_prefs", Context.MODE_PRIVATE)
-                    prefs.edit().putString("selected_ambient_id", "none").apply()
-                }
-            } else {
-                _state.update { it.copy(currentAmbientId = "none") }
-                val prefs = getSharedPreferences("focusflow_prefs", Context.MODE_PRIVATE)
-                prefs.edit().putString("selected_ambient_id", "none").apply()
-                syncAmbientPlayback()
-            }
-        } else if (currentId != "none" && currentId != ambientId && player != null && player.isPlaying) {
-            // Fade transition between two active sounds
-            fadeToSound(ambientId)
-        } else {
-            // Standard start (no active player, or same sound)
-            _state.update { it.copy(currentAmbientId = ambientId) }
-            val prefs = getSharedPreferences("focusflow_prefs", Context.MODE_PRIVATE)
-            prefs.edit().putString("selected_ambient_id", ambientId).apply()
-            syncAmbientPlayback()
-            exoPlayer?.volume = 1f // ensure volume is reset to 1f
-        }
-    }
-
-    private fun fadeToSound(nextId: String) {
-        serviceScope.launch(Dispatchers.Main) {
-            val player = getOrCreatePlayer()
-            val steps = 20
-            val fadeDurationMs = 1500L
-            val stepDelay = fadeDurationMs / steps
-            
-            // 1. Fade Out
-            for (i in 0..steps) {
-                val volume = 1f - (i.toFloat() / steps)
-                player.volume = volume
-                kotlinx.coroutines.delay(stepDelay)
-            }
-            
-            player.pause()
-            
-            _state.update { it.copy(currentAmbientId = nextId) }
-            val prefs = getSharedPreferences("focusflow_prefs", Context.MODE_PRIVATE)
-            prefs.edit().putString("selected_ambient_id", nextId).apply()
-            
-            val url = getAmbientUrl(nextId)
-            if (url != null) {
-                val mediaItem = androidx.media3.common.MediaItem.Builder()
-                    .setMediaId(nextId)
-                    .setUri(url)
-                    .setMediaMetadata(
-                        androidx.media3.common.MediaMetadata.Builder()
-                            .setTitle(getAmbientName(nextId))
-                            .setArtist("Ambient Flow")
-                            .build()
-                    )
-                    .build()
-                player.setMediaItem(mediaItem)
-                player.prepare()
-                if (_state.value.isRunning) {
-                    player.play()
-                }
-            }
-            
-            // 2. Fade In
-            for (i in 0..steps) {
-                val volume = i.toFloat() / steps
-                player.volume = volume
-                kotlinx.coroutines.delay(stepDelay)
-            }
-            player.volume = 1f
-        }
-    }
-
-    private fun syncAmbientPlayback() {
-        val ambientId = _state.value.currentAmbientId
-        val timerIsRunning = _state.value.isRunning
-
-        if (ambientId == "none" || !timerIsRunning) {
-            exoPlayer?.pause()
-        } else {
-            if (!isNetworkAvailable()) {
-                android.util.Log.w("Ambient", "No network — skipping ambient sound")
-                exoPlayer?.pause()
-                return
-            }
-            val player = getOrCreatePlayer()
-            val url = getAmbientUrl(ambientId)
-            if (url != null) {
-                val currentMediaItem = player.currentMediaItem
-                if (currentMediaItem?.mediaId == ambientId) {
-                    if (!player.isPlaying) {
-                        player.play()
-                    }
-                } else {
-                    val mediaItem = androidx.media3.common.MediaItem.Builder()
-                        .setMediaId(ambientId)
-                        .setUri(url)
-                        .setMediaMetadata(
-                            androidx.media3.common.MediaMetadata.Builder()
-                                .setTitle(getAmbientName(ambientId))
-                                .setArtist("Ambient Flow")
-                                .build()
-                        )
-                        .build()
-                    player.setMediaItem(mediaItem)
-                    player.prepare()
-                    player.play()
-                }
-            } else {
-                exoPlayer?.pause()
-            }
-        }
-    }
-
-    private fun getAmbientUrl(id: String): String? {
-        return when (id) {
-            // 🌧️ Rain — Zapsplat CDN public stream (reliable loop)
-            "rain" -> "https://www.soundjay.com/nature/rain-01.mp3"
-
-            // 🤍 White Noise — SomaFM noise channel (same server as space, proven working)
-            "white_noise" -> "https://ice1.somafm.com/darkzone-128-mp3"
-
-            // 🔥 Campfire — Internet Archive direct MP3 (no hotlink block)
-            "campfire" -> "https://ia800301.us.archive.org/5/items/CampfireSounds/campfire.mp3"
-
-            // 🌊 Forest Stream — Internet Archive direct MP3
-            "stream" -> "https://ia800204.us.archive.org/11/items/foreststream/forest_stream.mp3"
-
-            // 🌌 Deep Space — SomaFM (already working, keep as-is)
-            "space" -> "https://ice1.somafm.com/deepspaceone-128-mp3"
-
-            else -> null
-        }
-    }
-
-    private fun getAmbientFallbackUrl(id: String): String? {
-        return when (id) {
-            // Rain fallback — SomaFM ambient channel
-            "rain" -> "https://ice1.somafm.com/thistle-128-mp3"
-
-            // White noise fallback — SomaFM drone zone
-            "white_noise" -> "https://ice1.somafm.com/dronezone-128-mp3"
-
-            // Campfire fallback — SomaFM boot liquor (warm country feel)
-            "campfire" -> "https://ice1.somafm.com/bootliquor-128-mp3"
-
-            // Stream fallback — SomaFM suburbs of goa (nature ambient)
-            "stream" -> "https://ice1.somafm.com/suburbsofgoa-128-mp3"
-
-            // Space fallback — SomaFM mission control
-            "space" -> "https://ice1.somafm.com/missioncontrol-128-mp3"
-
-            else -> null
-        }
-    }
-
-    private fun getAmbientName(id: String): String {
-        return when (id) {
-            "rain" -> "Rain on Roof"
-            "white_noise" -> "White Noise"
-            "campfire" -> "Cozy Campfire"
-            "stream" -> "Forest Stream"
-            "space" -> "Space Drone"
-            else -> "None"
-        }
-    }
-
     override fun onDestroy() {
-        stopTimerEngine()
-        exoPlayer?.let {
-            it.stop()
-            it.release()
-            exoPlayer = null
-        }
+        serviceAlive = false
+        tickerJob?.cancel()
+        launchMonitor.stop()
+        restoreDnd()
+        releaseWakeLock()
+        exoPlayer?.release()
+        exoPlayer = null
+        persist(this)
+        scope.cancel()
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // ------------------------------------------------------------------ timer engine
+
+    private fun start() {
+        val s = _state.value
+        if (s.isRunning && tickerJob?.isActive == true) {
+            startForegroundCompat()
+            return
+        }
+        val remaining = if (s.isRunning) remainingNow() else s.remainingMs
+        endsAtElapsed = SystemClock.elapsedRealtime() + remaining
+        _state.update { it.copy(isRunning = true, remainingMs = remaining) }
+        persist(this)
+
+        if (!startForegroundCompat()) {
+            // Android refused a foreground service (e.g. restarted in the background): keep progress, pause.
+            pauseInternal()
+            stopSelf()
+            return
+        }
+        acquireWakeLock(remaining)
+        if (s.phase == Phase.FOCUS) focusProtectionOn()
+        syncAmbientPlayback()
+        startTicker()
+    }
+
+    private fun pause() {
+        if (!_state.value.isRunning) return
+        pauseInternal()
+        updateNotification()
+    }
+
+    private fun pauseInternal() {
+        tickerJob?.cancel()
+        _state.update { it.copy(isRunning = false, remainingMs = remainingNow()) }
+        persist(this)
+        releaseWakeLock()
+        focusProtectionOff()
+        syncAmbientPlayback()
+    }
+
+    private fun skip() {
+        val s = _state.value
+        tickerJob?.cancel()
+        val remaining = if (s.isRunning) remainingNow() else s.remainingMs
+        if (s.phase == Phase.FOCUS) {
+            val doneSecs = ((s.phaseDurationMs - remaining) / 1000).toInt()
+            if (doneSecs > MIN_PARTIAL_SECS) saveSession(doneSecs, completed = false)
+            focusSecsBeforePhase += doneSecs
+        }
+        advancePhase(completedFocus = false)
+    }
+
+    private fun stopTimer() {
+        tickerJob?.cancel()
+        releaseWakeLock()
+        focusProtectionOff()
+        focusSecsBeforePhase = 0L
+        _state.update {
+            settings.applyTo(it).copy(
+                phase = Phase.FOCUS,
+                isRunning = false,
+                remainingMs = settings.focusMs,
+                totalFocusSecs = 0L
+            )
+        }
+        persist(this)
+        syncAmbientPlayback()
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+    }
+
+    private fun startTicker() {
+        tickerJob?.cancel()
+        tickerJob = scope.launch {
+            while (isActive) {
+                val remaining = remainingNow()
+                _state.update { s ->
+                    val focusSecs = if (s.phase == Phase.FOCUS) (s.phaseDurationMs - remaining) / 1000 else 0L
+                    s.copy(remainingMs = remaining, totalFocusSecs = focusSecsBeforePhase + focusSecs)
+                }
+                maybeRotateAmbient()
+                if (remaining <= 0L) {
+                    onPhaseFinished()
+                    return@launch
+                }
+                delay((remaining % 1000L).takeIf { it > 0L } ?: 1000L)
+            }
+        }
+    }
+
+    private fun onPhaseFinished() {
+        val finished = _state.value.phase
+        if (finished == Phase.FOCUS) {
+            val secs = (_state.value.phaseDurationMs / 1000).toInt()
+            saveSession(secs, completed = true)
+            focusSecsBeforePhase += secs
+        }
+        vibrate()
+        playAlertSound()
+        advancePhase(completedFocus = finished == Phase.FOCUS)
+    }
+
+    /** Moves to the next phase and keeps running if the timer was running. */
+    private fun advancePhase(completedFocus: Boolean) {
+        val s = _state.value
+        val wasRunning = s.isRunning
+        if (s.phase == Phase.FOCUS) focusProtectionOff()
+
+        val count = s.sessionCount + if (completedFocus) 1 else 0
+        val next = when (s.phase) {
+            Phase.FOCUS -> if (count > 0 && count % settings.sessionsBeforeLong == 0) Phase.LONG_BREAK else Phase.SHORT_BREAK
+            Phase.SHORT_BREAK, Phase.LONG_BREAK -> Phase.FOCUS
+        }
+        _state.update {
+            val withDurations = settings.applyTo(it)
+            withDurations.copy(phase = next, sessionCount = count, isRunning = false, remainingMs = withDurations.durationOf(next))
+        }
+        if (wasRunning) {
+            start()
+        } else {
+            persist(this)
+            updateNotification()
+        }
+    }
+
+    private fun remainingNow(): Long = (endsAtElapsed - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+
+    private fun saveSession(durationSecs: Int, completed: Boolean) {
+        if (durationSecs <= 0) return
+        val session = SessionEntity(
+            date = System.currentTimeMillis(),
+            durationSeconds = durationSecs,
+            completed = completed,
+            focusScore = durationSecs / 60
+        )
+        val app = FocusFlowApplication.instance
+        app.applicationScope.launch { app.sessionRepository.insert(session) }
+    }
+
+    // ------------------------------------------------------------------ focus protection
+
+    private fun focusProtectionOn() {
+        if (settings.dndEnabled) enableDnd()
+        launchMonitor.start()
+    }
+
+    private fun focusProtectionOff() {
+        restoreDnd()
+        launchMonitor.stop()
+    }
+
+    /** Uses "priority only" (alarms still ring) and remembers the user's own mode to restore it. */
+    private fun enableDnd() {
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        if (!nm.isNotificationPolicyAccessGranted) return
+        val prefs = timerPrefs(this)
+        if (!prefs.contains(KEY_DND_PREVIOUS)) prefs.edit { putInt(KEY_DND_PREVIOUS, nm.currentInterruptionFilter) }
+        runCatching { nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY) }
+            .onSuccess { _state.update { it.copy(isDndActive = true) } }
+    }
+
+    private fun restoreDnd() {
+        val prefs = timerPrefs(this)
+        if (prefs.contains(KEY_DND_PREVIOUS)) {
+            val previous = prefs.getInt(KEY_DND_PREVIOUS, NotificationManager.INTERRUPTION_FILTER_ALL)
+                .takeIf { it != NotificationManager.INTERRUPTION_FILTER_UNKNOWN } ?: NotificationManager.INTERRUPTION_FILTER_ALL
+            prefs.edit { remove(KEY_DND_PREVIOUS) }
+            val nm = getSystemService(NotificationManager::class.java)
+            // Only undo our own change; if the user switched DND mode meanwhile, leave theirs.
+            if (nm != null && nm.isNotificationPolicyAccessGranted &&
+                nm.currentInterruptionFilter == NotificationManager.INTERRUPTION_FILTER_PRIORITY
+            ) {
+                runCatching { nm.setInterruptionFilter(previous) }
+            }
+        }
+        _state.update { it.copy(isDndActive = false) }
+    }
+
+    // ------------------------------------------------------------------ foreground + notification
+
+    private fun startForegroundCompat(): Boolean = try {
+        val type = when {
+            Build.VERSION.SDK_INT >= 34 ->
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            else -> 0
+        }
+        ServiceCompat.startForeground(this, NOTIF_ID, buildNotification(), type)
+        true
+    } catch (e: Exception) {
+        Log.w(TAG, "Could not enter foreground", e)
+        false
+    }
+
+    private fun showPausedForeground() {
+        if (!startForegroundCompat()) stopSelf()
+    }
+
+    private fun updateNotification() {
+        getSystemService(NotificationManager::class.java)?.notify(NOTIF_ID, buildNotification())
+    }
+
+    private fun buildNotification(): Notification {
+        val s = _state.value
+        val title = getString(
+            when (s.phase) {
+                Phase.FOCUS -> R.string.timer_notif_focus
+                Phase.SHORT_BREAK -> R.string.timer_notif_short_break
+                Phase.LONG_BREAK -> R.string.timer_notif_long_break
+            }
+        )
+        val openApp = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_widget_clock)
+            .setContentTitle(title)
+            .setContentIntent(openApp)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+
+        if (s.isRunning) {
+            builder.setUsesChronometer(true)
+                .setChronometerCountDown(true)
+                .setShowWhen(true)
+                .setWhen(System.currentTimeMillis() + s.remainingMs)
+                .setContentText(resources.getQuantityString(R.plurals.timer_notif_sessions, s.sessionCount, s.sessionCount))
+                .addAction(0, getString(R.string.timer_action_pause), servicePendingIntent(ACTION_PAUSE, 1))
+        } else {
+            builder.setShowWhen(false)
+                .setContentText(getString(R.string.timer_notif_paused, formatClock(s.remainingMs)))
+                .addAction(0, getString(R.string.timer_action_resume), servicePendingIntent(ACTION_RESUME, 2))
+        }
+        return builder
+            .addAction(0, getString(R.string.timer_action_skip), servicePendingIntent(ACTION_SKIP, 3))
+            .addAction(0, getString(R.string.timer_action_end), servicePendingIntent(ACTION_STOP, 4))
+            .build()
+    }
+
+    private fun servicePendingIntent(action: String, requestCode: Int): PendingIntent =
+        PendingIntent.getService(
+            this, requestCode,
+            Intent(this, PomodoroTimerService::class.java).setAction(action),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val channel = NotificationChannel(CHANNEL_ID, getString(R.string.timer_channel_name), NotificationManager.IMPORTANCE_LOW).apply {
+            description = getString(R.string.timer_channel_description)
+            setShowBadge(false)
+        }
+        getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
+    }
+
+    // ------------------------------------------------------------------ alerts + wake lock
+
+    private fun vibrate() {
+        if (!settings.vibrate) return
+        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            getSystemService(VibratorManager::class.java)?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION") getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        }
+        vibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 300, 150, 300), -1))
+    }
+
+    private fun playAlertSound() {
+        runCatching {
+            RingtoneManager.getRingtone(applicationContext, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION))?.play()
+        }
+    }
+
+    /** Keeps the CPU awake while running so the phase ends on time with the screen off. */
+    private fun acquireWakeLock(remainingMs: Long) {
+        releaseWakeLock()
+        wakeLock = getSystemService(PowerManager::class.java)
+            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FocusIsland:Timer")
+            ?.apply {
+                setReferenceCounted(false)
+                acquire(remainingMs + 60_000L)
+            }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.takeIf { it.isHeld }?.release()
+        wakeLock = null
+    }
+
+    // ------------------------------------------------------------------ ambient sound
+
+    private fun maybeRotateAmbient() {
+        val current = _state.value.currentAmbientId
+        if (current == AMBIENT_NONE || settings.ambientRotationMin <= 0) return
+        val now = SystemClock.elapsedRealtime()
+        if (lastAmbientRotationElapsed == 0L) lastAmbientRotationElapsed = now
+        if (now - lastAmbientRotationElapsed >= settings.ambientRotationMin * 60_000L) {
+            lastAmbientRotationElapsed = now
+            AMBIENT_IDS.filter { it != current }.randomOrNull()?.let { setAmbientSound(it) }
+        }
+    }
+
+    private fun setAmbientSound(ambientId: String) {
+        lastAmbientRotationElapsed = SystemClock.elapsedRealtime()
+        val current = _state.value.currentAmbientId
+        val player = exoPlayer
+        getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE).edit { putString(KEY_SELECTED_AMBIENT, ambientId) }
+
+        when {
+            ambientId == AMBIENT_NONE -> scope.launch {
+                if (player != null && player.isPlaying) fade(player, from = 1f, to = 0f, durationMs = 1000L)
+                player?.pause()
+                _state.update { it.copy(currentAmbientId = AMBIENT_NONE) }
+            }
+            current != AMBIENT_NONE && current != ambientId && player != null && player.isPlaying -> scope.launch {
+                fade(player, from = 1f, to = 0f, durationMs = 1500L)
+                player.pause()
+                _state.update { it.copy(currentAmbientId = ambientId) }
+                syncAmbientPlayback()
+                fade(player, from = 0f, to = 1f, durationMs = 1500L)
+            }
+            else -> {
+                _state.update { it.copy(currentAmbientId = ambientId) }
+                syncAmbientPlayback()
+                exoPlayer?.volume = 1f
+            }
+        }
+    }
+
+    private suspend fun fade(player: ExoPlayer, from: Float, to: Float, durationMs: Long) {
+        val steps = 20
+        for (i in 0..steps) {
+            player.volume = from + (to - from) * i / steps
+            delay(durationMs / steps)
+        }
+    }
+
+    private fun syncAmbientPlayback() {
+        val id = _state.value.currentAmbientId
+        val url = ambientUrl(id)
+        if (id == AMBIENT_NONE || !_state.value.isRunning || url == null) {
+            exoPlayer?.pause()
+            return
+        }
+        val player = getOrCreatePlayer()
+        if (player.currentMediaItem?.mediaId == id) {
+            if (!player.isPlaying) player.play()
+        } else {
+            player.setMediaItem(ambientItem(id, url, fallback = false))
+            player.prepare()
+            player.play()
+        }
+    }
+
+    private fun getOrCreatePlayer(): ExoPlayer = exoPlayer ?: ExoPlayer.Builder(this)
+        .setAudioAttributes(
+            AudioAttributes.Builder().setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).setUsage(C.USAGE_MEDIA).build(),
+            /* handleAudioFocus = */ true
+        )
+        .setHandleAudioBecomingNoisy(true)
+        .build()
+        .apply {
+            repeatMode = Player.REPEAT_MODE_ALL
+            addListener(object : Player.Listener {
+                override fun onPlayerError(error: PlaybackException) {
+                    val id = _state.value.currentAmbientId
+                    val fallback = ambientFallbackUrl(id) ?: return
+                    if (currentMediaItem?.localConfiguration?.uri?.toString() == fallback) return // fallback failed too
+                    Log.w(TAG, "Ambient stream failed, using fallback: ${error.errorCodeName}")
+                    setMediaItem(ambientItem(id, fallback, fallback = true))
+                    prepare()
+                    play()
+                }
+            })
+        }
+        .also { exoPlayer = it }
+
+    private fun ambientItem(id: String, url: String, fallback: Boolean) = MediaItem.Builder()
+        .setMediaId(id)
+        .setUri(url)
+        .setMediaMetadata(MediaMetadata.Builder().setTitle(ambientName(id)).setArtist(getString(R.string.sound_ambient)).build())
+        .build()
+
+    // ponytail: hotlinked third-party streams; move to bundled/own-hosted audio in Phase 3a.
+    private fun ambientUrl(id: String): String? = when (id) {
+        "rain" -> "https://www.soundjay.com/nature/rain-01.mp3"
+        "white_noise" -> "https://ice1.somafm.com/darkzone-128-mp3"
+        "campfire" -> "https://ia800301.us.archive.org/5/items/CampfireSounds/campfire.mp3"
+        "stream" -> "https://ia800204.us.archive.org/11/items/foreststream/forest_stream.mp3"
+        "space" -> "https://ice1.somafm.com/deepspaceone-128-mp3"
+        else -> null
+    }
+
+    private fun ambientFallbackUrl(id: String): String? = when (id) {
+        "rain" -> "https://ice1.somafm.com/thistle-128-mp3"
+        "white_noise" -> "https://ice1.somafm.com/dronezone-128-mp3"
+        "campfire" -> "https://ice1.somafm.com/bootliquor-128-mp3"
+        "stream" -> "https://ice1.somafm.com/suburbsofgoa-128-mp3"
+        "space" -> "https://ice1.somafm.com/missioncontrol-128-mp3"
+        else -> null
+    }
+
+    private fun ambientName(id: String): String = getString(
+        when (id) {
+            "rain" -> R.string.ambient_rain
+            "white_noise" -> R.string.ambient_white_noise
+            "campfire" -> R.string.ambient_campfire
+            "stream" -> R.string.ambient_stream
+            "space" -> R.string.ambient_space
+            else -> R.string.sound_off
+        }
+    )
+
+    // ------------------------------------------------------------------ settings + persistence
+
+    /** User preferences read from the shared settings file (keys unchanged). */
+    private data class TimerSettings(
+        val focusMs: Long = 25 * 60_000L,
+        val shortMs: Long = 5 * 60_000L,
+        val longMs: Long = 15 * 60_000L,
+        val sessionsBeforeLong: Int = 4,
+        val dndEnabled: Boolean = false,
+        val vibrate: Boolean = true,
+        val ambientRotationMin: Int = 5
+    ) {
+        fun applyTo(s: TimerState) = s.copy(
+            focusDurationMs = focusMs,
+            shortBreakDurationMs = shortMs,
+            longBreakDurationMs = longMs,
+            sessionsBeforeLongBreak = sessionsBeforeLong
+        )
+
+        companion object {
+            fun load(context: Context): TimerSettings {
+                val p = context.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+                return TimerSettings(
+                    focusMs = p.getInt("focus_duration_min", 25).coerceAtLeast(1) * 60_000L,
+                    shortMs = p.getInt("short_break_min", 5).coerceAtLeast(1) * 60_000L,
+                    longMs = p.getInt("long_break_min", 15).coerceAtLeast(1) * 60_000L,
+                    sessionsBeforeLong = p.getInt("sessions_before_long", 4).coerceAtLeast(1),
+                    dndEnabled = p.getBoolean("block_notifications", false),
+                    vibrate = p.getBoolean("vibrate_on_complete", true),
+                    ambientRotationMin = p.getInt("ambient_rotation_min", 5)
+                )
+            }
+        }
+    }
+
     companion object {
+        private const val TAG = "PomodoroTimerService"
+
         const val ACTION_START = "ACTION_START"
         const val ACTION_PAUSE = "ACTION_PAUSE"
         const val ACTION_RESUME = "ACTION_RESUME"
         const val ACTION_SKIP = "ACTION_SKIP"
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_SET_AMBIENT = "ACTION_SET_AMBIENT"
+        const val ACTION_RESTORE = "ACTION_RESTORE"
         const val EXTRA_AMBIENT_ID = "EXTRA_AMBIENT_ID"
-        
+
+        const val AMBIENT_NONE = "none"
+        val AMBIENT_IDS = listOf("rain", "white_noise", "campfire", "stream", "space")
+
         private const val NOTIF_ID = 1010
         private const val CHANNEL_ID = "focusflow_timer_channel"
+        private const val MIN_PARTIAL_SECS = 30
+
+        private const val SETTINGS_PREFS = "focusflow_prefs"
+        private const val KEY_SELECTED_AMBIENT = "selected_ambient_id"
+        private const val STATE_PREFS = "focusflow_timer_state"
+        private const val KEY_DND_PREVIOUS = "dnd_previous_filter"
 
         private val _state = MutableStateFlow(TimerState())
         val state: StateFlow<TimerState> = _state.asStateFlow()
 
-        private var companionIsRunning = false
-        val isRunning: Boolean get() = companionIsRunning
+        val isRunning: Boolean get() = _state.value.isRunning
+
+        @Volatile private var endsAtElapsed = 0L
+        @Volatile private var focusSecsBeforePhase = 0L
+        @Volatile private var restored = false
+        @Volatile private var serviceAlive = false
+
+        private fun timerPrefs(context: Context): SharedPreferences =
+            context.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE)
+
+        /**
+         * Loads the persisted timer once per process. Call from the UI at startup: if a session
+         * was running when the process died, the service is restarted and the countdown resumes.
+         */
+        fun restoreIfNeeded(context: Context) {
+            loadPersisted(context)
+            if (_state.value.isRunning && !serviceAlive) {
+                runCatching {
+                    ContextCompat.startForegroundService(
+                        context, Intent(context, PomodoroTimerService::class.java).setAction(ACTION_RESTORE)
+                    )
+                }.onFailure { Log.w(TAG, "Could not restore running timer", it) }
+            }
+        }
+
+        /** When the timer is idle and untouched, picks up new durations from Settings. */
+        fun applyIdleSettings(context: Context) {
+            loadPersisted(context)
+            if (!_state.value.isUntouched) return
+            val s = TimerSettings.load(context)
+            _state.update { s.applyTo(it).let { u -> u.copy(remainingMs = u.durationOf(u.phase)) } }
+        }
+
+        @Synchronized
+        private fun loadPersisted(context: Context) {
+            if (restored) return
+            restored = true
+            val settings = TimerSettings.load(context)
+            val ambient = context.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_SELECTED_AMBIENT, AMBIENT_NONE) ?: AMBIENT_NONE
+            val p = timerPrefs(context)
+            if (!p.contains("phase")) {
+                _state.value = settings.applyTo(TimerState(remainingMs = settings.focusMs, currentAmbientId = ambient))
+                return
+            }
+            val phase = runCatching { Phase.valueOf(p.getString("phase", null)!!) }.getOrDefault(Phase.FOCUS)
+            val base = TimerState(
+                phase = phase,
+                sessionCount = p.getInt("session_count", 0),
+                focusDurationMs = p.getLong("focus_ms", settings.focusMs),
+                shortBreakDurationMs = p.getLong("short_ms", settings.shortMs),
+                longBreakDurationMs = p.getLong("long_ms", settings.longMs),
+                sessionsBeforeLongBreak = p.getInt("sessions_before_long", settings.sessionsBeforeLong),
+                currentAmbientId = ambient
+            )
+            focusSecsBeforePhase = p.getLong("focus_secs_before_phase", 0L)
+            val savedRemaining = p.getLong("remaining_ms", base.phaseDurationMs).coerceIn(0L, base.phaseDurationMs)
+            val wasRunning = p.getBoolean("running", false)
+            val savedEndsAt = p.getLong("ends_at_elapsed", 0L)
+            val liveRemaining = savedEndsAt - SystemClock.elapsedRealtime()
+            // After a reboot the monotonic clock restarts, so the saved end time is meaningless: resume paused.
+            val rebooted = liveRemaining > base.phaseDurationMs
+            _state.value = if (wasRunning && !rebooted) {
+                endsAtElapsed = savedEndsAt
+                base.copy(isRunning = true, remainingMs = liveRemaining.coerceAtLeast(0L))
+            } else {
+                base.copy(isRunning = false, remainingMs = savedRemaining)
+            }
+        }
+
+        private fun persist(context: Context) {
+            val s = _state.value
+            timerPrefs(context).edit {
+                putString("phase", s.phase.name)
+                putInt("session_count", s.sessionCount)
+                putBoolean("running", s.isRunning)
+                putLong("remaining_ms", s.remainingMs)
+                putLong("ends_at_elapsed", endsAtElapsed)
+                putLong("focus_ms", s.focusDurationMs)
+                putLong("short_ms", s.shortBreakDurationMs)
+                putLong("long_ms", s.longBreakDurationMs)
+                putInt("sessions_before_long", s.sessionsBeforeLongBreak)
+                putLong("focus_secs_before_phase", focusSecsBeforePhase)
+            }
+        }
+
+        private fun formatClock(ms: Long): String {
+            val total = (ms + 999) / 1000
+            return "%02d:%02d".format(total / 60, total % 60)
+        }
     }
 }

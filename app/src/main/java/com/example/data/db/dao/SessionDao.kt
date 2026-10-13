@@ -12,6 +12,9 @@ interface SessionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(session: SessionEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(sessions: List<SessionEntity>)
+
     @Query("SELECT * FROM sessions WHERE date >= :from AND date <= :to ORDER BY date DESC")
     fun getSessionsInRange(from: Long, to: Long): Flow<List<SessionEntity>>
 
@@ -21,21 +24,15 @@ interface SessionDao {
     @Query("SELECT COUNT(*) FROM sessions WHERE date >= :from AND date <= :to AND completed = 1")
     fun getSessionCount(from: Long, to: Long): Flow<Int>
 
-    @Query("SELECT SUM(focusScore) FROM sessions WHERE date >= :from AND date <= :to")
+    @Query("SELECT SUM(focusScore) FROM sessions WHERE date >= :from AND date <= :to AND completed = 1")
     fun getTotalScore(from: Long, to: Long): Flow<Int?>
-    
+
     @Query("SELECT * FROM sessions ORDER BY date DESC")
     fun getAllSessions(): Flow<List<SessionEntity>>
 
     @Query("SELECT * FROM sessions ORDER BY date DESC")
     suspend fun getAllSessionsList(): List<SessionEntity>
 
-    @Query("SELECT COUNT(*) FROM sessions WHERE completed = 1")
-    suspend fun getCompletedCountImmediate(): Int
-
-    @Query("SELECT COALESCE(SUM(durationSeconds), 0) / 60 FROM sessions WHERE completed = 1")
-    suspend fun getTotalFocusMinutesImmediate(): Int
-
-    @Query("SELECT date FROM sessions WHERE completed = 1 ORDER BY date DESC")
-    suspend fun getAllSessionDates(): List<Long>
+    @Query("DELETE FROM sessions")
+    suspend fun deleteAll()
 }

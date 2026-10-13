@@ -1,34 +1,64 @@
 package com.example.ui.screen.revisions
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Style
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
-import com.example.data.db.entity.RevisionDeckEntity
-import com.example.data.db.entity.RevisionNoteEntity
-import com.example.ui.components.ConfirmDeleteDialog
-import com.example.ui.theme.NeumorphicColors
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import com.example.ui.designsystem.ConfirmDialog
+import com.example.ui.designsystem.EmptyState
+import com.example.ui.designsystem.StatTile
+import com.example.ui.theme.Spacing
 
+private enum class CardSort { DUE, NEWEST, TITLE }
+
+/**
+ * One deck, or every card when [deckId] is [ALL_DECKS]. Review, sort, edit (name + colour)
+ * and delete (with confirmation) live here.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RevisionDeckDetailScreen(
@@ -38,154 +68,178 @@ fun RevisionDeckDetailScreen(
     onStartReview: (String) -> Unit,
     onBack: () -> Unit
 ) {
-    val state by viewModel.uiState.collectAsState()
-    val deck = state.decks.find { it.id == deckId }
-    val deckNotes = state.allNotes.filter { it.deckId == deckId }
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val isAll = deckId == ALL_DECKS
+    val deck = state.decks.firstOrNull { it.id == deckId }
+    val deckNames = remember(state.decks) { state.decks.associate { it.id to it.name } }
 
-    var showDeleteDeckDialog by remember { mutableStateOf(false) }
+    var sort by rememberSaveable { mutableStateOf(CardSort.DUE) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var editing by rememberSaveable { mutableStateOf(false) }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
 
-    if (showDeleteDeckDialog && deck != null) {
-        ConfirmDeleteDialog(
-            title = stringResource(R.string.delete_deck_title),
-            body = stringResource(R.string.delete_deck_body, deck.name, deckNotes.size),
-            onConfirm = {
-                viewModel.deleteDeckAndNotes(deckId)
-                onBack()
-            },
-            onDismiss = { showDeleteDeckDialog = false }
-        )
+    val notes = remember(state.allNotes, deckId, sort) {
+        val list = if (isAll) state.allNotes else state.allNotes.filter { it.deckId == deckId }
+        when (sort) {
+            CardSort.DUE -> list.sortedBy { it.dueDate }
+            CardSort.NEWEST -> list.sortedByDescending { it.createdAt }
+            CardSort.TITLE -> list.sortedBy { it.title.lowercase() }
+        }
     }
+    val dueCount = remember(notes) { notes.count { it.dueDate <= System.currentTimeMillis() } }
+    val tasks = state.activeOcrTasks.filter { isAll || it.deckId == deckId }
+
+    val listState = rememberLazyListState()
+    val fabExpanded by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(text = deck?.name ?: "Deck", fontWeight = FontWeight.Bold) },
+                title = {
+                    Text(
+                        if (isAll) stringResource(R.string.study_all_cards) else deck?.name.orEmpty(),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showDeleteDeckDialog = true }) {
-                        Icon(
-                            imageVector = Icons.Outlined.Delete,
-                            contentDescription = stringResource(R.string.delete_deck_title),
-                            tint = MaterialTheme.colorScheme.error
-                        )
+                    if (deck != null) {
+                        Box {
+                            IconButton(onClick = { menuOpen = true }) {
+                                Icon(Icons.Rounded.MoreVert, contentDescription = stringResource(R.string.study_deck_options))
+                            }
+                            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.study_edit_deck)) },
+                                    leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
+                                    onClick = { menuOpen = false; editing = true }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.study_delete_deck), color = MaterialTheme.colorScheme.error) },
+                                    leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                    onClick = { menuOpen = false; confirmDelete = true }
+                                )
+                            }
+                        }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = androidx.compose.ui.graphics.Color.Transparent,
-                    titleContentColor = NeumorphicColors.TextPrimary,
-                    navigationIconContentColor = NeumorphicColors.TextPrimary
-                )
+                }
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { onStartReview(deckId) },
-                icon = { Icon(Icons.Filled.PlayArrow, contentDescription = null) },
-                text = { Text(stringResource(R.string.start_review)) },
-                containerColor = NeumorphicColors.Primary,
-                contentColor = androidx.compose.ui.graphics.Color.White
-            )
-        },
-        containerColor = androidx.compose.ui.graphics.Color.Transparent
+            if (notes.isNotEmpty()) {
+                ExtendedFloatingActionButton(
+                    onClick = { onStartReview(deckId) },
+                    expanded = fabExpanded,
+                    icon = { Icon(Icons.Rounded.PlayArrow, contentDescription = null) },
+                    text = { Text(stringResource(if (dueCount > 0) R.string.start_review else R.string.review_practice_ahead)) }
+                )
+            }
+        }
     ) { padding ->
-        val deckOcrTasks = state.activeOcrTasks.filter { it.deckId == deckId || deckId == "default_deck" }
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+        LazyColumn(
+            state = listState,
+            contentPadding = PaddingValues(
+                start = Spacing.md, end = Spacing.md,
+                top = padding.calculateTopPadding() + Spacing.xs,
+                bottom = padding.calculateBottomPadding() + Spacing.xxl * 2
+            ),
+            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+            modifier = Modifier.fillMaxSize().wrapContentWidth().widthIn(max = Spacing.contentMaxWidth)
         ) {
-            BackgroundOcrTasksSection(
-                tasks = deckOcrTasks,
-                onDismissTask = { taskId -> viewModel.dismissOcrTask(taskId) }
-            )
-
-            if (deckNotes.isEmpty() && deckOcrTasks.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "No cards in this deck yet",
-                        color = NeumorphicColors.TextSecondary,
-                        fontSize = 14.sp
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    StatTile(
+                        label = pluralStringResource(R.plurals.study_cards_label, notes.size),
+                        value = notes.size.toString(),
+                        icon = Icons.Rounded.Style,
+                        modifier = Modifier.weight(1f)
+                    )
+                    StatTile(
+                        label = stringResource(R.string.study_due_label),
+                        value = dueCount.toString(),
+                        icon = Icons.Rounded.Schedule,
+                        modifier = Modifier.weight(1f),
+                        tint = MaterialTheme.colorScheme.secondary
                     )
                 }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(deckNotes, key = { it.id }) { note ->
-                        DeckNoteListItem(
-                            note = note,
-                            onClick = { onNoteClick(note.id) }
-                        )
+            }
+            if (tasks.isNotEmpty()) {
+                item { BackgroundOcrTasksSection(tasks, onDismissTask = viewModel::dismissOcrTask) }
+            }
+            if (notes.isEmpty() && tasks.isEmpty()) {
+                item {
+                    EmptyState(
+                        icon = Icons.Rounded.Style,
+                        title = stringResource(R.string.study_deck_empty_title),
+                        body = stringResource(R.string.study_deck_empty_body)
+                    )
+                }
+            } else if (notes.isNotEmpty()) {
+                item {
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()).padding(vertical = Spacing.xxs),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                    ) {
+                        CardSort.entries.forEach { option ->
+                            FilterChip(
+                                selected = sort == option,
+                                onClick = { sort = option },
+                                label = {
+                                    Text(
+                                        stringResource(
+                                            when (option) {
+                                                CardSort.DUE -> R.string.study_sort_due
+                                                CardSort.NEWEST -> R.string.study_sort_newest
+                                                CardSort.TITLE -> R.string.study_sort_title
+                                            }
+                                        )
+                                    )
+                                },
+                                leadingIcon = if (sort == option) {
+                                    { Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
+                                } else null
+                            )
+                        }
                     }
+                }
+                items(notes, key = { it.id }) { note ->
+                    CardRow(note, onClick = { onNoteClick(note.id) }, deckName = if (isAll) deckNames[note.deckId] else null)
                 }
             }
         }
     }
-}
 
-@Composable
-fun DeckNoteListItem(
-    note: RevisionNoteEntity,
-    onClick: () -> Unit
-) {
-    val dueText = formatDueIn(note.dueDate)
-    val isDueToday = note.dueDate <= System.currentTimeMillis()
-
-    com.example.ui.components.NeumorphicCard(
-        cornerRadius = 16.dp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = note.title,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    color = NeumorphicColors.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (note.mediaType != null) {
-                        Icon(
-                            imageVector = if (note.mediaType == "AUDIO") Icons.Default.Mic else Icons.Default.Image,
-                            contentDescription = note.mediaType,
-                            tint = NeumorphicColors.Primary,
-                            modifier = Modifier
-                                .size(14.dp)
-                                .padding(end = 4.dp)
-                        )
-                    }
-                    Text(
-                        text = dueText,
-                        fontSize = 12.sp,
-                        color = if (isDueToday) NeumorphicColors.Accent else NeumorphicColors.TextSecondary,
-                        fontWeight = if (isDueToday) FontWeight.Bold else FontWeight.Normal
-                    )
-                }
-            }
-        }
+    if (editing && deck != null) {
+        DeckDialog(
+            title = stringResource(R.string.study_edit_deck),
+            confirmLabel = stringResource(R.string.save),
+            initialName = deck.name,
+            initialColor = deck.colorHex,
+            onConfirm = { name, color ->
+                viewModel.updateDeck(deck.id, name, color)
+                editing = false
+            },
+            onDismiss = { editing = false }
+        )
+    }
+    if (confirmDelete && deck != null) {
+        ConfirmDialog(
+            title = stringResource(R.string.delete_deck_title),
+            body = pluralStringResource(R.plurals.study_delete_deck_body, notes.size, deck.name, notes.size),
+            confirmLabel = stringResource(R.string.delete),
+            dismissLabel = stringResource(R.string.cancel),
+            onConfirm = {
+                confirmDelete = false
+                viewModel.deleteDeckAndNotes(deck.id)
+                onBack()
+            },
+            onDismiss = { confirmDelete = false },
+            destructive = true
+        )
     }
 }

@@ -1,95 +1,51 @@
 package com.example.service
 
-import android.content.Context
-import android.content.Intent
-import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.example.FocusFlowApplication
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 
+/** Silently removes notifications from apps the user blocked, during focus phases only. */
 class FocusNotificationListenerService : NotificationListenerService() {
 
-    private val db by lazy { FocusFlowApplication.instance.database }
+    private var scope: CoroutineScope? = null
+
+    @Volatile
     private var blockedPackages: Set<String> = emptySet()
 
-    override fun onCreate() {
-        super.onCreate()
-        instance = this
-    }
-
     override fun onListenerConnected() {
-        instance = this
-        refreshBlockList()
+        scope?.cancel()
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.IO).also { s ->
+            // Live list: changes in the App blocker apply immediately.
+            FocusFlowApplication.instance.database.blockedAppDao().getAllBlocked()
+                .map { apps -> apps.filter { it.blockNotifications }.mapTo(HashSet()) { it.packageName } }
+                .onEach { blockedPackages = it }
+                .launchIn(s)
+        }
     }
 
     override fun onListenerDisconnected() {
-        if (instance == this) {
-            instance = null
-        }
+        scope?.cancel()
+        scope = null
     }
 
     override fun onDestroy() {
-        if (instance == this) {
-            instance = null
-        }
+        scope?.cancel()
+        scope = null
         super.onDestroy()
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_REFRESH) {
-            refreshBlockList()
-        }
-        return super.onStartCommand(intent, flags, startId)
-    }
-
-    // Refresh which apps to block
-    fun refreshBlockList() {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                blockedPackages = db.blockedAppDao()
-                    .getNotifBlockedPackages()
-                    .toSet()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        val isTimerRunning = PomodoroTimerService.isRunning && PomodoroTimerService.state.value.phase == Phase.FOCUS
-        if (!isTimerRunning) return          // only active during focus
+        val state = PomodoroTimerService.state.value
+        if (!state.isRunning || state.phase != Phase.FOCUS) return
         if (sbn.packageName in blockedPackages) {
-            try {
-                cancelNotification(sbn.key)                    // silently remove it
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
-    companion object {
-        const val ACTION_REFRESH = "com.example.service.REFRESH_BLOCK_LIST"
-        
-        @Volatile
-        private var instance: FocusNotificationListenerService? = null
-
-        fun refresh(context: Context) {
-            val inst = instance
-            if (inst != null) {
-                inst.refreshBlockList()
-            } else {
-                val intent = Intent(context, FocusNotificationListenerService::class.java).apply {
-                    action = ACTION_REFRESH
-                }
-                try {
-                    context.startService(intent)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
+            runCatching { cancelNotification(sbn.key) }
         }
     }
 }

@@ -1,350 +1,361 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Exam countdown + focus stats. Plain FrameLayout/LinearLayout/TextView/ImageView only, colours from
+     resources (the launcher applies light/dark itself): renders the same on every launcher. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/widget_container"
+    android:id="@android:id/background"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/widget_card_glass">
+    android:background="@drawable/widget_card_glass"
+    android:clipToOutline="true">
 
-    <!-- Overlay Content Container -->
     <LinearLayout
-        android:id="@+id/widget_overlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="horizontal"
         android:padding="@dimen/wgt_content_padding"
         android:baselineAligned="false">
 
-        <!-- Column Left: Upcoming Exams -->
+        <!-- Next exam: a big day count, its name, then up to two more exams -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="1.25"
-            android:orientation="vertical"
-            android:layout_marginEnd="8dp">
+            android:layout_weight="1.15"
+            android:orientation="vertical">
 
-            <!-- Title Header with Calendar Icon -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:gravity="center_vertical">
-
                 <ImageView
-                    android:id="@+id/widget_icon_exams_header"
                     android:layout_width="13dp"
                     android:layout_height="13dp"
                     android:src="@drawable/ic_widget_calendar"
+                    android:tint="@color/wgt_accent"
                     android:layout_marginEnd="5dp"
                     android:contentDescription="@null" />
-
                 <TextView
-                    android:id="@+id/widget_title_label"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/wgt_upcoming_exams"
-                    android:textColor="@color/wgt_on_surface"
-                    android:textSize="9.5sp"
-                    android:textStyle="bold"
-                    android:letterSpacing="0.08" />
+                    android:text="@string/wgt_next_exam"
+                    android:textColor="@color/wgt_accent"
+                    android:textSize="10sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0.08"
+                    android:maxLines="1" />
             </LinearLayout>
 
-            <!-- No exams text -->
-            <TextView
-                android:id="@+id/widget_no_exams_text"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:gravity="center_vertical"
-                android:text="@string/wgt_no_exams"
-                android:textColor="@color/wgt_on_surface_variant"
-                android:textSize="11.5sp"
-                android:textStyle="italic"
-                android:visibility="gone" />
-
-            <!-- List of 3 exam slot containers -->
             <LinearLayout
-                android:id="@+id/widget_exams_list_container"
+                android:id="@+id/widget_hero"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
                 android:orientation="vertical"
-                android:gravity="center_vertical"
-                android:layout_marginTop="4dp">
-
-                <!-- Exam Slot 1 -->
+                android:gravity="center_vertical">
                 <LinearLayout
-                    android:id="@+id/widget_exam1_container"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingTop="3dp"
-                    android:paddingBottom="3dp"
-                    android:visibility="visible">
-                    <TextView
-                        android:id="@+id/widget_exam1_name"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Math 101"
-                        android:textColor="@color/wgt_on_surface"
-                        android:textSize="14sp"
-                        android:textStyle="bold"
-                        android:maxLines="1"
-                        android:ellipsize="end" />
-                    <TextView
-                        android:id="@+id/widget_exam1_days"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="3 Days"
-                        android:textColor="@color/wgt_accent"
-                        android:textSize="12.5sp"
-                        android:textStyle="bold"
-                        android:layout_marginStart="4dp" />
-                </LinearLayout>
-
-                <!-- Exam Slot 2 -->
-                <LinearLayout
-                    android:id="@+id/widget_exam2_container"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingTop="2dp"
-                    android:paddingBottom="2dp"
-                    android:visibility="visible">
-                    <TextView
-                        android:id="@+id/widget_exam2_name"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Physics II"
-                        android:textColor="@color/wgt_on_surface_variant"
-                        android:textSize="12sp"
-                        android:maxLines="1"
-                        android:ellipsize="end" />
-                    <TextView
-                        android:id="@+id/widget_exam2_days"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="12d"
-                        android:textColor="@color/wgt_accent"
-                        android:textSize="11sp"
-                        android:layout_marginStart="4dp" />
-                </LinearLayout>
-
-                <!-- Exam Slot 3 -->
-                <LinearLayout
-                    android:id="@+id/widget_exam3_container"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingTop="2dp"
-                    android:paddingBottom="2dp"
-                    android:visibility="visible">
-                    <TextView
-                        android:id="@+id/widget_exam3_name"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Chemistry"
-                        android:textColor="@color/wgt_on_surface_variant"
-                        android:textSize="12sp"
-                        android:maxLines="1"
-                        android:ellipsize="end" />
-                    <TextView
-                        android:id="@+id/widget_exam3_days"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="18d"
-                        android:textColor="@color/wgt_accent"
-                        android:textSize="11sp"
-                        android:layout_marginStart="4dp" />
-                </LinearLayout>
-
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- Vertical Divider -->
-        <View
-            android:id="@+id/widget_vertical_divider"
-            android:layout_width="1dp"
-            android:layout_height="match_parent"
-            android:layout_marginTop="2dp"
-            android:layout_marginBottom="2dp"
-            android:background="@color/wgt_rim" />
-
-        <!-- Column Right: Focus Stats -->
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1.0"
-            android:orientation="vertical"
-            android:layout_marginStart="10dp"
-            android:gravity="center_vertical">
-
-            <!-- Stats Header with Stats Icon -->
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_marginBottom="6dp">
-
-                <ImageView
-                    android:id="@+id/widget_icon_stats_header"
-                    android:layout_width="13dp"
-                    android:layout_height="13dp"
-                    android:src="@drawable/ic_widget_stats"
-                    android:layout_marginEnd="5dp"
-                    android:contentDescription="@null" />
-
-                <TextView
-                    android:id="@+id/widget_stats_title_label"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/wgt_focus_stats"
+                    android:orientation="horizontal"
+                    android:gravity="bottom">
+                    <TextView
+                        android:id="@+id/widget_days_number"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/wgt_accent"
+                        android:textSize="36sp"
+                        android:fontFamily="sans-serif-medium"
+                        android:includeFontPadding="false"
+                        android:maxLines="1" />
+                    <TextView
+                        android:id="@+id/widget_days_unit"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/wgt_on_surface_variant"
+                        android:textSize="13sp"
+                        android:layout_marginStart="5dp"
+                        android:layout_marginBottom="3dp"
+                        android:maxLines="1" />
+                </LinearLayout>
+                <TextView
+                    android:id="@+id/widget_exam1_name"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
                     android:textColor="@color/wgt_on_surface"
-                    android:textSize="9.5sp"
-                    android:textStyle="bold"
-                    android:letterSpacing="0.08" />
+                    android:textSize="15sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
+                <TextView
+                    android:id="@+id/widget_no_exams_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/wgt_no_exams"
+                    android:textColor="@color/wgt_on_surface_variant"
+                    android:textSize="12.5sp"
+                    android:maxLines="3"
+                    android:visibility="gone" />
             </LinearLayout>
 
-            <!-- Stat Row: Focus -->
             <LinearLayout
+                android:id="@+id/widget_exam2_container"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:layout_marginBottom="3dp"
-                android:gravity="center_vertical">
-
-                <ImageView
-                    android:id="@+id/widget_icon_focus"
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:src="@drawable/ic_widget_clock"
-                    android:layout_marginEnd="4dp"
-                    android:contentDescription="@null" />
-
+                android:gravity="center_vertical"
+                android:paddingTop="2dp"
+                android:visibility="gone">
                 <TextView
-                    android:id="@+id/widget_stat_focus_label"
+                    android:id="@+id/widget_exam2_name"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Focus"
                     android:textColor="@color/wgt_on_surface_variant"
-                    android:textSize="11sp" />
+                    android:textSize="12sp"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
+                <TextView
+                    android:id="@+id/widget_exam2_days"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/wgt_accent"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:layout_marginStart="6dp" />
+            </LinearLayout>
+            <LinearLayout
+                android:id="@+id/widget_exam3_container"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingTop="2dp"
+                android:visibility="gone">
+                <TextView
+                    android:id="@+id/widget_exam3_name"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textColor="@color/wgt_on_surface_variant"
+                    android:textSize="12sp"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
+                <TextView
+                    android:id="@+id/widget_exam3_days"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/wgt_accent"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:layout_marginStart="6dp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Plain View is not allowed in RemoteViews; FrameLayout is. -->
+        <FrameLayout
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
+            android:background="@color/wgt_divider" />
+
+        <!-- Focus stats, 2 × 2 -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:id="@+id/widget_stats_header"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <ImageView
+                    android:layout_width="13dp"
+                    android:layout_height="13dp"
+                    android:src="@drawable/ic_widget_stats"
+                    android:tint="@color/wgt_accent"
+                    android:layout_marginEnd="5dp"
+                    android:contentDescription="@null" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/wgt_focus_stats"
+                    android:textColor="@color/wgt_accent"
+                    android:textSize="10sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0.08"
+                    android:maxLines="1" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:orientation="horizontal"
+                android:baselineAligned="false">
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center_vertical">
                 <TextView
                     android:id="@+id/widget_stat_focus_value"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="0h"
+                    android:text="0"
                     android:textColor="@color/wgt_on_surface"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-
-            <!-- Stat Row: Points -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="3dp"
-                android:gravity="center_vertical">
-
-                <ImageView
-                    android:id="@+id/widget_icon_points"
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:src="@drawable/ic_widget_star"
-                    android:layout_marginEnd="4dp"
-                    android:contentDescription="@null" />
-
-                <TextView
-                    android:id="@+id/widget_stat_points_label"
-                    android:layout_width="0dp"
+                    android:textSize="17sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:maxLines="1"
+                    android:includeFontPadding="false" />
+                <LinearLayout
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Points"
-                    android:textColor="@color/wgt_on_surface_variant"
-                    android:textSize="11sp" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="2dp">
+                    <ImageView
+                        android:layout_width="11dp"
+                        android:layout_height="11dp"
+                        android:src="@drawable/ic_widget_clock"
+                        android:tint="@color/wgt_on_surface_variant"
+                        android:layout_marginEnd="3dp"
+                        android:contentDescription="@null" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/wgt_stat_focus"
+                        android:textColor="@color/wgt_on_surface_variant"
+                        android:textSize="10.5sp"
+                        android:maxLines="1" />
+                </LinearLayout>
+            </LinearLayout>
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center_vertical">
                 <TextView
                     android:id="@+id/widget_stat_points_value"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="0"
                     android:textColor="@color/wgt_on_surface"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
+                    android:textSize="17sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:maxLines="1"
+                    android:includeFontPadding="false" />
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="2dp">
+                    <ImageView
+                        android:layout_width="11dp"
+                        android:layout_height="11dp"
+                        android:src="@drawable/ic_widget_star"
+                        android:tint="@color/wgt_on_surface_variant"
+                        android:layout_marginEnd="3dp"
+                        android:contentDescription="@null" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/wgt_stat_points"
+                        android:textColor="@color/wgt_on_surface_variant"
+                        android:textSize="10.5sp"
+                        android:maxLines="1" />
+                </LinearLayout>
+            </LinearLayout>
             </LinearLayout>
 
-            <!-- Stat Row: Sessions -->
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
                 android:orientation="horizontal"
-                android:layout_marginBottom="3dp"
+                android:baselineAligned="false">
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:orientation="vertical"
                 android:gravity="center_vertical">
-
-                <ImageView
-                    android:id="@+id/widget_icon_sessions"
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:src="@drawable/ic_widget_check"
-                    android:layout_marginEnd="4dp"
-                    android:contentDescription="@null" />
-
-                <TextView
-                    android:id="@+id/widget_stat_sessions_label"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Sessions"
-                    android:textColor="@color/wgt_on_surface_variant"
-                    android:textSize="11sp" />
                 <TextView
                     android:id="@+id/widget_stat_sessions_value"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="0"
                     android:textColor="@color/wgt_on_surface"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-
-            <!-- Stat Row: Streak -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-
-                <ImageView
-                    android:id="@+id/widget_icon_streak"
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:src="@drawable/ic_widget_flame"
-                    android:layout_marginEnd="4dp"
-                    android:contentDescription="@null" />
-
-                <TextView
-                    android:id="@+id/widget_stat_streak_label"
-                    android:layout_width="0dp"
+                    android:textSize="17sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:maxLines="1"
+                    android:includeFontPadding="false" />
+                <LinearLayout
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Streak"
-                    android:textColor="@color/wgt_on_surface_variant"
-                    android:textSize="11sp" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="2dp">
+                    <ImageView
+                        android:layout_width="11dp"
+                        android:layout_height="11dp"
+                        android:src="@drawable/ic_widget_check"
+                        android:tint="@color/wgt_on_surface_variant"
+                        android:layout_marginEnd="3dp"
+                        android:contentDescription="@null" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/wgt_stat_sessions"
+                        android:textColor="@color/wgt_on_surface_variant"
+                        android:textSize="10.5sp"
+                        android:maxLines="1" />
+                </LinearLayout>
+            </LinearLayout>
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center_vertical">
                 <TextView
                     android:id="@+id/widget_stat_streak_value"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="0d"
+                    android:text="0"
                     android:textColor="@color/wgt_on_surface"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
+                    android:textSize="17sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:maxLines="1"
+                    android:includeFontPadding="false" />
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="2dp">
+                    <ImageView
+                        android:layout_width="11dp"
+                        android:layout_height="11dp"
+                        android:src="@drawable/ic_widget_flame"
+                        android:tint="@color/wgt_on_surface_variant"
+                        android:layout_marginEnd="3dp"
+                        android:contentDescription="@null" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/wgt_stat_streak"
+                        android:textColor="@color/wgt_on_surface_variant"
+                        android:textSize="10.5sp"
+                        android:maxLines="1" />
+                </LinearLayout>
             </LinearLayout>
-
+            </LinearLayout>
         </LinearLayout>
-
     </LinearLayout>
 </FrameLayout>

@@ -1,63 +1,87 @@
 package com.example.ui.navigation
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Color
+import androidx.annotation.StringRes
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Analytics
-import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material.icons.filled.Radio
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.outlined.Insights
+import androidx.compose.material.icons.outlined.Style
+import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.EmojiEvents
+import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.Insights
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Style
+import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Outline
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.foundation.pager.HorizontalPager
-import kotlinx.coroutines.launch
-import com.example.ui.components.neumorphicShadow
+import androidx.navigation.navArgument
+import com.example.FocusFlowApplication
+import com.example.R
+import com.example.data.auth.AccountState
+import com.example.ui.components.ForestViewModel
+import com.example.ui.designsystem.EmptyState
 import com.example.ui.screen.analytics.AnalyticsScreen
 import com.example.ui.screen.analytics.AnalyticsViewModel
+import com.example.ui.screen.appblocker.AppBlockerScreen
+import com.example.ui.screen.auth.AuthMode
+import com.example.ui.screen.auth.AuthScreen
+import com.example.ui.screen.challenge.ChallengesScreen
+import com.example.ui.screen.community.CommunityScreen
+import com.example.ui.screen.community.CommunityViewModel
 import com.example.ui.screen.exams.ExamsScreen
 import com.example.ui.screen.exams.ExamsViewModel
-import com.example.ui.screen.settings.SettingsScreen
-import com.example.ui.screen.settings.SettingsViewModel
-import androidx.compose.material.icons.filled.Public
-import com.example.ui.screen.timer.TimerScreen
-import com.example.ui.screen.timer.TimerViewModel
-import com.example.ui.theme.NeumorphicColors
-import com.google.firebase.Firebase
-import com.google.firebase.auth.auth
-
-import androidx.compose.material.icons.filled.AutoAwesome
+import com.example.ui.screen.radio.RadioScreen
 import com.example.ui.screen.revisions.CaptureScreen
 import com.example.ui.screen.revisions.CropEditorScreen
 import com.example.ui.screen.revisions.RevisionDeckDetailScreen
@@ -65,727 +89,422 @@ import com.example.ui.screen.revisions.RevisionNoteDetailScreen
 import com.example.ui.screen.revisions.RevisionSessionScreen
 import com.example.ui.screen.revisions.RevisionsHomeScreen
 import com.example.ui.screen.revisions.RevisionsViewModel
+import com.example.ui.screen.settings.SettingsScreen
+import com.example.ui.screen.settings.SettingsViewModel
+import com.example.ui.screen.timer.FocusModeScreen
+import com.example.ui.screen.timer.TimerScreen
+import com.example.ui.screen.timer.TimerViewModel
+import com.example.ui.theme.Spacing
+import kotlinx.coroutines.launch
+import java.net.URLDecoder
+import java.net.URLEncoder
 
-sealed class Screen(val route: String, val title: String, val icon: ImageVector) {
-    object Timer : Screen("timer", "Timer", Icons.Default.Timer)
-    object Revisions : Screen("revisions", "Revisions", Icons.Default.AutoAwesome)
-    object Analytics : Screen("analytics", "Stats", Icons.Default.Analytics)
-    object Radio : Screen("radio", "Radio", Icons.Default.Radio)
-    object Community : Screen("community", "Skyline", Icons.Default.Public)
-    object Settings : Screen("settings", "Config", Icons.Default.Settings)
+/** Every route in one place. Arguments are always URL-encoded. */
+object Routes {
+    /** Welcome / sign-in. Plain "auth" also matches (mode then defaults to sign in). */
+    const val AUTH = "auth?mode={mode}"
+    const val MAIN = "main"
+    const val SETTINGS = "settings"
+    const val RADIO = "radio"
+    const val FOCUS_MODE = "battery_saver"      // route id kept for stability
+    const val EXAMS = "exams"
+    const val APP_BLOCKER = "app_blocker"
+    const val CHALLENGES = "challenges"
+    const val CAPTURE = "revisions/capture"
+    const val CROP = "revisions/crop?path={path}&whole={whole}"
+    const val SESSION = "revisions/session?deckId={deckId}"
+    const val DECK = "revisions/deck/{deckId}"
+    const val NOTE = "revisions/note/{noteId}"
+
+    fun auth(mode: AuthMode) = "auth?mode=${mode.key}"
+    /** [whole]: the photo is an already-cropped scan, so start with the whole page selected. */
+    fun crop(path: String, whole: Boolean = false) = "revisions/crop?path=${URLEncoder.encode(path, "UTF-8")}&whole=$whole"
+    fun session(deckId: String) = "revisions/session?deckId=${URLEncoder.encode(deckId, "UTF-8")}"
+    fun deck(deckId: String) = "revisions/deck/${URLEncoder.encode(deckId, "UTF-8")}"
+    fun note(noteId: String) = "revisions/note/${URLEncoder.encode(noteId, "UTF-8")}"
 }
 
-@Composable
-fun MainPagerScreen(
-    navController: NavHostController,
-    settingsViewModel: SettingsViewModel,
-    timerViewModel: TimerViewModel,
-    analyticsViewModel: AnalyticsViewModel,
-    examsViewModel: ExamsViewModel,
-    revisionsViewModel: RevisionsViewModel = viewModel(),
-    items: List<Screen>,
-    initialPage: Int = 0
+/** The four top-level destinations, in bottom-bar order. */
+enum class TopLevel(
+    val key: String,
+    @StringRes val label: Int,
+    val selectedIcon: ImageVector,
+    val icon: ImageVector
 ) {
-    val settingsState by settingsViewModel.state.collectAsState()
-    val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { items.size })
-    val coroutineScope = rememberCoroutineScope()
+    FOCUS("focus", R.string.nav_focus, Icons.Rounded.Timer, Icons.Outlined.Timer),
+    STUDY("study", R.string.nav_study, Icons.Rounded.Style, Icons.Outlined.Style),
+    PROGRESS("progress", R.string.nav_progress, Icons.Rounded.Insights, Icons.Outlined.Insights),
+    COMMUNITY("community", R.string.nav_community, Icons.Rounded.Groups, Icons.Outlined.Groups);
 
-    com.example.ui.components.ForestScaffold(
-        bottomBar = {
-            NeumorphicBottomNavigationForPager(
-                items = items,
-                currentPage = pagerState.currentPage,
-                onTabSelected = { index ->
-                    coroutineScope.launch {
-                        pagerState.scrollToPage(index)
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier.fillMaxSize(),
-            userScrollEnabled = settingsState.swipeToNavigate
-        ) { page ->
-            val screenModifier = Modifier.padding(padding)
-            when (items[page]) {
-                Screen.Timer -> {
-                    TimerScreen(
-                        viewModel = timerViewModel,
-                        settingsViewModel = settingsViewModel,
-                        onNavigateToBatterySaver = { navController.navigate("battery_saver") },
-                        onNavigateToRadio = { navController.navigate("radio") },
-                        modifier = screenModifier
-                    )
-                }
-                Screen.Revisions -> {
-                    RevisionsHomeScreen(
-                        viewModel = revisionsViewModel,
-                        onAddClick = { navController.navigate("revisions/capture") },
-                        onImageCaptured = { imagePath ->
-                            val encoded = java.net.URLEncoder.encode(imagePath, "UTF-8")
-                            navController.navigate("revisions/crop?path=$encoded")
-                        },
-                        onDeckClick = { deckId -> navController.navigate("revisions/deck/$deckId") },
-                        onNoteClick = { noteId -> navController.navigate("revisions/note/$noteId") },
-                        onStartSessionClick = { deckId -> navController.navigate("revisions/session?deckId=$deckId") },
-                        modifier = screenModifier
-                    )
-                }
-                Screen.Analytics -> {
-                    AnalyticsScreen(
-                        viewModel = analyticsViewModel,
-                        modifier = screenModifier
-                    )
-                }
-                Screen.Radio -> {
-                    com.example.ui.screen.radio.RadioScreen(
-                        navController = navController,
-                        modifier = screenModifier
-                    )
-                }
-                Screen.Community -> {
-                    val themeColors = com.example.ui.theme.LocalAppThemeColors.current
-                    var hasError by remember { mutableStateOf(false) }
-
-                    val owner = androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner.current
-                    val resolvedViewModel = remember(owner) {
-                        try {
-                            if (owner != null) {
-                                androidx.lifecycle.ViewModelProvider(owner)[com.example.ui.screen.community.CommunityViewModel::class.java]
-                            } else {
-                                null
-                            }
-                        } catch (e: Exception) {
-                            android.util.Log.e("AppNavGraph", "CommunityViewModel initialization failed", e)
-                            hasError = true
-                            null
-                        }
-                    }
-
-                    if (resolvedViewModel != null && !hasError) {
-                        com.example.ui.screen.community.CommunityScreen(
-                            navController = navController,
-                            viewModel = resolvedViewModel,
-                            bottomBar = {}
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center,
-                                modifier = Modifier.padding(24.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Screen.Community.icon,
-                                    contentDescription = "Skyline Offline",
-                                    tint = themeColors.secondaryText,
-                                    modifier = Modifier.size(64.dp)
-                                )
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = "Skyline Offline",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 20.sp,
-                                    color = themeColors.onSurface
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "The Skyline and leaderboard are currently unavailable. Please check your internet connection or try again later.",
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                    fontSize = 14.sp,
-                                    color = themeColors.secondaryText
-                                )
-                            }
-                        }
-                    }
-                }
-                Screen.Settings -> {
-                    SettingsScreen(
-                        viewModel = settingsViewModel,
-                        navController = navController,
-                        modifier = screenModifier
-                    )
-                }
-            }
+    companion object {
+        /** Accepts new keys and the legacy notification value "revisions". */
+        fun fromKey(key: String?): TopLevel? = when (key) {
+            null -> null
+            "revisions", "review" -> STUDY
+            "exams", "stats" -> PROGRESS
+            else -> entries.firstOrNull { it.key == key }
         }
     }
 }
 
-class UpwardBumpBarShape(
-    private val cornerRadius: Dp = 28.dp,
-    private val bumpWidth: Dp = 96.dp,
-    private val bumpHeight: Dp = 22.dp,
-    private val topMargin: Dp = 2.dp
-) : Shape {
-    override fun createOutline(
-        size: Size,
-        layoutDirection: LayoutDirection,
-        density: Density
-    ): Outline {
-        val cr = with(density) { cornerRadius.toPx() }
-        val bw = with(density) { bumpWidth.toPx() }
-        val bh = with(density) { bumpHeight.toPx() }
-        val yTop = with(density) { topMargin.toPx() }
-        val w = size.width
-        val h = size.height
-        val cx = w / 2f
-
-        val flatY = bh + yTop
-        val wHalf = bw / 2f
-        val c1x = cx - wHalf * 0.52f
-        val c2x = cx - wHalf * 0.48f
-        val c3x = cx + wHalf * 0.48f
-        val c4x = cx + wHalf * 0.52f
-
-        val path = Path().apply {
-            moveTo(cr, flatY)
-            lineTo(cx - wHalf, flatY)
-            cubicTo(
-                c1x, flatY,
-                c2x, yTop,
-                cx, yTop
-            )
-            cubicTo(
-                c3x, yTop,
-                c4x, flatY,
-                cx + wHalf, flatY
-            )
-            lineTo(w - cr, flatY)
-            arcTo(
-                rect = Rect(w - 2 * cr, flatY, w, flatY + 2 * cr),
-                startAngleDegrees = 270f,
-                sweepAngleDegrees = 90f,
-                forceMoveTo = false
-            )
-            lineTo(w, h - cr)
-            arcTo(
-                rect = Rect(w - 2 * cr, h - 2 * cr, w, h),
-                startAngleDegrees = 0f,
-                sweepAngleDegrees = 90f,
-                forceMoveTo = false
-            )
-            lineTo(cr, h)
-            arcTo(
-                rect = Rect(0f, h - 2 * cr, 2 * cr, h),
-                startAngleDegrees = 90f,
-                sweepAngleDegrees = 90f,
-                forceMoveTo = false
-            )
-            lineTo(0f, flatY + cr)
-            arcTo(
-                rect = Rect(0f, flatY, 2 * cr, flatY + 2 * cr),
-                startAngleDegrees = 180f,
-                sweepAngleDegrees = 90f,
-                forceMoveTo = false
-            )
-            close()
-        }
-        return Outline.Generic(path)
-    }
-}
-
-@Composable
-fun NeumorphicBottomNavigationForPager(
-    items: List<Screen>,
-    currentPage: Int,
-    onTabSelected: (Int) -> Unit
-) {
-    val themeColors = com.example.ui.theme.LocalAppThemeColors.current
-    val isDark = com.example.ui.theme.LocalIsDarkTheme.current
-
-    val activeColor = themeColors.accent
-    val inactiveColor = if (isDark) Color(0x99ECECF0) else themeColors.secondaryText
-    val barBg = if (isDark) Color(0xFA1A1D28) else themeColors.surface
-    val centerCircleBg = if (isDark) Color(0xFF1E222F) else themeColors.surface
-
-    val bumpHeight = 24.dp
-    val barShape = remember { UpwardBumpBarShape(cornerRadius = 28.dp, bumpWidth = 96.dp, bumpHeight = bumpHeight) }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(horizontal = 14.dp, vertical = 4.dp),
-        contentAlignment = Alignment.BottomCenter
-    ) {
-        // 1. SINGLE CONTINUOUS BENT BAR
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(88.dp)
-                .shadow(
-                    elevation = 10.dp,
-                    shape = barShape,
-                    ambientColor = if (isDark) Color(0x40000000) else Color(0x18000000),
-                    spotColor = if (isDark) Color(0x60000000) else Color(0x20000000)
-                )
-                .clip(barShape)
-                .background(barBg)
-                .border(
-                    width = 1.dp,
-                    color = themeColors.divider.copy(alpha = if (isDark) 0.5f else 0.8f),
-                    shape = barShape
-                ),
-            contentAlignment = Alignment.BottomCenter
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp),
-                horizontalArrangement = Arrangement.SpaceAround,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Item 0: Revisions
-                val isRev = currentPage == 0
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clickable { onTabSelected(0) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                        modifier = Modifier
-                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
-                            .background(if (isRev) activeColor.copy(alpha = 0.14f) else Color.Transparent)
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Screen.Revisions.icon,
-                            contentDescription = Screen.Revisions.title,
-                            tint = if (isRev) activeColor else inactiveColor,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = Screen.Revisions.title,
-                            fontSize = 11.sp,
-                            fontWeight = if (isRev) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isRev) activeColor else inactiveColor
-                        )
-                    }
-                }
-
-                // Item 1: Stats
-                val isStats = currentPage == 1
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clickable { onTabSelected(1) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                        modifier = Modifier
-                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
-                            .background(if (isStats) activeColor.copy(alpha = 0.14f) else Color.Transparent)
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Screen.Analytics.icon,
-                            contentDescription = Screen.Analytics.title,
-                            tint = if (isStats) activeColor else inactiveColor,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = Screen.Analytics.title,
-                            fontSize = 11.sp,
-                            fontWeight = if (isStats) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isStats) activeColor else inactiveColor
-                        )
-                    }
-                }
-
-                // CENTER SPACER FOR FLOATING TIMER CIRCLE
-                Spacer(modifier = Modifier.width(76.dp))
-
-                // Item 3: Skyline
-                val isSkyline = currentPage == 3
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clickable { onTabSelected(3) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                        modifier = Modifier
-                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
-                            .background(if (isSkyline) activeColor.copy(alpha = 0.14f) else Color.Transparent)
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Screen.Community.icon,
-                            contentDescription = Screen.Community.title,
-                            tint = if (isSkyline) activeColor else inactiveColor,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = Screen.Community.title,
-                            fontSize = 11.sp,
-                            fontWeight = if (isSkyline) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSkyline) activeColor else inactiveColor
-                        )
-                    }
-                }
-
-                // Item 4: Config
-                val isConfig = currentPage == 4
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clickable { onTabSelected(4) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                        modifier = Modifier
-                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
-                            .background(if (isConfig) activeColor.copy(alpha = 0.14f) else Color.Transparent)
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Screen.Settings.icon,
-                            contentDescription = Screen.Settings.title,
-                            tint = if (isConfig) activeColor else inactiveColor,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = Screen.Settings.title,
-                            fontSize = 11.sp,
-                            fontWeight = if (isConfig) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isConfig) activeColor else inactiveColor
-                        )
-                    }
-                }
-            }
-        }
-
-        // 2. HERO FLOATING CENTER CIRCLE (Timer - Index 2)
-        val isTimer = currentPage == 2
-        val circleShape = CircleShape
-
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = 6.dp)
-                .size(68.dp)
-                .then(
-                    if (isTimer) {
-                        Modifier
-                            .shadow(10.dp, circleShape, ambientColor = activeColor.copy(alpha = 0.25f), spotColor = activeColor.copy(alpha = 0.25f))
-                            .border(2.dp, activeColor, circleShape)
-                    } else {
-                        Modifier
-                            .shadow(6.dp, circleShape)
-                            .border(1.dp, themeColors.divider, circleShape)
-                    }
-                )
-                .clip(circleShape)
-                .background(if (isTimer) activeColor.copy(alpha = 0.12f) else centerCircleBg)
-                .clickable { onTabSelected(2) },
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = Screen.Timer.icon,
-                    contentDescription = Screen.Timer.title,
-                    tint = if (isTimer) activeColor else inactiveColor,
-                    modifier = Modifier.size(26.dp)
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = Screen.Timer.title,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isTimer) activeColor else inactiveColor
-                )
-            }
-        }
-    }
-}
+/** A deep-link request from MainActivity (notification, widget). [token] makes repeats distinct. */
+data class NavRequest(val tab: TopLevel, val progressTab: Int = 0, val token: Long = System.nanoTime())
 
 @Composable
 fun AppNavGraph(
-    modifier: Modifier = Modifier,
-    navController: NavHostController = rememberNavController(),
-    settingsViewModel: SettingsViewModel = viewModel()
+    settingsViewModel: SettingsViewModel,
+    navRequest: NavRequest? = null,
+    navController: NavHostController = rememberNavController()
 ) {
-    val items = listOf(
-        Screen.Revisions,
-        Screen.Analytics,
-        Screen.Timer,
-        Screen.Community,
-        Screen.Settings
-    )
-
+    // Activity-scoped view models shared by tabs and their detail screens.
     val timerViewModel: TimerViewModel = viewModel()
     val analyticsViewModel: AnalyticsViewModel = viewModel()
     val examsViewModel: ExamsViewModel = viewModel()
     val revisionsViewModel: RevisionsViewModel = viewModel()
 
-    val currentUser = try {
-        Firebase.auth.currentUser
-    } catch (e: Exception) {
-        android.util.Log.e("AppNavGraph", "Firebase auth not initialized or available", e)
-        null
-    }
-    val startDestination = if (currentUser != null) Screen.Timer.route else "auth"
+    // Keeps the "auto-sync wallpaper with theme" feature working app-wide.
+    val forestViewModel: ForestViewModel = viewModel()
+    val systemDark = isSystemInDarkTheme()
+    LaunchedEffect(systemDark) { forestViewModel.updateSystemDarkTheme(systemDark) }
 
-    Box(modifier = modifier.fillMaxSize()) {
-        NavHost(
-            navController = navController,
-            startDestination = startDestination,
-            modifier = Modifier.fillMaxSize()
+    // Signed in OR guest mode skips the welcome screen. Decided once per launch.
+    val authRepository = remember { FocusFlowApplication.instance.authRepository }
+    val startDestination = remember { if (authRepository.canEnterApp) Routes.MAIN else Routes.AUTH }
+
+    NavHost(
+        navController = navController,
+        startDestination = startDestination,
+        enterTransition = { slideInHorizontally { it / 6 } + fadeIn() },
+        exitTransition = { fadeOut() },
+        popEnterTransition = { fadeIn() },
+        popExitTransition = { slideOutHorizontally { it / 6 } + fadeOut() }
+    ) {
+        composable(
+            route = Routes.AUTH,
+            arguments = listOf(navArgument("mode") { type = NavType.StringType; defaultValue = AuthMode.SIGN_IN.key })
         ) {
-            composable("auth") {
-                com.example.ui.screen.auth.AuthScreen(
-                    onAuthenticated = {
-                        navController.navigate(Screen.Timer.route) {
-                            popUpTo("auth") { inclusive = true }
-                        }
-                    }
-                )
-            }
-            composable(Screen.Revisions.route) {
-                MainPagerScreen(
-                    navController = navController,
-                    settingsViewModel = settingsViewModel,
-                    timerViewModel = timerViewModel,
-                    analyticsViewModel = analyticsViewModel,
-                    examsViewModel = examsViewModel,
-                    revisionsViewModel = revisionsViewModel,
-                    items = items,
-                    initialPage = 0
-                )
-            }
-            composable(Screen.Analytics.route) {
-                MainPagerScreen(
-                    navController = navController,
-                    settingsViewModel = settingsViewModel,
-                    timerViewModel = timerViewModel,
-                    analyticsViewModel = analyticsViewModel,
-                    examsViewModel = examsViewModel,
-                    revisionsViewModel = revisionsViewModel,
-                    items = items,
-                    initialPage = 1
-                )
-            }
-            composable(Screen.Timer.route) {
-                MainPagerScreen(
-                    navController = navController,
-                    settingsViewModel = settingsViewModel,
-                    timerViewModel = timerViewModel,
-                    analyticsViewModel = analyticsViewModel,
-                    examsViewModel = examsViewModel,
-                    revisionsViewModel = revisionsViewModel,
-                    items = items,
-                    initialPage = 2
-                )
-            }
-            composable(Screen.Community.route) {
-                MainPagerScreen(
-                    navController = navController,
-                    settingsViewModel = settingsViewModel,
-                    timerViewModel = timerViewModel,
-                    analyticsViewModel = analyticsViewModel,
-                    examsViewModel = examsViewModel,
-                    revisionsViewModel = revisionsViewModel,
-                    items = items,
-                    initialPage = 3
-                )
-            }
-            composable(Screen.Settings.route) {
-                MainPagerScreen(
-                    navController = navController,
-                    settingsViewModel = settingsViewModel,
-                    timerViewModel = timerViewModel,
-                    analyticsViewModel = analyticsViewModel,
-                    examsViewModel = examsViewModel,
-                    revisionsViewModel = revisionsViewModel,
-                    items = items,
-                    initialPage = 4
-                )
-            }
-            composable("radio") {
-                com.example.ui.components.ForestScaffold {
-                    com.example.ui.screen.radio.RadioScreen(
-                        navController = navController
-                    )
-                }
-            }
-            composable("revisions/capture") {
-                CaptureScreen(
-                    viewModel = revisionsViewModel,
-                    onImageCaptured = { path ->
-                        val encoded = java.net.URLEncoder.encode(path, "UTF-8")
-                        navController.navigate("revisions/crop?path=$encoded") {
-                            popUpTo("revisions/capture") { inclusive = true }
-                        }
-                    },
-                    onCardCreated = {
-                        navController.navigate(Screen.Revisions.route) {
-                            popUpTo(Screen.Revisions.route) { inclusive = true }
-                        }
-                    },
-                    onBack = { navController.popBackStack() }
-                )
-            }
-            composable(
-                route = "revisions/crop?path={path}",
-                arguments = listOf(
-                    androidx.navigation.navArgument("path") { type = androidx.navigation.NavType.StringType }
-                )
-            ) { backStackEntry ->
-                val pathArg = backStackEntry.arguments?.getString("path") ?: ""
-                val decodedPath = java.net.URLDecoder.decode(pathArg, "UTF-8")
-                CropEditorScreen(
-                    imagePath = decodedPath,
-                    viewModel = revisionsViewModel,
-                    onCropConfirmed = {
-                        navController.navigate(Screen.Revisions.route) {
-                            popUpTo(Screen.Revisions.route) { inclusive = true }
-                        }
-                    },
-                    onBack = { navController.popBackStack() }
-                )
-            }
-            composable(
-                route = "revisions/session?deckId={deckId}",
-                arguments = listOf(
-                    androidx.navigation.navArgument("deckId") {
-                        type = androidx.navigation.NavType.StringType
-                        defaultValue = "default_deck"
-                    }
-                )
-            ) { backStackEntry ->
-                val deckIdArg = backStackEntry.arguments?.getString("deckId") ?: "default_deck"
-                com.example.ui.components.ForestScaffold {
-                    RevisionSessionScreen(
-                        deckId = deckIdArg,
-                        viewModel = revisionsViewModel,
-                        onFinishSession = { navController.popBackStack() },
-                        onBack = { navController.popBackStack() }
-                    )
-                }
-            }
-            composable(
-                route = "revisions/deck/{deckId}",
-                arguments = listOf(
-                    androidx.navigation.navArgument("deckId") { type = androidx.navigation.NavType.StringType }
-                )
-            ) { backStackEntry ->
-                val deckIdArg = backStackEntry.arguments?.getString("deckId") ?: "default_deck"
-                com.example.ui.components.ForestScaffold {
-                    RevisionDeckDetailScreen(
-                        deckId = deckIdArg,
-                        viewModel = revisionsViewModel,
-                        onNoteClick = { noteId -> navController.navigate("revisions/note/$noteId") },
-                        onStartReview = { deckId -> navController.navigate("revisions/session?deckId=$deckId") },
-                        onBack = { navController.popBackStack() }
-                    )
-                }
-            }
-            composable(
-                route = "revisions/note/{noteId}",
-                arguments = listOf(
-                    androidx.navigation.navArgument("noteId") { type = androidx.navigation.NavType.StringType }
-                )
-            ) { backStackEntry ->
-                val noteIdArg = backStackEntry.arguments?.getString("noteId") ?: ""
-                com.example.ui.components.ForestScaffold {
-                    RevisionNoteDetailScreen(
-                        noteId = noteIdArg,
-                        viewModel = revisionsViewModel,
-                        onBack = { navController.popBackStack() }
-                    )
-                }
-            }
-            composable("exams") {
-                com.example.ui.components.ForestScaffold(
-                    bottomBar = { NeumorphicBottomNavigation(navController = navController, items = items) }
-                ) { padding ->
-                    ExamsScreen(viewModel = examsViewModel, modifier = Modifier.padding(padding))
-                }
-            }
-            composable("app_blocker") {
-                com.example.ui.components.ForestScaffold(
-                    bottomBar = { NeumorphicBottomNavigation(navController = navController, items = items) }
-                ) { padding ->
-                    com.example.ui.screen.appblocker.AppBlockerScreen(navController = navController, modifier = Modifier.padding(padding))
-                }
-            }
-            composable("battery_saver") {
-                com.example.ui.screen.timer.BatterySaverScreen(
-                    viewModel = timerViewModel,
-                    settingsViewModel = settingsViewModel,
-                    onDismiss = {
+            // Opened from inside the app (a guest upgrading): back returns there, success too.
+            val fromInside = remember { navController.previousBackStackEntry != null }
+            AuthScreen(
+                onFinished = {
+                    if (fromInside) {
                         navController.popBackStack()
+                    } else {
+                        navController.navigate(Routes.MAIN) { popUpTo(Routes.AUTH) { inclusive = true } }
+                    }
+                },
+                onBack = if (fromInside) ({ navController.popBackStack() }) else null
+            )
+        }
+
+        composable(Routes.MAIN) {
+            MainShell(
+                navController = navController,
+                navRequest = navRequest,
+                settingsViewModel = settingsViewModel,
+                timerViewModel = timerViewModel,
+                analyticsViewModel = analyticsViewModel,
+                examsViewModel = examsViewModel,
+                revisionsViewModel = revisionsViewModel
+            )
+        }
+
+        composable(Routes.SETTINGS) {
+            SecondaryScreen(title = stringResource(R.string.nav_settings), onBack = { navController.popBackStack() }) { padding ->
+                SettingsScreen(viewModel = settingsViewModel, navController = navController, modifier = Modifier.padding(padding))
+            }
+        }
+
+        composable(Routes.RADIO) {
+            RadioScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Routes.FOCUS_MODE) {
+            FocusModeScreen(
+                viewModel = timerViewModel,
+                onDismiss = { navController.popBackStack() },
+                onOpenRadio = {
+                    navController.popBackStack()
+                    navController.navigate(Routes.RADIO)
+                }
+            )
+        }
+
+        composable(Routes.EXAMS) {
+            SecondaryScreen(title = stringResource(R.string.progress_tab_exams), onBack = { navController.popBackStack() }) { padding ->
+                ExamsScreen(viewModel = examsViewModel, modifier = Modifier.padding(padding))
+            }
+        }
+
+        composable(Routes.CHALLENGES) {
+            SecondaryScreen(title = stringResource(R.string.challenges_title), onBack = { navController.popBackStack() }) { padding ->
+                ChallengesScreen(viewModel = viewModel(), modifier = Modifier.padding(padding))
+            }
+        }
+
+        composable(Routes.APP_BLOCKER) {
+            AppBlockerScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Routes.CAPTURE) {
+            CaptureScreen(
+                viewModel = revisionsViewModel,
+                onImageCaptured = { path ->
+                    navController.navigate(Routes.crop(path)) { popUpTo(Routes.CAPTURE) { inclusive = true } }
+                },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Routes.CROP,
+            arguments = listOf(
+                navArgument("path") { type = NavType.StringType; defaultValue = "" },
+                navArgument("whole") { type = NavType.BoolType; defaultValue = false }
+            )
+        ) { entry ->
+            CropEditorScreen(
+                imagePath = URLDecoder.decode(entry.arguments?.getString("path").orEmpty(), "UTF-8"),
+                wholePage = entry.arguments?.getBoolean("whole") ?: false,
+                viewModel = revisionsViewModel,
+                onCropConfirmed = { navController.popBackStack(Routes.MAIN, inclusive = false) },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Routes.SESSION,
+            arguments = listOf(navArgument("deckId") { type = NavType.StringType; defaultValue = "ALL" })
+        ) { entry ->
+            RevisionSessionScreen(
+                deckId = URLDecoder.decode(entry.arguments?.getString("deckId") ?: "ALL", "UTF-8"),
+                viewModel = revisionsViewModel,
+                onFinishSession = { navController.popBackStack() },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Routes.DECK,
+            arguments = listOf(navArgument("deckId") { type = NavType.StringType })
+        ) { entry ->
+            RevisionDeckDetailScreen(
+                deckId = URLDecoder.decode(entry.arguments?.getString("deckId").orEmpty(), "UTF-8"),
+                viewModel = revisionsViewModel,
+                onNoteClick = { navController.navigate(Routes.note(it)) },
+                onStartReview = { navController.navigate(Routes.session(it)) },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Routes.NOTE,
+            arguments = listOf(navArgument("noteId") { type = NavType.StringType })
+        ) { entry ->
+            RevisionNoteDetailScreen(
+                noteId = URLDecoder.decode(entry.arguments?.getString("noteId").orEmpty(), "UTF-8"),
+                viewModel = revisionsViewModel,
+                onBack = { navController.popBackStack() }
+            )
+        }
+    }
+}
+
+/** Top-level shell: app bar + adaptive navigation (bar on phones, rail on wide screens) + tab pager. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MainShell(
+    navController: NavHostController,
+    navRequest: NavRequest?,
+    settingsViewModel: SettingsViewModel,
+    timerViewModel: TimerViewModel,
+    analyticsViewModel: AnalyticsViewModel,
+    examsViewModel: ExamsViewModel,
+    revisionsViewModel: RevisionsViewModel
+) {
+    val settings by settingsViewModel.state.collectAsState()
+    val tabs = TopLevel.entries
+    val pagerState = rememberPagerState(pageCount = { tabs.size })
+    val scope = rememberCoroutineScope()
+    var progressTab by rememberSaveable { mutableIntStateOf(0) }
+    val current = tabs[pagerState.currentPage]
+    val wide = LocalConfiguration.current.screenWidthDp >= 600
+
+    LaunchedEffect(navRequest) {
+        navRequest ?: return@LaunchedEffect
+        progressTab = navRequest.progressTab
+        pagerState.scrollToPage(navRequest.tab.ordinal)
+    }
+
+    fun select(tab: TopLevel) {
+        scope.launch { pagerState.animateScrollToPage(tab.ordinal) }
+    }
+
+    Row(Modifier.fillMaxSize()) {
+        if (wide) {
+            NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+                tabs.forEach { tab ->
+                    NavigationRailItem(
+                        selected = tab == current,
+                        onClick = { select(tab) },
+                        icon = { Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null) },
+                        label = { Text(stringResource(tab.label)) }
+                    )
+                }
+            }
+        }
+        Scaffold(
+            modifier = Modifier.weight(1f),
+            topBar = {
+                TopAppBar(
+                    title = { Text(stringResource(current.label)) },
+                    actions = {
+                        IconButton(onClick = { navController.navigate(Routes.SETTINGS) }) {
+                            Icon(Icons.Rounded.Settings, contentDescription = stringResource(R.string.nav_settings))
+                        }
                     }
                 )
+            },
+            bottomBar = {
+                if (!wide) {
+                    NavigationBar {
+                        tabs.forEach { tab ->
+                            NavigationBarItem(
+                                selected = tab == current,
+                                onClick = { select(tab) },
+                                icon = { Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null) },
+                                label = { Text(stringResource(tab.label)) }
+                            )
+                        }
+                    }
+                }
+            }
+        ) { padding ->
+            HorizontalPager(
+                state = pagerState,
+                userScrollEnabled = settings.swipeToNavigate,
+                beyondViewportPageCount = 0,
+                modifier = Modifier.fillMaxSize().padding(padding)
+            ) { page ->
+                // Tablets, foldables and landscape: keep each tab a readable column instead of stretching it.
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                Box(Modifier.widthIn(max = Spacing.contentMaxWidth).fillMaxSize()) {
+                when (tabs[page]) {
+                    TopLevel.FOCUS -> TimerScreen(
+                        viewModel = timerViewModel,
+                        settingsViewModel = settingsViewModel,
+                        onNavigateToBatterySaver = { navController.navigate(Routes.FOCUS_MODE) },
+                        onNavigateToRadio = { navController.navigate(Routes.RADIO) },
+                        onNavigateToChallenges = { navController.navigate(Routes.CHALLENGES) }
+                    )
+                    TopLevel.STUDY -> RevisionsHomeScreen(
+                        viewModel = revisionsViewModel,
+                        onAddClick = { navController.navigate(Routes.CAPTURE) },
+                        onImageCaptured = { navController.navigate(Routes.crop(it)) },
+                        onPageScanned = { navController.navigate(Routes.crop(it, whole = true)) },
+                        onDeckClick = { navController.navigate(Routes.deck(it)) },
+                        onNoteClick = { navController.navigate(Routes.note(it)) },
+                        onStartSessionClick = { navController.navigate(Routes.session(it)) }
+                    )
+                    TopLevel.PROGRESS -> ProgressTab(
+                        selected = progressTab,
+                        onSelect = { progressTab = it },
+                        analyticsViewModel = analyticsViewModel,
+                        examsViewModel = examsViewModel
+                    )
+                    TopLevel.COMMUNITY -> CommunityTab(navController)
+                }
+                }
+                }
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NeumorphicBottomNavigation(
-    navController: NavHostController,
-    items: List<Screen>
+private fun ProgressTab(
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    analyticsViewModel: AnalyticsViewModel,
+    examsViewModel: ExamsViewModel
 ) {
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route
-
-    val currentIndex = when (currentRoute) {
-        Screen.Revisions.route -> 0
-        Screen.Analytics.route -> 1
-        Screen.Timer.route -> 2
-        Screen.Community.route -> 3
-        Screen.Settings.route -> 4
-        else -> 2
-    }
-
-    NeumorphicBottomNavigationForPager(
-        items = items,
-        currentPage = currentIndex,
-        onTabSelected = { index ->
-            val targetScreen = when (index) {
-                0 -> Screen.Revisions
-                1 -> Screen.Analytics
-                2 -> Screen.Timer
-                3 -> Screen.Community
-                4 -> Screen.Settings
-                else -> Screen.Timer
-            }
-            if (currentRoute != targetScreen.route) {
-                navController.navigate(targetScreen.route) {
-                    popUpTo(navController.graph.id) {
-                        saveState = true
-                    }
-                    launchSingleTop = true
-                    restoreState = true
-                }
-            }
+    Column(Modifier.fillMaxSize()) {
+        PrimaryTabRow(selectedTabIndex = selected) {
+            Tab(selected = selected == 0, onClick = { onSelect(0) }, text = { Text(stringResource(R.string.progress_tab_stats)) })
+            Tab(selected = selected == 1, onClick = { onSelect(1) }, text = { Text(stringResource(R.string.progress_tab_exams)) })
         }
+        if (selected == 0) AnalyticsScreen(viewModel = analyticsViewModel)
+        else ExamsScreen(viewModel = examsViewModel)
+    }
+}
+
+@Composable
+private fun CommunityTab(navController: NavHostController) {
+    val account by FocusFlowApplication.instance.authRepository.state.collectAsStateWithLifecycle()
+    if (account !is AccountState.SignedIn) {
+        GuestCommunity(
+            onCreateAccount = { navController.navigate(Routes.auth(AuthMode.CREATE_ACCOUNT)) },
+            onSignIn = { navController.navigate(Routes.auth(AuthMode.SIGN_IN)) }
+        )
+        return
+    }
+    val owner = LocalViewModelStoreOwner.current
+    // Firebase can be unavailable (no network on first launch, misconfiguration): degrade gracefully.
+    val communityViewModel = remember(owner) {
+        runCatching { owner?.let { ViewModelProvider(it)[CommunityViewModel::class.java] } }.getOrNull()
+    }
+    if (communityViewModel != null) {
+        CommunityScreen(viewModel = communityViewModel)
+    } else {
+        EmptyState(
+            icon = Icons.Rounded.CloudOff,
+            title = stringResource(R.string.community_unavailable_title),
+            body = stringResource(R.string.community_unavailable_body)
+        )
+    }
+}
+
+/** Guests (no account) see what Community offers and how to join. Their local data comes along. */
+@Composable
+private fun GuestCommunity(onCreateAccount: () -> Unit, onSignIn: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        EmptyState(
+            icon = Icons.Rounded.EmojiEvents,
+            title = stringResource(R.string.community_guest_title),
+            body = stringResource(R.string.community_guest_body),
+            actionLabel = stringResource(R.string.community_guest_create),
+            onAction = onCreateAccount
+        )
+        TextButton(onClick = onSignIn, modifier = Modifier.padding(bottom = Spacing.lg)) {
+            Text(stringResource(R.string.community_guest_sign_in))
+        }
+    }
+}
+
+/** Secondary destination with a back arrow (predictive back is handled by Navigation). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SecondaryScreen(
+    title: String,
+    onBack: () -> Unit,
+    content: @Composable (androidx.compose.foundation.layout.PaddingValues) -> Unit
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(title) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.back))
+                    }
+                }
+            )
+        },
+        content = content
     )
 }

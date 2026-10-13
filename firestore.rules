@@ -1,0 +1,102 @@
+rules_version = '2';
+
+// Focus Island security rules.
+// Deploy: Firebase console → Firestore Database → Rules → paste → Publish
+// (or `firebase deploy --only firestore:rules`).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // A real account (not a guest signed in anonymously).
+    function isMember() {
+      return signedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // 👤 Profiles: readable by members (friend search, friend profiles).
+    match /users/{userId} {
+      allow read: if isMember();
+      allow create, delete: if isOwner(userId);
+
+      // The owner may change anything. Another member may only add or remove
+      // THEIR OWN uid in `friends` (accepting a request, removing a friend).
+      allow update: if isOwner(userId) || (isMember() && onlyOwnUidInFriendsChanged());
+
+      function onlyOwnUidInFriendsChanged() {
+        let before = resource.data.get('friends', []).toSet();
+        let after = request.resource.data.get('friends', []).toSet();
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['friends'])
+          && after.difference(before).union(before.difference(after)).hasOnly([request.auth.uid]);
+      }
+
+      // 📂 Focus sessions: owner only.
+      match /sessions/{sessionId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // 🗂️ Review cards cloud copy: owner only. (Missing before: card sync was always denied.)
+      match /revision_notes/{noteId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // 🏆 Leaderboard: readable by anyone signed in (guests included); owner writes stats only.
+    match /leaderboard/{userId} {
+      allow read: if signedIn();
+      allow delete: if isOwner(userId);
+      allow create: if isOwner(userId)
+        && request.resource.data.keys().hasOnly(['uid', 'username', 'treeCount', 'totalMinutes', 'points', 'currentStreak'])
+        && validEntry();
+      allow update: if isOwner(userId)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['uid', 'username', 'treeCount', 'totalMinutes', 'points', 'currentStreak'])
+        && validEntry();
+
+      function validStat(k) {
+        return !(k in request.resource.data)
+          || (request.resource.data[k] is int && request.resource.data[k] >= 0);
+      }
+
+      function validEntry() {
+        return request.resource.data.get('uid', userId) == userId
+          && validStat('treeCount') && validStat('totalMinutes')
+          && validStat('points') && validStat('currentStreak');
+      }
+    }
+
+    // ✉️ Friend requests: document id = "<fromUid>_<toUid>"; only the two people involved.
+    match /friend_requests/{requestId} {
+      function isParty() {
+        return isMember()
+          && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+      }
+
+      allow read, delete: if isParty();
+
+      allow create: if isMember()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid is string
+        && request.resource.data.toUid != request.auth.uid
+        && requestId == request.auth.uid + '_' + request.resource.data.toUid
+        && request.resource.data.status == 'pending';
+
+      allow update: if isParty()
+        && request.resource.data.fromUid == resource.data.fromUid
+        && request.resource.data.toUid == resource.data.toUid
+        && (
+          // The recipient answers.
+          (request.auth.uid == resource.data.toUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+            && request.resource.data.status in ['accepted', 'declined'])
+          // The sender sends again (after a decline or a removed friendship).
+          || (request.auth.uid == resource.data.fromUid && request.resource.data.status == 'pending')
+        );
+    }
+  }
+}

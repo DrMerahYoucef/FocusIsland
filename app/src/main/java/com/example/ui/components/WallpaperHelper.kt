@@ -3,124 +3,64 @@ package com.example.ui.components
 import android.app.WallpaperManager
 import android.content.Context
 import android.graphics.Bitmap
-import android.os.Build
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
+import com.example.R
+import com.example.ui.components.IslandRenderer.drawLagoonScene
+import com.example.ui.theme.IslandPalette
 import com.example.ui.theme.WallpaperTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
+/** Draws your island as the phone wallpaper: day or night, one palm per completed session. */
 object WallpaperHelper {
 
-    fun renderForestBitmap(
-        context: Context,
-        width: Int,
-        height: Int,
-        theme: WallpaperTheme,
-        treeCount: Int = -1
-    ): Bitmap {
-        val app = context.applicationContext
-        val count = if (treeCount >= 0) {
-            treeCount
-        } else {
-            val sharedPrefs = app.getSharedPreferences("focusflow_prefs", Context.MODE_PRIVATE)
-            sharedPrefs.getInt("last_synced_tree_count", 0)
-        }
+    private const val PREFS = "focusflow_prefs"
 
-        return renderBuildingBitmap(context, width, height, theme, count)
+    /** Completed sessions, as last published by the app (the key name predates the island). */
+    private const val KEY_SESSION_COUNT = "last_synced_tree_count"
+
+    fun lastSessionCount(context: Context): Int =
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_SESSION_COUNT, 0)
+
+    /** Draws the scene straight onto an Android [canvas] (live wallpaper, bitmaps). */
+    fun drawScene(context: Context, canvas: android.graphics.Canvas, width: Int, height: Int, theme: WallpaperTheme, sessions: Int) {
+        CanvasDrawScope().draw(Density(context), LayoutDirection.Ltr, Canvas(canvas), Size(width.toFloat(), height.toFloat())) {
+            drawLagoonScene(sessions, if (theme == WallpaperTheme.DARK) IslandPalette.Night else IslandPalette.Day)
+        }
     }
 
-    fun renderBuildingBitmap(
-        context: Context,
-        width: Int,
-        height: Int,
-        theme: WallpaperTheme,
-        completedSessions: Int = 0
-    ): Bitmap {
-        val app = context.applicationContext
-        val isDark = theme == WallpaperTheme.DARK
-        val W = width.coerceAtLeast(1080).toFloat()
-        val H = height.coerceAtLeast(1920).toFloat()
-
-        val imageBitmap = ImageBitmap(W.toInt(), H.toInt())
-        val composeCanvas = Canvas(imageBitmap)
-        val drawScope = CanvasDrawScope()
-
-        drawScope.draw(
-            density = androidx.compose.ui.unit.Density(app),
-            layoutDirection = androidx.compose.ui.unit.LayoutDirection.Ltr,
-            canvas = composeCanvas,
-            size = Size(W, H)
-        ) {
-            ForestTreeRenderer.drawModernLandscape(
-                drawScope = this,
-                W = W,
-                H = H,
-                treeCount = completedSessions,
-                darkProgress = if (isDark) 1f else 0f,
-                animPhase = 0f
-            )
-        }
-
-        return imageBitmap.asAndroidBitmap()
+    fun renderBitmap(context: Context, width: Int, height: Int, theme: WallpaperTheme, sessions: Int): Bitmap {
+        val bitmap = Bitmap.createBitmap(width.coerceAtLeast(1), height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        drawScene(context, android.graphics.Canvas(bitmap), bitmap.width, bitmap.height, theme, sessions)
+        return bitmap
     }
 
-    fun setForestWallpaper(
+    /**
+     * Renders and sets the wallpaper off the main thread (a full-screen bitmap is heavy).
+     * Returns null on success, or a message to show.
+     */
+    suspend fun setIslandWallpaper(
         context: Context,
         theme: WallpaperTheme,
         setHomeScreen: Boolean,
         setLockScreen: Boolean,
-        treeCount: Int = -1,
-        onComplete: (Boolean, String?) -> Unit
-    ) {
+        sessions: Int
+    ): String? = withContext(Dispatchers.Default) {
         val app = context.applicationContext
-        val wallpaperManager = WallpaperManager.getInstance(app)
-
-        if (!setHomeScreen && !setLockScreen) {
-            onComplete(false, "No screen selected")
-            return
-        }
-
+        if (!setHomeScreen && !setLockScreen) return@withContext app.getString(R.string.wallpaper_pick_screen)
         try {
             val metrics = app.resources.displayMetrics
-            val W = metrics.widthPixels.coerceAtLeast(1080)
-            val H = metrics.heightPixels.coerceAtLeast(1920)
-
-            val bitmap = renderForestBitmap(context, W, H, theme, treeCount)
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                if (setHomeScreen && setLockScreen) {
-                    wallpaperManager.setBitmap(bitmap, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)
-                } else if (setHomeScreen) {
-                    wallpaperManager.setBitmap(bitmap, null, true, WallpaperManager.FLAG_SYSTEM)
-                } else if (setLockScreen) {
-                    wallpaperManager.setBitmap(bitmap, null, true, WallpaperManager.FLAG_LOCK)
-                }
-            } else {
-                wallpaperManager.setBitmap(bitmap)
-            }
-
-            onComplete(true, null)
+            val bitmap = renderBitmap(app, metrics.widthPixels, metrics.heightPixels, theme, sessions)
+            val flags = (if (setHomeScreen) WallpaperManager.FLAG_SYSTEM else 0) or (if (setLockScreen) WallpaperManager.FLAG_LOCK else 0)
+            WallpaperManager.getInstance(app).setBitmap(bitmap, null, true, flags)
+            null
         } catch (e: Exception) {
             android.util.Log.e("WallpaperHelper", "Failed to set wallpaper", e)
-            onComplete(false, e.localizedMessage ?: "Unknown error")
+            app.getString(R.string.wallpaper_failed)
         }
-    }
-
-    fun setBuildingWallpaper(
-        context: Context,
-        theme: WallpaperTheme,
-        setHomeScreen: Boolean,
-        setLockScreen: Boolean,
-        completedSessions: Int = 0,
-        onComplete: (Boolean, String?) -> Unit
-    ) {
-        setForestWallpaper(
-            context = context,
-            theme = theme,
-            setHomeScreen = setHomeScreen,
-            setLockScreen = setLockScreen,
-            treeCount = completedSessions,
-            onComplete = onComplete
-        )
     }
 }

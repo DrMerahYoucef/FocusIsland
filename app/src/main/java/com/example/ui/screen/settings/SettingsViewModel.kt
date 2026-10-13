@@ -20,6 +20,15 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import com.example.ui.theme.WallpaperTheme
+import com.example.R
+import com.example.data.db.DatabaseSeeder
+import com.example.data.repository.LocalMediaStore
+import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
+import com.google.firebase.firestore.CollectionReference
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.SetOptions
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class SettingsState(
     val focusMin: Int = 25,
@@ -35,8 +44,19 @@ data class SettingsState(
     val wallpaperHomeScreen: Boolean = true,
     val wallpaperLockScreen: Boolean = false,
     val ambientRotationMin: Int = 5,
-    val swipeToNavigate: Boolean = true
-)
+    val swipeToNavigate: Boolean = true,
+    val dynamicColor: Boolean = false,
+    val autoFocusMode: Boolean = true,
+    val shareListening: Boolean = false
+) {
+    companion object {
+        val FOCUS_RANGE = 1..180
+        val BREAK_RANGE = 1..60
+        val ROUNDS_RANGE = 1..12
+        /** 0 = never switch to another ambient sound. */
+        val ROTATION_RANGE = 0..60
+    }
+}
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -74,12 +94,16 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 wallpaperHomeScreen = sharedPrefs.getBoolean("wallpaper_home_screen", true),
                 wallpaperLockScreen = sharedPrefs.getBoolean("wallpaper_lock_screen", false),
                 ambientRotationMin = sharedPrefs.getInt("ambient_rotation_min", 5),
-                swipeToNavigate = sharedPrefs.getBoolean("swipe_to_navigate", true)
+                swipeToNavigate = sharedPrefs.getBoolean("swipe_to_navigate", true),
+                dynamicColor = sharedPrefs.getBoolean("dynamic_color", false),
+                autoFocusMode = sharedPrefs.getBoolean("auto_focus_mode", true),
+                shareListening = sharedPrefs.getBoolean(KEY_SHARE_LISTENING, false)
             )
         }
     }
 
-    fun updateAmbientRotationMin(value: Int) {
+    fun updateAmbientRotationMin(raw: Int) {
+        val value = raw.coerceIn(SettingsState.ROTATION_RANGE)
         sharedPrefs.edit().putInt("ambient_rotation_min", value).apply()
         _state.update { it.copy(ambientRotationMin = value) }
     }
@@ -101,22 +125,26 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         _state.update { it.copy(wallpaperTheme = value) }
     }
 
-    fun updateFocusMin(value: Int) {
+    fun updateFocusMin(raw: Int) {
+        val value = raw.coerceIn(SettingsState.FOCUS_RANGE)
         sharedPrefs.edit().putInt("focus_duration_min", value).apply()
         _state.update { it.copy(focusMin = value) }
     }
 
-    fun updateShortBreakMin(value: Int) {
+    fun updateShortBreakMin(raw: Int) {
+        val value = raw.coerceIn(SettingsState.BREAK_RANGE)
         sharedPrefs.edit().putInt("short_break_min", value).apply()
         _state.update { it.copy(shortBreakMin = value) }
     }
 
-    fun updateLongBreakMin(value: Int) {
+    fun updateLongBreakMin(raw: Int) {
+        val value = raw.coerceIn(SettingsState.BREAK_RANGE)
         sharedPrefs.edit().putInt("long_break_min", value).apply()
         _state.update { it.copy(longBreakMin = value) }
     }
 
-    fun updateSessionsBeforeLong(value: Int) {
+    fun updateSessionsBeforeLong(raw: Int) {
+        val value = raw.coerceIn(SettingsState.ROUNDS_RANGE)
         sharedPrefs.edit().putInt("sessions_before_long", value).apply()
         _state.update { it.copy(sessionsBeforeLong = value) }
     }
@@ -146,92 +174,146 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         _state.update { it.copy(wallpaperLockScreen = value) }
     }
 
+    /** Opens Focus mode after 20 s without touching the screen during a running session. */
+    fun updateAutoFocusMode(value: Boolean) {
+        sharedPrefs.edit().putBoolean("auto_focus_mode", value).apply()
+        _state.update { it.copy(autoFocusMode = value) }
+    }
+
+    fun updateDynamicColor(value: Boolean) {
+        sharedPrefs.edit().putBoolean("dynamic_color", value).apply()
+        _state.update { it.copy(dynamicColor = value) }
+    }
+
+    /**
+     * Opt-in: friends see the station you play (read by RadioPlayerService and Community, same key).
+     * Turning it off also clears what friends currently see.
+     */
+    fun updateShareListening(value: Boolean) {
+        sharedPrefs.edit().putBoolean(KEY_SHARE_LISTENING, value).apply()
+        _state.update { it.copy(shareListening = value) }
+        if (!value) {
+            val uid = Firebase.auth.currentUser?.uid ?: return
+            viewModelScope.launch {
+                runCatching { Firebase.firestore.collection("users").document(uid).update("currentRadio", "").await() }
+            }
+        }
+    }
+
     fun updateSwipeToNavigate(value: Boolean) {
         sharedPrefs.edit().putBoolean("swipe_to_navigate", value).apply()
         _state.update { it.copy(swipeToNavigate = value) }
     }
 
 
-    fun resetAllData(onCompleted: () -> Unit) {
+    /**
+     * Clears what the confirmation dialog promises: focus sessions (and therefore stats and
+     * streaks) and exam countdowns. Flashcards, radio stations and blocked apps are kept.
+     * Online sessions are cleared first; otherwise the next sync would bring them back.
+     */
+    fun resetAllData(onCompleted: (success: Boolean, error: String?) -> Unit) {
         viewModelScope.launch {
-            try {
-                val uid = com.google.firebase.Firebase.auth.currentUser?.uid
-                if (uid != null) {
-                    val firestore = com.google.firebase.Firebase.firestore
-                    
-                    // 1. Reset user profile stats to zero on Firestore (both users collection and leaderboard)
-                    val statsReset = mapOf(
-                        "treeCount" to 0,
-                        "totalMinutes" to 0,
-                        "points" to 0,
-                        "currentStreak" to 0
-                    )
-                    firestore.collection("users").document(uid).update(statsReset).await()
-                    firestore.collection("leaderboard").document(uid).update(statsReset).await()
-
-                    // 2. Delete all remote sessions in Firestore sessions subcollection
-                    val sessionsRef = firestore.collection("users").document(uid).collection("sessions")
-                    val querySnapshot = sessionsRef.get().await()
-                    for (doc in querySnapshot.documents) {
-                        sessionsRef.document(doc.id).delete().await()
-                    }
+            val app = getApplication<Application>()
+            val user = Firebase.auth.currentUser
+            if (user != null && !user.isAnonymous) {
+                val remote = runCatching {
+                    val db = Firebase.firestore
+                    deleteCollection(db.collection("users").document(user.uid).collection("sessions"))
+                    val zero = mapOf("treeCount" to 0, "totalMinutes" to 0, "points" to 0, "currentStreak" to 0)
+                    db.collection("users").document(user.uid).set(zero, SetOptions.merge()).await()
+                    db.collection("leaderboard").document(user.uid).set(zero, SetOptions.merge()).await()
                 }
-            } catch (e: Exception) {
-                // Log and continue to local purge so user is not blocked if offline
-                android.util.Log.e("SettingsViewModel", "Failed to clear Firestore stats, proceeding with local clear", e)
+                if (remote.isFailure) {
+                    android.util.Log.e(TAG, "Remote reset failed", remote.exceptionOrNull())
+                    onCompleted(false, app.getString(R.string.reset_error_sync))
+                    return@launch
+                }
             }
-
-            // 3. Clear local SQLite Database
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                database.clearAllTables()
-            }
-            
-            // Trigger app widget update to show 0 trees on home screen as well
-            com.example.widget.ExamCountdownWidgetReceiver.triggerWidgetUpdate(getApplication())
-            
-            onCompleted()
+            sessionRepo.deleteAllLocal()
+            database.examDao().deleteAll()
+            com.example.widget.ExamCountdownWidgetReceiver.triggerWidgetUpdate(app)
+            onCompleted(true, null)
         }
     }
 
+    /**
+     * Deletes the account and everything stored for it online (sessions, synced cards, profile,
+     * leaderboard entry, friend links and requests), then wipes this device.
+     * Firebase only allows deletion shortly after sign-in, so that is checked BEFORE deleting data.
+     */
     fun deleteAccount(onCompleted: (Boolean, String?) -> Unit) {
         viewModelScope.launch {
+            val app = getApplication<Application>()
             try {
-                val user = com.google.firebase.Firebase.auth.currentUser
-                val uid = user?.uid
-                if (uid != null) {
-                    val firestore = com.google.firebase.Firebase.firestore
-                    
-                    // 1. Delete all remote sessions in Firestore
-                    val sessionsRef = firestore.collection("users").document(uid).collection("sessions")
-                    val querySnapshot = sessionsRef.get().await()
-                    for (doc in querySnapshot.documents) {
-                        sessionsRef.document(doc.id).delete().await()
+                val user = Firebase.auth.currentUser
+                if (user != null && user.isAnonymous) {
+                    // Guests have nothing online: just drop the anonymous user (best effort).
+                    runCatching { user.delete().await() }
+                } else if (user != null) {
+                    val lastSignIn = user.metadata?.lastSignInTimestamp ?: 0L
+                    if (System.currentTimeMillis() - lastSignIn > RECENT_LOGIN_WINDOW_MS) {
+                        onCompleted(false, app.getString(R.string.delete_account_reauth))
+                        return@launch
                     }
-                    
-                    // 2. Delete user profile and leaderboard documents
-                    firestore.collection("users").document(uid).delete().await()
-                    firestore.collection("leaderboard").document(uid).delete().await()
-                    
-                    // 3. Delete Firebase Auth User Account
+                    val uid = user.uid
+                    val db = Firebase.firestore
+                    val userDoc = db.collection("users").document(uid)
+
+                    // Best effort for data shared with other users (depends on security rules).
+                    runCatching {
+                        val friends = (userDoc.get().await().get("friends") as? List<*>).orEmpty().mapNotNull { it?.toString() }
+                        friends.forEach { friendUid ->
+                            db.collection("users").document(friendUid).update("friends", FieldValue.arrayRemove(uid)).await()
+                        }
+                    }
+                    runCatching {
+                        for (field in listOf("fromUid", "toUid")) {
+                            db.collection("friend_requests").whereEqualTo(field, uid).get().await()
+                                .documents.forEach { it.reference.delete().await() }
+                        }
+                    }
+
+                    deleteCollection(userDoc.collection("sessions"))
+                    deleteCollection(userDoc.collection("revision_notes"))
+                    db.collection("leaderboard").document(uid).delete().await()
+                    userDoc.delete().await()
                     user.delete().await()
                 }
-                
-                // 4. Wipe local databases
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+
+                // Wipe this device, then restore the app's default content.
+                withContext(Dispatchers.IO) {
                     database.clearAllTables()
+                    DatabaseSeeder.seedAll(database.openHelper.writableDatabase)
+                    LocalMediaStore.mediaDir(app).deleteRecursively()
+                    java.io.File(app.filesDir, "revisions_media").deleteRecursively()
                 }
-                
-                // 5. Reset local preference configurations
                 sharedPrefs.edit().clear().apply()
-                
-                // Update widgets after account wipe
-                com.example.widget.ExamCountdownWidgetReceiver.triggerWidgetUpdate(getApplication())
-                
+                FocusFlowApplication.instance.authRepository.signOut() // also leaves guest mode
+                com.example.widget.ExamCountdownWidgetReceiver.triggerWidgetUpdate(app)
                 onCompleted(true, null)
+            } catch (e: FirebaseAuthRecentLoginRequiredException) {
+                onCompleted(false, app.getString(R.string.delete_account_reauth))
             } catch (e: Exception) {
-                android.util.Log.e("SettingsViewModel", "Failed to delete account completely", e)
-                onCompleted(false, e.localizedMessage ?: "Unknown error occurred")
+                android.util.Log.e(TAG, "Failed to delete account", e)
+                onCompleted(false, e.localizedMessage ?: app.getString(R.string.delete_account_failed))
             }
         }
+    }
+
+    /** Deletes every document of a (sub)collection in batches (Firestore has no recursive delete on clients). */
+    private suspend fun deleteCollection(ref: CollectionReference) {
+        while (true) {
+            val page = ref.limit(400).get().await()
+            if (page.isEmpty) return
+            val batch = ref.firestore.batch()
+            page.documents.forEach { batch.delete(it.reference) }
+            batch.commit().await()
+        }
+    }
+
+    private companion object {
+        const val TAG = "SettingsViewModel"
+        const val RECENT_LOGIN_WINDOW_MS = 5 * 60_000L
+        const val KEY_SHARE_LISTENING = "share_listening"
     }
 }

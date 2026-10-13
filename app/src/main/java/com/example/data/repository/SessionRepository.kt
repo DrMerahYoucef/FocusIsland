@@ -1,246 +1,125 @@
 package com.example.data.repository
 
+import android.util.Log
 import com.example.data.db.dao.SessionDao
 import com.example.data.db.entity.SessionEntity
-import com.example.widget.ExamCountdownWidgetReceiver
+import com.example.data.stats.FocusTotals
+import com.example.data.stats.StatsCalculator
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.firestore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 
-class SessionRepository(private val sessionDao: SessionDao) {
+/**
+ * Focus sessions: Room is the source of truth, Firestore is a mirror.
+ *
+ * This is the ONLY place that writes focus statistics (treeCount, totalMinutes, points,
+ * currentStreak) to Firestore. Statistics are always recomputed from real sessions;
+ * nothing is ever synthesized.
+ */
+class SessionRepository(
+    private val sessionDao: SessionDao,
+    private val appScope: CoroutineScope,
+    private val onSessionsChanged: () -> Unit
+) {
+    private val syncMutex = Mutex()
+
     suspend fun insert(session: SessionEntity) {
         sessionDao.insert(session)
-        // Whenever a session is added, trigger background sync and refresh app widgets!
-        CoroutineScope(Dispatchers.IO).launch {
-            syncWithFirestore()
-            // Also notify widgets to refresh statistics
-            com.example.FocusFlowApplication.instance.let { app ->
-                ExamCountdownWidgetReceiver.triggerWidgetUpdate(app)
+        onSessionsChanged()
+        appScope.launch { syncWithFirestore() }
+    }
+
+    fun getSessionsInRange(from: Long, to: Long): Flow<List<SessionEntity>> = sessionDao.getSessionsInRange(from, to)
+    fun getTotalFocusSeconds(from: Long, to: Long): Flow<Long?> = sessionDao.getTotalFocusSeconds(from, to)
+    fun getSessionCount(from: Long, to: Long): Flow<Int> = sessionDao.getSessionCount(from, to)
+    fun getTotalScore(from: Long, to: Long): Flow<Int?> = sessionDao.getTotalScore(from, to)
+    fun getAllSessions(): Flow<List<SessionEntity>> = sessionDao.getAllSessions()
+
+    suspend fun totals(): FocusTotals = StatsCalculator.totals(sessionDao.getAllSessionsList())
+
+    suspend fun deleteAllLocal() {
+        sessionDao.deleteAll()
+        onSessionsChanged()
+    }
+
+    /**
+     * Two-way merge keyed by session end time, then publishes the recomputed stats.
+     * Safe to call from anywhere; concurrent calls are serialized. Never throws (except cancellation).
+     */
+    suspend fun syncWithFirestore() = syncMutex.withLock {
+        withContext(Dispatchers.IO) {
+            try {
+                val user = Firebase.auth.currentUser ?: return@withContext
+                if (user.isAnonymous) return@withContext // guests have no cloud profile
+                val uid = user.uid
+                val db = Firebase.firestore
+                val sessionsRef = db.collection("users").document(uid).collection("sessions")
+
+                val remote = sessionsRef.get().await().documents.mapNotNull { doc ->
+                    val date = doc.getLong("date") ?: return@mapNotNull null
+                    SessionEntity(
+                        date = date,
+                        durationSeconds = doc.getLong("durationSeconds")?.toInt() ?: 0,
+                        completed = doc.getBoolean("completed") ?: false,
+                        focusScore = doc.getLong("focusScore")?.toInt() ?: 0
+                    )
+                }.associateBy { it.date }
+
+                val local = sessionDao.getAllSessionsList()
+                val localDates = local.mapTo(HashSet()) { it.date }
+
+                // Remote → local
+                val missingLocally = remote.values.filter { it.date !in localDates }
+                if (missingLocally.isNotEmpty()) sessionDao.insertAll(missingLocally)
+
+                // Local → remote (Firestore batches are capped at 500 writes)
+                local.filter { it.date !in remote }.chunked(400).forEach { chunk ->
+                    val batch = db.batch()
+                    chunk.forEach { batch.set(sessionsRef.document(it.date.toString()), it.toFirestoreMap()) }
+                    batch.commit().await()
+                }
+
+                // Publish stats computed from the now-merged local history.
+                val totals = StatsCalculator.totals(sessionDao.getAllSessionsList())
+                val stats = mapOf(
+                    "uid" to uid,
+                    "treeCount" to totals.completedSessions,
+                    "totalMinutes" to totals.focusMinutes,
+                    "points" to totals.points,
+                    "currentStreak" to totals.currentStreakDays
+                )
+                // Profiles are readable by other members: remove the email older versions stored there.
+                db.collection("users").document(uid).set(stats + ("email" to FieldValue.delete()), SetOptions.merge()).await()
+                db.collection("leaderboard").document(uid).set(stats, SetOptions.merge()).await()
+
+                if (missingLocally.isNotEmpty()) onSessionsChanged()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.d(TAG, "Firestore session sync skipped: ${e.message}")
             }
         }
     }
 
-    fun getSessionsInRange(from: Long, to: Long): Flow<List<SessionEntity>> {
-        return sessionDao.getSessionsInRange(from, to)
-    }
+    private fun SessionEntity.toFirestoreMap() = mapOf(
+        "date" to date,
+        "durationSeconds" to durationSeconds,
+        "completed" to completed,
+        "focusScore" to focusScore
+    )
 
-    fun getTotalFocusSeconds(from: Long, to: Long): Flow<Long?> {
-        return sessionDao.getTotalFocusSeconds(from, to)
-    }
-
-    fun getSessionCount(from: Long, to: Long): Flow<Int> {
-        return sessionDao.getSessionCount(from, to)
-    }
-
-    fun getTotalScore(from: Long, to: Long): Flow<Int?> {
-        return sessionDao.getTotalScore(from, to)
-    }
-
-    fun getAllSessions(): Flow<List<SessionEntity>> {
-        return sessionDao.getAllSessions()
-    }
-
-    suspend fun syncWithFirestore() {
-        try {
-            val uid = com.google.firebase.Firebase.auth.currentUser?.uid ?: return
-            val db = com.google.firebase.Firebase.firestore
-            
-            // 1. Fetch the user profile metrics from Firestore to check master stats
-            val profileDoc = db.collection("users").document(uid).get().await()
-            val remoteTreeCount = profileDoc.getLong("treeCount")?.toInt() ?: 0
-            val remoteTotalMinutes = profileDoc.getLong("totalMinutes")?.toInt() ?: 0
-            val remotePoints = profileDoc.getLong("points")?.toInt() ?: 0
-            val remoteStreak = profileDoc.getLong("currentStreak")?.toInt() ?: 0
-
-            // 2. Fetch all remote sessions from Firestore (sessions subcollection)
-            val remoteDocs = db.collection("users").document(uid).collection("sessions")
-                .get()
-                .await()
-            
-            val remoteSessionsMap = remoteDocs.documents.mapNotNull { doc ->
-                val date = doc.getLong("date") ?: return@mapNotNull null
-                val durationSeconds = doc.getLong("durationSeconds")?.toInt() ?: 0
-                val completed = doc.getBoolean("completed") ?: false
-                val focusScore = doc.getLong("focusScore")?.toInt() ?: 0
-                SessionEntity(
-                    date = date,
-                    durationSeconds = durationSeconds,
-                    completed = completed,
-                    focusScore = focusScore
-                )
-            }.associateBy { it.date }
-
-            // 3. Fetch all local sessions from Room
-            val localSessions = sessionDao.getAllSessionsList()
-            val localSessionsMap = localSessions.associateBy { it.date }
-
-            var localChanged = false
-
-            // Protect against empty local database on newly reinstalled / fresh device logins!
-            // If the local database is completely blank, but the remote user profile has non-zero trees or minutes,
-            // we restore/reconstruct the local sessions and update FS to match.
-            if (localSessions.isEmpty() && (remoteTreeCount > 0 || remoteTotalMinutes > 0)) {
-                // Populate existing remote subcollection sessions to local Room first
-                if (remoteSessionsMap.isNotEmpty()) {
-                    for (remoteSession in remoteSessionsMap.values) {
-                        sessionDao.insert(remoteSession)
-                    }
-                    localChanged = true
-                }
-
-                // If remoteSessions subcollection is empty (old version/migration issue), or there's still a gap
-                // between the number of completed sessions in local Room and remoteTreeCount, synthesize sessions retroactively!
-                val currentLocalCompleted = sessionDao.getCompletedCountImmediate()
-                if (currentLocalCompleted < remoteTreeCount) {
-                    val gap = remoteTreeCount - currentLocalCompleted
-                    val streakDays = maxOf(remoteStreak, 1)
-                    val sessionsPerDay = maxOf(1, gap / streakDays)
-                    
-                    val now = System.currentTimeMillis()
-                    val dayMs = 86_400_000L
-                    var sessionsCreated = 0
-                    
-                    for (dayOffset in 0 until streakDays) {
-                        if (sessionsCreated >= gap) break
-                        
-                        val sessionsToday = if (dayOffset == 0) {
-                            gap - (streakDays - 1) * sessionsPerDay
-                        } else {
-                            sessionsPerDay
-                        }.coerceAtLeast(1)
-                        
-                        for (s in 0 until sessionsToday) {
-                            if (sessionsCreated >= gap) break
-                            
-                            val sessionTime = now - (dayOffset * dayMs) - (s * 3600_000L) - (15 * 60000L)
-                            val durationSecs = if (remoteTreeCount > 0 && remoteTotalMinutes > 0) {
-                                ((remoteTotalMinutes * 60) / remoteTreeCount).coerceIn(300, 7200)
-                            } else {
-                                1500 // fallback 25 mins
-                            }
-                            
-                            val synthesizedSession = SessionEntity(
-                                date = sessionTime,
-                                durationSeconds = durationSecs,
-                                completed = true,
-                                focusScore = durationSecs / 60
-                            )
-                            
-                            sessionDao.insert(synthesizedSession)
-                            
-                            // Back-upload the synthesized session so that this subcollection also becomes populated
-                            val uploadData = hashMapOf(
-                                "date" to synthesizedSession.date,
-                                "durationSeconds" to synthesizedSession.durationSeconds,
-                                "completed" to synthesizedSession.completed,
-                                "focusScore" to synthesizedSession.focusScore
-                            )
-                            db.collection("users").document(uid).collection("sessions")
-                                .document(synthesizedSession.date.toString())
-                                .set(uploadData)
-                            
-                            sessionsCreated++
-                        }
-                    }
-                    localChanged = true
-                }
-            } else {
-                // Regular bidirectional synchronization
-                // A. Sync from remote to local
-                for (date in remoteSessionsMap.keys) {
-                    if (!localSessionsMap.containsKey(date)) {
-                        val remoteSession = remoteSessionsMap[date]!!
-                        sessionDao.insert(remoteSession)
-                        localChanged = true
-                    }
-                }
-
-                // B. Sync from local to remote
-                for (date in localSessionsMap.keys) {
-                    if (!remoteSessionsMap.containsKey(date)) {
-                        val localSession = localSessionsMap[date]!!
-                        val data = hashMapOf(
-                            "date" to localSession.date,
-                            "durationSeconds" to localSession.durationSeconds,
-                            "completed" to localSession.completed,
-                            "focusScore" to localSession.focusScore
-                        )
-                        db.collection("users").document(uid).collection("sessions")
-                            .document(localSession.date.toString())
-                            .set(data)
-                            .await()
-                    }
-                }
-            }
-
-            // 5. Recalculate dynamic statistics from the now fully populated local database
-            val updatedCompletedCount = sessionDao.getCompletedCountImmediate()
-            val totalMinutes = sessionDao.getTotalFocusMinutesImmediate()
-            val allCompletedDates = sessionDao.getAllSessionDates()
-            val currentStreak = calculateStreak(allCompletedDates)
-            val points = totalMinutes / 5 // 1 point per 5 focus minutes
-
-            // If we are about to update, prevent overwriting positive remote stats with 0 (e.g. if room reads as empty inexplicably)
-            if (updatedCompletedCount >= remoteTreeCount || totalMinutes >= remoteTotalMinutes) {
-                val statsUpdate = mapOf(
-                    "treeCount" to updatedCompletedCount,
-                    "totalMinutes" to totalMinutes,
-                    "points" to points,
-                    "currentStreak" to currentStreak
-                )
-                db.collection("users").document(uid).update(statsUpdate).await()
-                db.collection("leaderboard").document(uid).update(statsUpdate).await()
-            } else {
-                // Keep the database values if local calculation came up short for any transient offline reason
-                val statsUpdate = mapOf(
-                    "treeCount" to maxOf(updatedCompletedCount, remoteTreeCount),
-                    "totalMinutes" to maxOf(totalMinutes, remoteTotalMinutes),
-                    "points" to maxOf(points, remotePoints),
-                    "currentStreak" to maxOf(currentStreak, remoteStreak)
-                )
-                db.collection("users").document(uid).update(statsUpdate).await()
-                db.collection("leaderboard").document(uid).update(statsUpdate).await()
-            }
-
-            // If local data changed, trigger widget update to update progress screen
-            if (localChanged) {
-                com.example.FocusFlowApplication.instance.let { app ->
-                    ExamCountdownWidgetReceiver.triggerWidgetUpdate(app)
-                }
-            }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            // Normal coroutine cancellation - do not treat as error
-            throw e
-        } catch (e: Exception) {
-            android.util.Log.d("SessionRepository", "Firestore bidirectional statistics sync offline or skipped: ${e.message}")
-        }
-    }
-
-    private fun calculateStreak(dates: List<Long>): Int {
-        if (dates.isEmpty()) return 0
-        val today = java.util.Calendar.getInstance().apply {
-            set(java.util.Calendar.HOUR_OF_DAY, 0)
-            set(java.util.Calendar.MINUTE, 0)
-            set(java.util.Calendar.SECOND, 0)
-            set(java.util.Calendar.MILLISECOND, 0)
-        }.timeInMillis
-        val dayMs = 86_400_000L
-        val uniqueDays = dates.map { it / dayMs }.toSortedSet().toList().reversed()
-        var streak = 0
-        var expected = today / dayMs
-        for (day in uniqueDays) {
-            if (day == expected || day == expected - 1) {
-                streak++
-                expected = day - 1
-            } else {
-                break
-            }
-        }
-        return streak
+    private companion object {
+        const val TAG = "SessionRepository"
     }
 }

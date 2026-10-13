@@ -1,25 +1,32 @@
 package com.example.ui.screen.appblocker
 
 import android.app.Application
-import android.content.pm.ApplicationInfo
+import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.drawable.Drawable
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.FocusFlowApplication
 import com.example.data.db.entity.BlockedAppEntity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
+/** [icon] is a small bitmap made once off the main thread (drawing Drawables per row was slow). */
 data class InstalledAppInfo(
     val packageName: String,
     val appName: String,
-    val icon: Drawable?
+    val icon: ImageBitmap?
 )
+
+private const val ICON_PX = 96
 
 class AppBlockerViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -27,80 +34,55 @@ class AppBlockerViewModel(application: Application) : AndroidViewModel(applicati
     private val packageManager = application.packageManager
 
     val blockedApps: StateFlow<List<BlockedAppEntity>> =
-        repository.getAllBlocked()
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+        repository.getAllBlocked().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
-    private val _installedApps = MutableStateFlow<List<InstalledAppInfo>>(emptyList())
-    val installedApps: StateFlow<List<InstalledAppInfo>> = _installedApps.asStateFlow()
+    /** null while the list of installed apps is loading. */
+    private val _installedApps = MutableStateFlow<List<InstalledAppInfo>?>(null)
+    val installedApps: StateFlow<List<InstalledAppInfo>?> = _installedApps.asStateFlow()
 
     init {
-        loadInstalledApps()
+        viewModelScope.launch { _installedApps.value = loadLaunchableApps() }
     }
 
-    private fun loadInstalledApps() {
-        viewModelScope.launch {
-            try {
-                val apps = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
-                    .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 }
-                    .map { info ->
-                        InstalledAppInfo(
-                            packageName = info.packageName,
-                            appName = packageManager.getApplicationLabel(info).toString(),
-                            icon = try { packageManager.getApplicationIcon(info) } catch (e: Exception) { null }
-                        )
-                    }
-                    .sortedBy { it.appName }
-                _installedApps.value = apps
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
-    fun toggleNotifBlock(pkg: String, appName: String, block: Boolean) {
-        viewModelScope.launch {
-            val existing = blockedApps.value.find { it.packageName == pkg }
-            if (existing != null) {
-                if (!block && !existing.blockLaunch) {
-                    repository.deleteByPackage(pkg)
-                } else {
-                    repository.upsert(existing.copy(blockNotifications = block))
-                }
-            } else if (block) {
-                repository.upsert(
-                    BlockedAppEntity(
-                        packageName = pkg,
-                        appName = appName,
-                        appIconBase64 = "",
-                        blockNotifications = true,
-                        blockLaunch = false
+    /**
+     * Every app with a launcher icon (including preinstalled ones like YouTube or Chrome),
+     * except this app. Uses the <queries> launcher declaration, so QUERY_ALL_PACKAGES isn't needed.
+     */
+    private suspend fun loadLaunchableApps(): List<InstalledAppInfo> = withContext(Dispatchers.IO) {
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        runCatching {
+            @Suppress("DEPRECATION")
+            packageManager.queryIntentActivities(launcher, PackageManager.MATCH_ALL)
+                .map { it.activityInfo.applicationInfo }
+                .distinctBy { it.packageName }
+                .filter { it.packageName != getApplication<Application>().packageName }
+                .map { info ->
+                    InstalledAppInfo(
+                        packageName = info.packageName,
+                        appName = packageManager.getApplicationLabel(info).toString(),
+                        icon = runCatching { packageManager.getApplicationIcon(info).toBitmap(ICON_PX, ICON_PX).asImageBitmap() }.getOrNull()
                     )
-                )
-            }
-            com.example.service.FocusNotificationListenerService.refresh(getApplication())
-        }
+                }
+                .sortedBy { it.appName.lowercase() }
+        }.getOrDefault(emptyList())
     }
 
-    fun toggleLaunchBlock(pkg: String, appName: String, block: Boolean) {
+    fun toggleNotifBlock(pkg: String, appName: String, block: Boolean) = update(pkg, appName) {
+        it.copy(blockNotifications = block)
+    }
+
+    fun toggleLaunchBlock(pkg: String, appName: String, block: Boolean) = update(pkg, appName) {
+        it.copy(blockLaunch = block)
+    }
+
+    /** Running services observe the table, so changes apply to an ongoing session immediately. */
+    private fun update(pkg: String, appName: String, change: (BlockedAppEntity) -> BlockedAppEntity) {
         viewModelScope.launch {
-            val existing = blockedApps.value.find { it.packageName == pkg }
-            if (existing != null) {
-                if (!block && !existing.blockNotifications) {
-                    repository.deleteByPackage(pkg)
-                } else {
-                    repository.upsert(existing.copy(blockLaunch = block))
-                }
-            } else if (block) {
-                repository.upsert(
-                    BlockedAppEntity(
-                        packageName = pkg,
-                        appName = appName,
-                        appIconBase64 = "",
-                        blockNotifications = false,
-                        blockLaunch = true
-                    )
-                )
-            }
+            val current = blockedApps.value.find { it.packageName == pkg }
+                ?: BlockedAppEntity(pkg, appName, appIconBase64 = "", blockNotifications = false, blockLaunch = false)
+            val updated = change(current)
+            if (!updated.blockNotifications && !updated.blockLaunch) repository.deleteByPackage(pkg)
+            else repository.upsert(updated)
         }
     }
 }

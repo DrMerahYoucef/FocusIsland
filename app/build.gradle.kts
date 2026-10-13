@@ -50,20 +50,18 @@ android {
   namespace = "com.example"
   compileSdk = 35
 
-  sourceSets {
-    getByName("main").assets {
-      srcDir("src/main/java/com/example/data")
-    }
-  }
-
   defaultConfig {
     applicationId = "com.focusisland"
     minSdk = 26
     targetSdk = 35
-    versionCode = 7
-    versionName = "1.0.7"
+    versionCode = 12
+    versionName = "2.2.2"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    // The app is translated into English and French: drop libraries' other languages so system
+    // dialogs from libraries never appear in a third language (and the APK is smaller).
+    resourceConfigurations += listOf("en", "fr")
   }
 
   signingConfigs {
@@ -85,9 +83,11 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      // R8: smaller, faster APK. Keep rules for reflection are in proguard-rules.pro;
+      // CI uploads build/outputs/mapping/release/mapping.txt to de-obfuscate crash reports.
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      
     }
     debug {
       signingConfig = signingConfigs.getByName("debugConfig")
@@ -108,6 +108,12 @@ android {
   testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
+// Room: export the schema of every DB version so migrations can be tested
+// and reviewed. Commit the generated app/schemas/ folder.
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
 // to match the convention used in Web projects.
 secrets {
@@ -123,20 +129,20 @@ configurations.all {
   }
 }
 
-// Some unused dependencies are commented out below instead of being removed.
-// This makes it easy to add them back in the future if needed.
+// Unused libraries were removed in 2.0.0 (storage, remote config, Firebase AI, fragment, media3-ui/okhttp,
+// logging-interceptor): nothing imported them, but their manifest components still shipped in the APK.
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
   implementation("com.google.firebase:firebase-auth")
   implementation("com.google.firebase:firebase-firestore")
-  implementation("com.google.firebase:firebase-config")
-  implementation("com.google.firebase:firebase-storage")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
   implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.camera.camera2)
   implementation("com.google.mlkit:text-recognition:16.0.1")
+  // Document scanner (edge detection, perspective fix, clean-up); runs in Google Play services.
+  implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
   implementation(libs.androidx.camera.core)
   implementation(libs.androidx.camera.lifecycle)
   implementation(libs.androidx.camera.view)
@@ -148,6 +154,7 @@ dependencies {
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.core.ktx)
+  implementation("androidx.core:core-splashscreen:1.0.1")
   // implementation(libs.androidx.datastore.preferences)
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -157,20 +164,14 @@ dependencies {
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
-  implementation("androidx.fragment:fragment-ktx:1.8.9")
 
   // Media3 (ExoPlayer + MediaSession)
   implementation("androidx.media3:media3-exoplayer:1.3.1")
   implementation("androidx.media3:media3-session:1.3.1")
-  implementation("androidx.media3:media3-ui:1.3.1")
-  implementation("androidx.media3:media3-datasource-okhttp:1.3.1")
-  implementation(libs.firebase.ai)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
-  implementation(libs.play.services.location)
   implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
@@ -205,4 +206,3 @@ tasks.register<Copy>("copyApkToBuildOutputs") {
     include("app-debug.apk")
     into(rootProject.file("build-outputs"))
 }
-

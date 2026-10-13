@@ -1,10 +1,17 @@
 package com.example.data.db.entity
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import java.util.UUID
 
-@Entity(tableName = "revision_notes")
+@Entity(
+    tableName = "revision_notes",
+    indices = [
+        Index(value = ["deckId", "dueDate"]),
+        Index(value = ["dueDate"])
+    ]
+)
 data class RevisionNoteEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val deckId: String,
@@ -12,8 +19,8 @@ data class RevisionNoteEntity(
     val contentBlocksJson: String = "",   // authoritative structured content — rendered directly by NoteBlocksRenderer
     val plainTextPreview: String = "",    // flattened text for search/export ONLY — never rendered
     val contentMarkdown: String = "",     // legacy column kept for backwards compatibility
-    val mediaType: String? = null,        // "IMAGE", "AUDIO", or null for OCR-scanned cards
-    val mediaFilePath: String? = null,    // local file path for Local Cards
+    val mediaType: String? = null,        // "IMAGE", "AUDIO", or null for text/OCR cards
+    val mediaFilePath: String? = null,    // absolute path inside the app's media folder
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 
