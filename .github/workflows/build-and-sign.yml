@@ -79,19 +79,30 @@ jobs:
           keyStorePassword: ${{ secrets.RELEASE_SIGNING_PASSWORD }}
           keyPassword: ${{ secrets.RELEASE_KEY_PASSWORD }}
 
+      # The signing action names files "app-release-unsigned-signed"; give them the app name and version.
+      - name: Name files FocusIsland-<version>
+        if: github.event_name != 'pull_request'
+        id: names
+        run: |
+          VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          mkdir -p dist
+          cp "${{ steps.sign_apk.outputs.signedReleaseFile }}" "dist/FocusIsland-$VERSION.apk"
+          cp "${{ steps.sign_aab.outputs.signedReleaseFile }}" "dist/FocusIsland-$VERSION.aab"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Upload signed APK
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: FocusIsland-Signed-APK
-          path: ${{ steps.sign_apk.outputs.signedReleaseFile }}
+          name: FocusIsland-${{ steps.names.outputs.version }}-APK
+          path: dist/FocusIsland-${{ steps.names.outputs.version }}.apk
 
       - name: Upload signed App Bundle (Google Play)
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: FocusIsland-Signed-AAB
-          path: ${{ steps.sign_aab.outputs.signedReleaseFile }}
+          name: FocusIsland-${{ steps.names.outputs.version }}-AAB
+          path: dist/FocusIsland-${{ steps.names.outputs.version }}.aab
 
       # Needed to read crash stack traces from Play Console (upload it with the AAB).
       - name: Upload R8 mapping file

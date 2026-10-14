@@ -24,14 +24,14 @@ Version : `versionName 2.2.2`, `versionCode 12` (dans `app/build.gradle.kts`).
 1. lance les tests unitaires (une erreur bloque la publication) ;
 2. construit l'APK et l'App Bundle en release, réduits par R8 ;
 3. les signe avec votre clé ;
-4. publie 3 artefacts : `FocusIsland-Signed-APK` (installation directe), `FocusIsland-Signed-AAB`
+4. publie 3 artefacts : `FocusIsland-<version>-APK` (installation directe), `FocusIsland-<version>-AAB`
    (pour Google Play) et `FocusIsland-R8-mapping` (pour lire les rapports de plantage).
 
 Les pull requests lancent seulement les tests.
 
 ## 3. Tester l'APK signé avant de publier
 
-- Installez `FocusIsland-Signed-APK` sur un vrai téléphone (par-dessus l'ancienne version : même clé, données gardées).
+- Installez `FocusIsland-<version>-APK` sur un vrai téléphone (par-dessus l'ancienne version : même clé, données gardées).
 - Parcours minimum : connexion et mode invité, une session de focus complète, mode Focus, création d'une
   carte par photo, révision, sauvegarde puis restauration des cartes, radio, blocage d'une app, widgets,
   téléphone en français puis en anglais, thème sombre, texte à 200 %.
@@ -41,7 +41,7 @@ Les pull requests lancent seulement les tests.
 ## 4. Google Play Console
 
 1. Créez l'application (nom : Focus Island ; package : `com.focusisland`).
-2. Production (ou Test interne d'abord) → Créer une version → envoyez `FocusIsland-Signed-AAB`.
+2. Production (ou Test interne d'abord) → Créer une version → envoyez `FocusIsland-<version>-AAB`.
    Dans la même version, envoyez `mapping.txt` (section « Fichiers de désobscurcissement »).
 3. Recommandé : activez « Signature d'application par Google Play » et gardez votre clé actuelle comme clé d'importation.
 
