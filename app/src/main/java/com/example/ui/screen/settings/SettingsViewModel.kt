@@ -19,6 +19,7 @@ import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.ui.theme.AppStyle
 import com.example.ui.theme.WallpaperTheme
 import com.example.R
 import com.example.data.db.DatabaseSeeder
@@ -47,7 +48,10 @@ data class SettingsState(
     val swipeToNavigate: Boolean = true,
     val dynamicColor: Boolean = false,
     val autoFocusMode: Boolean = true,
-    val shareListening: Boolean = false
+    val shareListening: Boolean = false,
+    val appStyle: AppStyle = AppStyle.LAGOON,
+    /** The "choose your style" tip on the Focus tab was opened or dismissed. */
+    val styleTipSeen: Boolean = true
 ) {
     companion object {
         val FOCUS_RANGE = 1..180
@@ -97,7 +101,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 swipeToNavigate = sharedPrefs.getBoolean("swipe_to_navigate", true),
                 dynamicColor = sharedPrefs.getBoolean("dynamic_color", false),
                 autoFocusMode = sharedPrefs.getBoolean("auto_focus_mode", true),
-                shareListening = sharedPrefs.getBoolean(KEY_SHARE_LISTENING, false)
+                shareListening = sharedPrefs.getBoolean(KEY_SHARE_LISTENING, false),
+                appStyle = AppStyle.from(sharedPrefs.getString(AppStyle.PREF_KEY, null)),
+                styleTipSeen = sharedPrefs.getBoolean(AppStyle.PREF_TIP_SEEN, false)
             )
         }
     }
@@ -113,6 +119,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         _state.update { it.copy(themeMode = value) }
         // Let's also trigger an app widget update so the widget theme matches the app selection immediately
         com.example.widget.ExamCountdownWidgetReceiver.triggerWidgetUpdate(getApplication())
+    }
+
+    fun updateAppStyle(value: AppStyle) {
+        sharedPrefs.edit().putString(AppStyle.PREF_KEY, value.key).putBoolean(AppStyle.PREF_TIP_SEEN, true).apply()
+        _state.update { it.copy(appStyle = value, styleTipSeen = true) }
+        // Widgets and the wallpaper read the style from the same preferences.
+        com.example.widget.ExamCountdownWidgetReceiver.triggerWidgetUpdate(getApplication())
+    }
+
+    fun dismissStyleTip() {
+        sharedPrefs.edit().putBoolean(AppStyle.PREF_TIP_SEEN, true).apply()
+        _state.update { it.copy(styleTipSeen = true) }
     }
 
     fun updateFollowSystemTheme(value: Boolean) {

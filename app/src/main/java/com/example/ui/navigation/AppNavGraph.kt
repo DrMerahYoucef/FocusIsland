@@ -90,6 +90,7 @@ import com.example.ui.screen.revisions.RevisionSessionScreen
 import com.example.ui.screen.revisions.RevisionsHomeScreen
 import com.example.ui.screen.revisions.RevisionsViewModel
 import com.example.ui.screen.settings.SettingsScreen
+import com.example.ui.screen.settings.StylePickerScreen
 import com.example.ui.screen.settings.SettingsViewModel
 import com.example.ui.screen.timer.FocusModeScreen
 import com.example.ui.screen.timer.TimerScreen
@@ -110,6 +111,7 @@ object Routes {
     const val EXAMS = "exams"
     const val APP_BLOCKER = "app_blocker"
     const val CHALLENGES = "challenges"
+    const val STYLE = "style"
     const val CAPTURE = "revisions/capture"
     const val CROP = "revisions/crop?path={path}&whole={whole}"
     const val SESSION = "revisions/session?deckId={deckId}"
@@ -212,6 +214,15 @@ fun AppNavGraph(
         composable(Routes.SETTINGS) {
             SecondaryScreen(title = stringResource(R.string.nav_settings), onBack = { navController.popBackStack() }) { padding ->
                 SettingsScreen(viewModel = settingsViewModel, navController = navController, modifier = Modifier.padding(padding))
+            }
+        }
+
+        composable(Routes.STYLE) {
+            val settings by settingsViewModel.state.collectAsState()
+            // Opening the picker answers the "choose your style" tip.
+            LaunchedEffect(Unit) { settingsViewModel.dismissStyleTip() }
+            SecondaryScreen(title = stringResource(R.string.style_screen_title), onBack = { navController.popBackStack() }) { padding ->
+                StylePickerScreen(current = settings.appStyle, onSelect = settingsViewModel::updateAppStyle, modifier = Modifier.padding(padding))
             }
         }
 
@@ -395,7 +406,8 @@ private fun MainShell(
                         settingsViewModel = settingsViewModel,
                         onNavigateToBatterySaver = { navController.navigate(Routes.FOCUS_MODE) },
                         onNavigateToRadio = { navController.navigate(Routes.RADIO) },
-                        onNavigateToChallenges = { navController.navigate(Routes.CHALLENGES) }
+                        onNavigateToChallenges = { navController.navigate(Routes.CHALLENGES) },
+                        onNavigateToStyles = { navController.navigate(Routes.STYLE) }
                     )
                     TopLevel.STUDY -> RevisionsHomeScreen(
                         viewModel = revisionsViewModel,

@@ -231,6 +231,30 @@ in CaptureScreen.kt forces LagoonDarkColors for M3 components there). RevisionHe
   previewImage PNGs (drawable-nodpi, rendered from the real layouts), updatePeriodMillis 1 h.
 - RemoteViews rule: no plain `<View>` in widget layouts (use FrameLayout).
 
+## 2.3.0 styles (versionCode 13)
+- `ui/theme/AppStyle.kt` (enum + pref keys `app_style`, `app_style_tip_seen`), `FocusStyle.kt` (colours light/dark,
+  extended, island day/night, typography, timerText, shapes, CelebrationKind, success sound, plantedMessage, kidCopy;
+  `FocusStyles.of`, `LocalFocusStyle`, `styledString` for kid wording), `StyleColors.kt` (Arcade/Blossom/Explorer
+  schemes + `StyleIslandPalettes`), Type.kt `styleTypography`/`timerStyle` (`TimerDisplayStyle` = composable getter),
+  Shape.kt per style (Arcade = CutCornerShape).
+- Theme.kt: `FocusIslandTheme(..., style)`; dynamic colour only for Lagoon; colours animate 450 ms.
+- IslandColors gained `kind` (PALM/NEON/SAKURA/TREASURE), `accent`, `accent2`, `ink` (defaults = Lagoon).
+  IslandRenderer: neon palms/server/radio tower/grid; cherry trees/tea house/lantern/petals; treasure chest
+  (opens at 25)/pirate flag/turtle with ink outlines.
+- `designsystem/Celebration.kt` replaces Confetti.kt (CONFETTI, PIXELS + LEVEL UP, PETALS + hearts, STARS + balloons),
+  `playSuccessSound` (res/raw/success_*.ogg, synthesized). Used by Challenges and the Focus tab "planted" moment.
+- Fonts: res/font chakra_petch_*, quicksand_*, fredoka_* (OFL, digits equal-width, renamed inside the files:
+  Focus Island Tech/Soft/Play; licenses/OFL-fonts.txt).
+- StylePickerScreen (route `style`), Settings row; Focus tab tip (InfoBanner gained onDismiss).
+- Widgets: scripts/gen_widget_styles.py generates per-style layouts/colours; `widget/theme/WidgetStyles.kt` maps
+  style → layout and colour ids; WidgetTheme.resolve(context, style). Lagoon widget accent_soft #2A8279 (3:1).
+- Tests: StyleContrastTest (all styles AA), WidgetStyleContrastTest (widget palettes over white/black).
+- Launcher icon per style: scripts/gen_launcher_icons.py generates drawable/ic_launcher_{background,foreground,monochrome}[_style]
+  and mipmap-anydpi-v26/ic_launcher[_round][_style] (scene scaled 0.78 into the visible 72 dp). Manifest: MainActivity has no
+  LAUNCHER filter; activity-aliases .LauncherLagoon (enabled) / Arcade / Blossom / Explorer (disabled). `ui/theme/AppIcon.apply`
+  enables the chosen alias then disables the others, called from MainActivity.onStop. Splash keeps the Lagoon foreground.
+- Known limit: M3 buttons stay pill-shaped in every style (no theme hook); cards, sheets, dialogs, fields follow.
+
 ## Remaining
 Nothing planned. Optional later: AGP/Compose upgrade (autofill contentType, R8 Kotlin 2.2 metadata),
 reminder time picker in Settings (currently fixed 19:00), instrumented UI tests.

@@ -1028,4 +1028,34 @@
     <string name="sound_choose">Choisir un son</string>
     <string name="focus_panel_today">Aujourd\'hui</string>
     <string name="community_archipelago_recenter">Recentrer sur tout le monde</string>
+
+    <!-- Styles (Réglages → Apparence → Style) -->
+    <string name="style_title">Style</string>
+    <string name="style_screen_title">Choisir votre style</string>
+    <string name="style_screen_intro">Change les couleurs, les polices, votre île, les fêtes et l\'icône de l\'app. Vos données et les fonctions restent les mêmes.</string>
+    <string name="style_icon_note">La nouvelle icône apparaît quand vous quittez l\'app. Sur certains téléphones, elle peut aussi quitter l\'écran d\'accueil : remettez-la depuis la liste des apps.</string>
+    <string name="style_lagoon">Lagoon</string>
+    <string name="style_lagoon_hint">Calme et sobre · pour les adultes</string>
+    <string name="style_arcade">Night Arcade</string>
+    <string name="style_arcade_hint">Néon et jeux vidéo · pour les ados</string>
+    <string name="style_blossom">Blossom</string>
+    <string name="style_blossom_hint">Pastel et fleuri · tout en douceur</string>
+    <string name="style_explorer">Little Explorer</string>
+    <string name="style_explorer_hint">Aventure · pour les enfants de 7 à 12 ans</string>
+    <string name="style_selected">Sélectionné</string>
+    <string name="style_use">Utiliser %1$s</string>
+    <string name="style_sample_start">Démarrer</string>
+    <string name="style_tip">Nouveau : donnez un tout nouveau look à Focus Island.</string>
+    <string name="style_tip_action">Choisir un style</string>
+    <string name="action_close">Fermer</string>
+    <string name="celebration_level_up">LEVEL UP !</string>
+    <string name="planted_lagoon">Un palmier a poussé sur votre île 🌴</string>
+    <string name="planted_arcade">+1 XP · un palmier néon s\'allume sur votre atoll</string>
+    <string name="planted_blossom">Un cerisier a fleuri sur votre île 🌸</string>
+    <string name="planted_explorer">Bravo ! Ta tortue a planté un palmier 🐢</string>
+    <string name="kid_challenge_success_title">Tu as réussi ! 🎉</string>
+    <string name="kid_challenge_success_body">Génial ! Tu as fini avec %s d\'avance. Ta tortue est fière de toi !</string>
+    <string name="kid_challenge_success_body_tight">Ouf, juste à temps ! Bravo !</string>
+    <string name="kid_challenge_time_up_title">Le temps est écoulé !</string>
+    <string name="kid_challenge_time_up_body">Pas cette fois, mais tu peux réessayer ! 💪</string>
 </resources>

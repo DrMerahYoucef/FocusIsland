@@ -9,6 +9,8 @@ import android.util.Log
 import android.view.View
 import android.widget.RemoteViews
 import com.example.R
+import com.example.ui.theme.AppStyle
+import com.example.widget.theme.WidgetStyles
 import com.example.data.db.AppDatabase
 import com.example.data.db.entity.ExamEntity
 import com.example.data.stats.FocusTotals
@@ -45,7 +47,7 @@ class ExamCountdownWidgetReceiver : AppWidgetProvider() {
                 // Never leave "Can't load widget": show the empty layout instead.
                 Log.e(TAG, "Widget render failed", t)
                 runCatching {
-                    val fallback = RemoteViews(context.packageName, R.layout.widget_countdown_layout)
+                    val fallback = RemoteViews(context.packageName, WidgetStyles.countdownLayout(AppStyle.read(context)))
                     appWidgetIds.forEach { appWidgetManager.updateAppWidget(it, fallback) }
                 }
             } finally {
@@ -92,7 +94,7 @@ class ExamCountdownWidgetReceiver : AppWidgetProvider() {
 
         /** The widget's content; also used to draw the preview pictures. */
         internal fun buildViews(context: Context, exams: List<ExamEntity>, totals: FocusTotals, compact: Boolean): RemoteViews {
-            val views = RemoteViews(context.packageName, R.layout.widget_countdown_layout)
+            val views = RemoteViews(context.packageName, WidgetStyles.countdownLayout(AppStyle.read(context)))
             val focus = if (totals.focusMinutes >= 600) context.getString(R.string.wgt_hours_short, totals.focusMinutes / 60)
             else context.getString(R.string.wgt_minutes_short, totals.focusMinutes)
             views.setTextViewText(R.id.widget_stat_focus_value, focus)

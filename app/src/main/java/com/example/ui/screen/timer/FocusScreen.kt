@@ -116,7 +116,17 @@ import com.example.ui.theme.Spacing
 import com.example.ui.theme.ThemeMode
 import com.example.ui.theme.phaseColor
 import kotlinx.coroutines.delay
+import android.os.SystemClock
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import com.example.ui.designsystem.Celebration
+import com.example.ui.theme.LocalFocusStyle
 
+/** Session counts arriving this soon after opening come from loading, not from a finished session. */
+private const val PLANTED_GRACE_MS = 2_000L
+private const val PLANTED_SHOWN_MS = 4_600L
 private const val AUTO_FOCUS_MODE_DELAY_MS = 20_000L
 internal const val CONFIRM_END_AFTER_MS = 60_000L
 
@@ -129,6 +139,7 @@ fun TimerScreen(
     onNavigateToBatterySaver: () -> Unit,
     onNavigateToRadio: () -> Unit = {},
     onNavigateToChallenges: () -> Unit = {},
+    onNavigateToStyles: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -186,6 +197,26 @@ fun TimerScreen(
         else -> SoundCard.None
     }
 
+    // A finished session plants a tree on the island: celebrate it here, in the style's way.
+    val composedAt = remember { SystemClock.elapsedRealtime() }
+    var lastSessions by remember { mutableStateOf<Int?>(null) }
+    var planted by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(today.sessions) {
+        val previous = lastSessions
+        lastSessions = today.sessions
+        // Ignore the first values (loading from the database), only a real +1 counts.
+        if (previous != null && today.sessions == previous + 1 && SystemClock.elapsedRealtime() - composedAt > PLANTED_GRACE_MS) {
+            planted = System.currentTimeMillis()
+        }
+    }
+    LaunchedEffect(planted) {
+        if (planted != null) {
+            delay(PLANTED_SHOWN_MS)
+            planted = null
+        }
+    }
+
+    Box(modifier.fillMaxSize()) {
     FocusContent(
         state = state,
         today = today,
@@ -193,7 +224,13 @@ fun TimerScreen(
         sound = sound,
         challenge = challenges.active,
         showDndBanner = settings.blockNotifications && !hasDndAccess,
-        modifier = modifier.pointerInput(Unit) {
+        showStyleTip = !settings.styleTipSeen,
+        onOpenStyles = {
+            settingsViewModel.dismissStyleTip()
+            onNavigateToStyles()
+        },
+        onDismissStyleTip = settingsViewModel::dismissStyleTip,
+        modifier = Modifier.pointerInput(Unit) {
             awaitPointerEventScope {
                 while (true) {
                     awaitPointerEvent()
@@ -232,6 +269,29 @@ fun TimerScreen(
             context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
     )
+    Celebration(trigger = planted)
+    AnimatedVisibility(
+        visible = planted != null,
+        enter = fadeIn() + slideInVertically { -it },
+        exit = fadeOut(),
+        modifier = Modifier.align(Alignment.TopCenter).padding(top = Spacing.sm, start = Spacing.md, end = Spacing.md)
+    ) {
+        Surface(
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.inverseSurface,
+            contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+            shadowElevation = Spacing.xxs,
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+        ) {
+            Text(
+                stringResource(LocalFocusStyle.current.plantedMessage),
+                style = MaterialTheme.typography.titleSmall,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm)
+            )
+        }
+    }
+    }
 
     if (confirmEnd) {
         ConfirmDialog(
@@ -291,6 +351,10 @@ fun FocusContent(
     onOpenChallenges: () -> Unit,
     onAllowDnd: () -> Unit,
     modifier: Modifier = Modifier
+,
+    showStyleTip: Boolean = false,
+    onOpenStyles: () -> Unit = {},
+    onDismissStyleTip: () -> Unit = {}
 ) {
     val view = LocalView.current
     val ringColor = phaseColor(state.phase)
@@ -355,6 +419,13 @@ fun FocusContent(
                 tone = BannerTone.Warning,
                 actionLabel = stringResource(R.string.action_allow),
                 onAction = onAllowDnd
+            )
+        } else if (showStyleTip) {
+            InfoBanner(
+                text = stringResource(R.string.style_tip),
+                actionLabel = stringResource(R.string.style_tip_action),
+                onAction = onOpenStyles,
+                onDismiss = onDismissStyleTip
             )
         }
     }

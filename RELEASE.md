@@ -1,6 +1,6 @@
-# Publier Focus Island 2.2.2
+# Publier Focus Island 2.3.0
 
-Version : `versionName 2.2.2`, `versionCode 12` (dans `app/build.gradle.kts`).
+Version : `versionName 2.3.0`, `versionCode 13` (dans `app/build.gradle.kts`).
 À chaque nouvelle publication sur Google Play, augmentez `versionCode` d'au moins 1.
 
 ## 1. Avant de pousser sur GitHub
@@ -80,4 +80,4 @@ affiché (pas de messagerie).
 ## 5. Après la publication
 
 - Surveillez « Plantages et ANR » dans Play Console les premiers jours (le mapping R8 rend les traces lisibles).
-- Pour la version suivante : `versionCode = 13`, notes de version en français et en anglais.
+- Pour la version suivante : `versionCode = 14`, notes de version en français et en anglais.

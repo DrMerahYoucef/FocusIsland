@@ -64,10 +64,26 @@ Réviser longtemps est plus facile quand on voit ses efforts s'accumuler. Dans F
 - **Amis** et **archipel** sans fin : faites glisser pour explorer, pincez pour zoomer, touchez une île pour voir le profil.
 - Partage facultatif de la radio que vous écoutez.
 
+### 🎨 Styles
+Quatre looks complets au choix dans **Réglages → Apparence → Style**. Chacun change les couleurs, les polices, les formes, l'île, la fête et le son de réussite :
+- **Lagoon** : calme et sobre (le style d'origine) ;
+- **Night Arcade** : néon et jeux vidéo, atoll cyber, « LEVEL UP » ;
+- **Blossom** : pastel et fleuri, île aux cerisiers, pluie de pétales ;
+- **Little Explorer** : pour les enfants, île au trésor, tortue mascotte et textes encourageants.
+
+Le style est purement visuel : fonctions et données sont les mêmes partout.
+
+<p align="center">
+  <img src="docs/screenshots/styles-islands.png" width="720" alt="L'île dans les quatre styles, de jour et de nuit" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/styles-focus.png" width="720" alt="L'écran Focus dans les quatre styles" />
+</p>
+
 ### 📱 Widgets et fond d'écran
 - Widget **Compte à rebours** : prochain examen, deux suivants et vos statistiques de focus.
 - Widget **Année** : une pastille par jour, vos examens entourés et la progression de l'année.
-- Pensés pour les lanceurs Samsung, Xiaomi, Huawei et les autres, en clair et en sombre.
+- Pensés pour les lanceurs Samsung, Xiaomi, Huawei et les autres, en clair et en sombre, aux couleurs de votre style.
 - Votre île en **fond d'écran**, fixe ou animé.
 
 ## Captures d'écran
@@ -118,7 +134,9 @@ Si Play Protect affiche un avertissement, choisissez **Plus de détails → Inst
 <details>
 <summary>Technologies, compilation et publication</summary>
 
-**Technologies** : Kotlin, Jetpack Compose, Material 3, Room, WorkManager, Media3, Firebase (Auth, Firestore), ML Kit (reconnaissance de texte, scanner de documents), Coil.
+**Technologies** : Kotlin, Jetpack Compose, Material 3, Room, WorkManager, Media3, Firebase (Auth, Firestore), ML Kit (reconnaissance de texte, scanner de documents), Coil. Polices des styles : Plus Jakarta Sans, Chakra Petch, Quicksand et Fredoka (SIL Open Font License, voir [`licenses/`](licenses/)).
+
+**Widgets par style** : les mises en page des widgets de chaque style sont générées par `scripts/gen_widget_styles.py` à partir de celles de Lagoon. Modifiez l'original, puis relancez le script.
 
 **Compiler en local** : JDK 17 et Android SDK 35, puis
 

@@ -108,7 +108,7 @@ import com.example.ui.designsystem.StatTile
 import com.example.ui.designsystem.ThemePreviews
 import com.example.ui.theme.FocusIslandTheme
 import com.example.ui.theme.IslandColors
-import com.example.ui.theme.IslandPalette
+import com.example.ui.theme.LocalFocusStyle
 import com.example.ui.components.IslandRenderer
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.material.icons.rounded.CenterFocusStrong
@@ -653,7 +653,7 @@ internal fun ArchipelagoCard(me: UserProfile?, friends: List<UserProfile>, onFri
     val unit = density.density
     val labelSize = with(density) { 12.sp.toPx() }
     val description = pluralStringResource(R.plurals.community_archipelago_a11y, friends.size, friends.size)
-    val colors = IslandPalette.Night
+    val colors = LocalFocusStyle.current.islandNight
     val spots = remember(friends.size) { archipelagoLayout(friends.size) }
     // null = "show everyone" (computed from the card size); set once the user moves or zooms.
     var zoom by remember { mutableStateOf<Float?>(null) }
@@ -746,7 +746,7 @@ internal fun ArchipelagoCard(me: UserProfile?, friends: List<UserProfile>, onFri
 /** Small island in a friend's sheet. */
 @Composable
 private fun IslandThumb(sessions: Int) {
-    val colors = IslandPalette.Night
+    val colors = LocalFocusStyle.current.islandNight
     Canvas(Modifier.size(Spacing.islandThumb).clip(MaterialTheme.shapes.small)) {
         with(IslandRenderer) {
             drawSkyAndSea(size.height * .45f, Offset(size.width * .8f, size.height * .18f), size.width * .05f, colors)

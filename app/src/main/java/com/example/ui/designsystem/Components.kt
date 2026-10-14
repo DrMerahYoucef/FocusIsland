@@ -55,6 +55,10 @@ import com.example.ui.theme.FocusIslandTheme
 import com.example.ui.theme.ThemeMode
 import com.example.ui.theme.Spacing
 import com.example.ui.theme.TimerDisplayStyle
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.res.stringResource
+import com.example.R
 
 /** Light, dark and 150 % font previews for every design-system component and screen. */
 @Preview(name = "Light", showBackground = true)
@@ -146,7 +150,8 @@ fun InfoBanner(
     modifier: Modifier = Modifier,
     tone: BannerTone = BannerTone.Info,
     actionLabel: String? = null,
-    onAction: (() -> Unit)? = null
+    onAction: (() -> Unit)? = null,
+    onDismiss: (() -> Unit)? = null
 ) {
     val (container, content, icon) = when (tone) {
         BannerTone.Info -> Triple(MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer, Icons.Rounded.Info)
@@ -163,6 +168,9 @@ fun InfoBanner(
             Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(vertical = Spacing.xs))
             if (actionLabel != null && onAction != null) {
                 TextButton(onClick = onAction) { Text(actionLabel, color = content) }
+            }
+            if (onDismiss != null) {
+                IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.action_close)) }
             }
         }
     }

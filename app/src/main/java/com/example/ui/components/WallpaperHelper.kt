@@ -10,12 +10,13 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import com.example.R
 import com.example.ui.components.IslandRenderer.drawLagoonScene
-import com.example.ui.theme.IslandPalette
+import com.example.ui.theme.AppStyle
+import com.example.ui.theme.FocusStyles
 import com.example.ui.theme.WallpaperTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** Draws your island as the phone wallpaper: day or night, one palm per completed session. */
+/** Draws your island as the phone wallpaper: day or night, in your style, one tree per completed session. */
 object WallpaperHelper {
 
     private const val PREFS = "focusflow_prefs"
@@ -29,7 +30,8 @@ object WallpaperHelper {
     /** Draws the scene straight onto an Android [canvas] (live wallpaper, bitmaps). */
     fun drawScene(context: Context, canvas: android.graphics.Canvas, width: Int, height: Int, theme: WallpaperTheme, sessions: Int) {
         CanvasDrawScope().draw(Density(context), LayoutDirection.Ltr, Canvas(canvas), Size(width.toFloat(), height.toFloat())) {
-            drawLagoonScene(sessions, if (theme == WallpaperTheme.DARK) IslandPalette.Night else IslandPalette.Day)
+            // The island of the style chosen in the app (read each time, so the live wallpaper follows).
+            drawLagoonScene(sessions, FocusStyles.of(AppStyle.read(context)).island(theme == WallpaperTheme.DARK))
         }
     }
 

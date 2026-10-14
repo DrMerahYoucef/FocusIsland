@@ -92,7 +92,10 @@ import com.example.data.challenge.Challenge
 import com.example.data.challenge.ChallengeResult
 import com.example.data.challenge.ChallengeState
 import com.example.ui.designsystem.ConfirmDialog
-import com.example.ui.designsystem.Confetti
+import com.example.ui.designsystem.Celebration
+import com.example.ui.designsystem.playSuccessSound
+import com.example.ui.theme.LocalFocusStyle
+import com.example.ui.theme.styledString
 import com.example.ui.designsystem.EmptyState
 import com.example.ui.designsystem.PhaseRing
 import com.example.ui.designsystem.RingClock
@@ -135,6 +138,8 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
     var confirmGiveUp by rememberSaveable { mutableStateOf(false) }
     var confirmClear by rememberSaveable { mutableStateOf(false) }
     val tones = rememberTones()
+    val context = LocalContext.current
+    val focusStyle = LocalFocusStyle.current
 
     val now by produceState(System.currentTimeMillis(), state.active?.id) {
         while (state.active != null) {
@@ -155,13 +160,13 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
             onNew = { showNew = true },
             onGoalReached = {
                 celebrated = viewModel.goalReached()
-                tones.success()
+                playSuccessSound(context, focusStyle.successSound)
             },
             onGiveUp = { confirmGiveUp = true },
             onDismissCelebration = { celebrated = null },
             onClearHistory = { confirmClear = true }
         )
-        Confetti(trigger = celebrated?.id)
+        Celebration(trigger = celebrated?.id)
         pending?.let { p ->
             StartCountdown(
                 tones = tones,
@@ -336,15 +341,15 @@ private fun ResultCard(challenge: Challenge, success: Boolean, onDismiss: (() ->
                 modifier = Modifier.size(Spacing.iconLg)
             )
             Text(
-                stringResource(if (success) R.string.challenge_success_title else R.string.challenge_time_up_title),
+                styledString(if (success) R.string.challenge_success_title else R.string.challenge_time_up_title),
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.semantics { heading() }
             )
             Text(challenge.goal, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
             Text(
-                if (success && spare < 1) stringResource(R.string.challenge_success_body_tight)
-                else if (success) stringResource(R.string.challenge_success_body, durationText(spare))
-                else stringResource(R.string.challenge_time_up_body),
+                if (success && spare < 1) styledString(R.string.challenge_success_body_tight)
+                else if (success) styledString(R.string.challenge_success_body, durationText(spare))
+                else styledString(R.string.challenge_time_up_body),
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center
             )
@@ -560,7 +565,6 @@ private fun StartCountdown(tones: Tones, onFinished: () -> Unit, onCancel: () ->
 private class Tones(private val generator: ToneGenerator?) {
     fun tick() { generator?.startTone(ToneGenerator.TONE_PROP_BEEP, 150) }
     fun go() { generator?.startTone(ToneGenerator.TONE_PROP_ACK, 400) }
-    fun success() { generator?.startTone(ToneGenerator.TONE_CDMA_CONFIRM, 600) }
     fun release() { generator?.release() }
 }
 

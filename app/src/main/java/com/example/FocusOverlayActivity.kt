@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import com.example.service.AppLaunchMonitor
 import com.example.ui.designsystem.ThemePreviews
+import com.example.ui.theme.AppStyle
 import com.example.ui.theme.FocusIslandTheme
 import com.example.ui.theme.Spacing
 import com.example.ui.theme.ThemeMode
@@ -65,9 +66,10 @@ class FocusOverlayActivity : ComponentActivity() {
         val prefs = getSharedPreferences("focusflow_prefs", MODE_PRIVATE)
         val themeMode = ThemeMode.from(prefs.getString("theme_mode", null))
         val dynamicColor = prefs.getBoolean("dynamic_color", false)
+        val style = AppStyle.from(prefs.getString(AppStyle.PREF_KEY, null))
 
         setContent {
-            FocusIslandTheme(themeMode = themeMode, dynamicColor = dynamicColor) {
+            FocusIslandTheme(themeMode = themeMode, dynamicColor = dynamicColor, style = style) {
                 val appName = remember(blockedPackage) { appLabel(blockedPackage) }
                 BackHandler(onBack = ::backToFocus)
                 FocusOverlayScreen(

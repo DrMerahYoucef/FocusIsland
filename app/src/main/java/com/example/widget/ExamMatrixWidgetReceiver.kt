@@ -13,6 +13,8 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.RemoteViews
 import com.example.R
+import com.example.ui.theme.AppStyle
+import com.example.widget.theme.WidgetStyles
 import com.example.data.db.AppDatabase
 import com.example.data.db.entity.ExamEntity
 import com.example.widget.theme.WidgetTheme
@@ -43,7 +45,7 @@ class ExamMatrixWidgetReceiver : AppWidgetProvider() {
             } catch (t: Throwable) {
                 Log.e(TAG, "Widget render failed", t)
                 runCatching {
-                    val fallback = RemoteViews(context.packageName, R.layout.widget_exam_matrix_layout)
+                    val fallback = RemoteViews(context.packageName, WidgetStyles.matrixLayout(AppStyle.read(context)))
                     appWidgetIds.forEach { appWidgetManager.updateAppWidget(it, fallback) }
                 }
             } finally {
@@ -79,7 +81,7 @@ class ExamMatrixWidgetReceiver : AppWidgetProvider() {
 
         for (widgetId in appWidgetIds) {
             val (widthPx, heightPx) = pictureSize(context, appWidgetManager.getAppWidgetOptions(widgetId))
-            val views = RemoteViews(context.packageName, R.layout.widget_exam_matrix_layout)
+            val views = RemoteViews(context.packageName, WidgetStyles.matrixLayout(AppStyle.read(context)))
             views.setImageViewBitmap(R.id.widget_matrix_image, generateMatrixBitmap(context, widthPx, heightPx, today, upcomingExams))
             views.setOnClickPendingIntent(android.R.id.background, pendingIntent)
             views.setContentDescription(android.R.id.background, a11yText)

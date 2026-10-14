@@ -18,6 +18,8 @@ import com.example.ui.navigation.AppNavGraph
 import com.example.ui.navigation.NavRequest
 import com.example.ui.navigation.TopLevel
 import com.example.ui.screen.settings.SettingsViewModel
+import com.example.ui.theme.AppIcon
+import com.example.ui.theme.AppStyle
 import com.example.ui.theme.FocusIslandTheme
 import com.example.ui.theme.ThemeMode
 import kotlinx.coroutines.launch
@@ -49,11 +51,18 @@ class MainActivity : ComponentActivity() {
             val settings by settingsViewModel.state.collectAsState()
             FocusIslandTheme(
                 themeMode = ThemeMode.from(settings.themeMode),
-                dynamicColor = settings.dynamicColor
+                dynamicColor = settings.dynamicColor,
+                style = settings.appStyle
             ) {
                 AppNavGraph(settingsViewModel = settingsViewModel, navRequest = navRequest.value)
             }
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // The launcher icon follows the style; switched once the app is out of sight.
+        if (!isChangingConfigurations) AppIcon.apply(this, AppStyle.read(this))
     }
 
     override fun onNewIntent(intent: Intent) {

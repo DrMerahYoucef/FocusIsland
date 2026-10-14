@@ -1042,4 +1042,34 @@
     <string name="sound_choose">Choose a sound</string>
     <string name="focus_panel_today">Today</string>
     <string name="community_archipelago_recenter">Recenter on everyone</string>
+
+    <!-- Styles (Settings → Appearance → Style) -->
+    <string name="style_title">Style</string>
+    <string name="style_screen_title">Choose your style</string>
+    <string name="style_screen_intro">Changes the colours, fonts, your island, the celebrations and the app icon. Your data and features stay the same.</string>
+    <string name="style_icon_note">The new icon appears once you leave the app. On some phones it may also leave the home screen: add it back from the app list.</string>
+    <string name="style_lagoon">Lagoon</string>
+    <string name="style_lagoon_hint">Calm and sober · for adults</string>
+    <string name="style_arcade">Night Arcade</string>
+    <string name="style_arcade_hint">Neon and video games · for teens</string>
+    <string name="style_blossom">Blossom</string>
+    <string name="style_blossom_hint">Pastel and flowery · soft and gentle</string>
+    <string name="style_explorer">Little Explorer</string>
+    <string name="style_explorer_hint">Adventure · for kids aged 7 to 12</string>
+    <string name="style_selected">Selected</string>
+    <string name="style_use">Use %1$s</string>
+    <string name="style_sample_start">Start</string>
+    <string name="style_tip">New: give Focus Island a whole new look.</string>
+    <string name="style_tip_action">Choose a style</string>
+    <string name="action_close">Close</string>
+    <string name="celebration_level_up">LEVEL UP!</string>
+    <string name="planted_lagoon">A new palm grows on your island 🌴</string>
+    <string name="planted_arcade">+1 XP · a neon palm lights up on your atoll</string>
+    <string name="planted_blossom">A cherry tree blossomed on your isle 🌸</string>
+    <string name="planted_explorer">Great job! Your turtle planted a palm 🐢</string>
+    <string name="kid_challenge_success_title">You did it! 🎉</string>
+    <string name="kid_challenge_success_body">Super! You finished with %s to spare. Your turtle is proud of you!</string>
+    <string name="kid_challenge_success_body_tight">Phew, just in time! Well done!</string>
+    <string name="kid_challenge_time_up_title">Time\'s up!</string>
+    <string name="kid_challenge_time_up_body">Not this time, but you can try again! 💪</string>
 </resources>

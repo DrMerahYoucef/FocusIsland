@@ -153,8 +153,19 @@ data class IslandColors(
     val lamp: Color,
     val lampGlow: Color,
     val label: Color,
-    val labelShadow: Color
+    val labelShadow: Color,
+    /** Which decorations the island gets (palms and lighthouse, neon, cherry trees, treasure). */
+    val kind: IslandKind = IslandKind.PALM,
+    /** Style details: neon grid and rims, petals, turtle shell. Unused by the palm island. */
+    val accent: Color = Color.Transparent,
+    /** Second detail colour: signal waves, petal highlights, treasure gold. */
+    val accent2: Color = Color.Transparent,
+    /** Outline drawn around shapes (the cartoon look of the treasure island); transparent = none. */
+    val ink: Color = Color.Transparent
 )
+
+/** The island's decorations, one per [AppStyle]. */
+enum class IslandKind { PALM, NEON, SAKURA, TREASURE }
 
 /**
  * Focus Island scene. Day: a sunny lagoon in the brand teal and sand. Night: the same lagoon

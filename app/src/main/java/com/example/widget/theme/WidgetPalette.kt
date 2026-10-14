@@ -6,7 +6,7 @@ import android.graphics.Color
 import androidx.annotation.ColorInt
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
-import com.example.R
+import com.example.ui.theme.AppStyle
 import kotlin.math.min
 
 /**
@@ -43,12 +43,13 @@ object WidgetTheme {
         (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
 
-    fun resolve(context: Context): WidgetPalette {
+    fun resolve(context: Context, style: AppStyle = AppStyle.read(context)): WidgetPalette {
         val night = isNight(context)
         val c = { id: Int -> ContextCompat.getColor(context, id) }
+        val ids = WidgetStyles.colors(style)
 
         val opacity = if (night) SURFACE_OPACITY_NIGHT else SURFACE_OPACITY_DAY
-        val surfaceOpaque = c(R.color.wgt_surface_base)
+        val surfaceOpaque = c(ids.surfaceBase)
         val surface = ColorUtils.setAlphaComponent(surfaceOpaque, (opacity * 255f).toInt())
 
         // Worst-case backdrops: the card composited over a pure white and a pure
@@ -63,18 +64,18 @@ object WidgetTheme {
             isNight = night,
             surface = surface,
             hueVeil = ColorUtils.setAlphaComponent(
-                c(R.color.wgt_hue_veil_base), if (night) 71 else 56
+                c(ids.hueVeilBase), if (night) 71 else 56
             ),
-            rim = ColorUtils.setAlphaComponent(c(R.color.wgt_rim_base), if (night) 51 else 140),
-            onSurface = guard(c(R.color.wgt_on_surface), MIN_CONTRAST_BODY),
-            onSurfaceVariant = guard(c(R.color.wgt_on_surface_variant), MIN_CONTRAST_BODY),
-            accent = guard(c(R.color.wgt_accent), MIN_CONTRAST_BODY),
-            accentSoft = guard(c(R.color.wgt_accent_soft), MIN_CONTRAST_LARGE),
-            secondary = guard(c(R.color.wgt_secondary), MIN_CONTRAST_LARGE),
-            critical = guard(c(R.color.wgt_critical), MIN_CONTRAST_LARGE),
-            track = c(R.color.wgt_track),
+            rim = ColorUtils.setAlphaComponent(c(ids.rimBase), if (night) 51 else 140),
+            onSurface = guard(c(ids.onSurface), MIN_CONTRAST_BODY),
+            onSurfaceVariant = guard(c(ids.onSurfaceVariant), MIN_CONTRAST_BODY),
+            accent = guard(c(ids.accent), MIN_CONTRAST_BODY),
+            accentSoft = guard(c(ids.accentSoft), MIN_CONTRAST_LARGE),
+            secondary = guard(c(ids.secondary), MIN_CONTRAST_LARGE),
+            critical = guard(c(ids.critical), MIN_CONTRAST_LARGE),
+            track = c(ids.track),
             divider = ColorUtils.setAlphaComponent(
-                c(R.color.wgt_on_surface), if (night) 38 else 30
+                c(ids.onSurface), if (night) 38 else 30
             )
         )
     }

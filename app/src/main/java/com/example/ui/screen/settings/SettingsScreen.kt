@@ -16,7 +16,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import com.example.ui.theme.IslandPalette
+import com.example.ui.theme.AppStyle
+import com.example.ui.theme.LocalFocusStyle
 import com.example.ui.components.IslandRenderer
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Spacer
@@ -343,6 +344,13 @@ fun SettingsScreen(
 
             // ------------------------------------------------ appearance & privacy
             SettingsGroup(stringResource(R.string.settings_appearance)) {
+                SettingsRow(
+                    Icons.Rounded.AutoAwesome, stringResource(R.string.style_title),
+                    stringResource(state.appStyle.label),
+                    onClick = { navController?.navigate(Routes.STYLE) },
+                    trailing = { Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null) }
+                )
+                SettingsDivider()
                 Column(Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
                         Icon(Icons.Rounded.Contrast, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -359,7 +367,8 @@ fun SettingsScreen(
                         }
                     }
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                // Wallpaper colours replace the style's own colours, so they only make sense with Lagoon.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && state.appStyle == AppStyle.LAGOON) {
                     SettingsDivider()
                     SwitchRow(Icons.Rounded.Palette, stringResource(R.string.settings_dynamic_color), stringResource(R.string.settings_dynamic_color_body), state.dynamicColor, viewModel::updateDynamicColor)
                 }
@@ -595,6 +604,7 @@ private fun openUrl(context: Context, url: String): Boolean =
 /** What "Apply now" sets: your island, with a palm for each completed session. */
 @Composable
 private fun WallpaperPreview(sessions: Int, dark: Boolean) {
+    val island = LocalFocusStyle.current.island(dark)
     Row(
         Modifier.fillMaxWidth().padding(horizontal = Spacing.md, vertical = Spacing.sm),
         verticalAlignment = Alignment.CenterVertically
@@ -605,7 +615,7 @@ private fun WallpaperPreview(sessions: Int, dark: Boolean) {
                 .aspectRatio(9f / 19.5f)
                 .clip(MaterialTheme.shapes.medium)
         ) {
-            with(IslandRenderer) { drawLagoonScene(sessions, if (dark) IslandPalette.Night else IslandPalette.Day) }
+            with(IslandRenderer) { drawLagoonScene(sessions, island) }
         }
         Spacer(Modifier.size(Spacing.md))
         Text(

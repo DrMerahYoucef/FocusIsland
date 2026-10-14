@@ -91,4 +91,9 @@ object Spacing {
     /** Outline of an upcoming cycle dot under the Focus timer. */
     val dotBorder = 1.5.dp
     val brightnessStrip = 40.dp
+
+    // Style picker
+    val stylePreviewHeight = 150.dp
+    val selectedBorder = 2.dp
+    val swatch = 16.dp
 }
