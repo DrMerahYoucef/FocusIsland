@@ -42,7 +42,7 @@ import kotlin.math.floor
 import kotlin.math.sin
 import kotlin.random.Random
 
-private class Piece(val x: Float, val delay: Float, val speed: Float, val sway: Float, val spin: Float, val color: Color, val variant: Boolean)
+private class CelebrationPiece(val x: Float, val delay: Float, val speed: Float, val sway: Float, val spin: Float, val color: Color, val variant: Boolean)
 
 private const val PIECES = 140
 private const val BALLOONS = 9
@@ -80,7 +80,7 @@ fun Celebration(
     val pieces = remember(trigger, kind) {
         val random = Random(trigger.hashCode())
         List(PIECES) {
-            Piece(
+            CelebrationPiece(
                 x = random.nextFloat(),
                 delay = random.nextFloat() * 0.35f,
                 speed = 0.7f + random.nextFloat() * 0.6f,
@@ -127,10 +127,10 @@ fun Celebration(
     }
 }
 
-private fun local(p: Piece, t: Float) = ((t - p.delay) / (1f - p.delay)).coerceIn(0f, 1f)
+private fun local(p: CelebrationPiece, t: Float) = ((t - p.delay) / (1f - p.delay)).coerceIn(0f, 1f)
 private fun fade(local: Float) = if (local > 0.85f) (1f - local) / 0.15f else 1f
 
-private fun DrawScope.drawConfetti(pieces: List<Piece>, t: Float, unit: Float) {
+private fun DrawScope.drawConfetti(pieces: List<CelebrationPiece>, t: Float, unit: Float) {
     val wide = Size(10f * unit, 5f * unit)
     val square = Size(7f * unit, 7f * unit)
     pieces.forEach { p ->
@@ -146,7 +146,7 @@ private fun DrawScope.drawConfetti(pieces: List<Piece>, t: Float, unit: Float) {
 }
 
 /** Night Arcade: square pixels falling on a grid, in steps. */
-private fun DrawScope.drawPixels(pieces: List<Piece>, t: Float, unit: Float) {
+private fun DrawScope.drawPixels(pieces: List<CelebrationPiece>, t: Float, unit: Float) {
     val px = 8f * unit
     pieces.forEach { p ->
         val l = local(p, t)
@@ -159,7 +159,7 @@ private fun DrawScope.drawPixels(pieces: List<Piece>, t: Float, unit: Float) {
 }
 
 /** Blossom: petals drifting and turning slowly, with a few hearts. */
-private fun DrawScope.drawPetals(pieces: List<Piece>, t: Float, unit: Float, heart: Path) {
+private fun DrawScope.drawPetals(pieces: List<CelebrationPiece>, t: Float, unit: Float, heart: Path) {
     val petal = Size(12f * unit, 7f * unit)
     pieces.forEach { p ->
         val l = local(p, t)
@@ -179,7 +179,7 @@ private fun DrawScope.drawPetals(pieces: List<Piece>, t: Float, unit: Float, hea
 }
 
 /** Little Explorer: stars tumbling down. */
-private fun DrawScope.drawStars(pieces: List<Piece>, t: Float, unit: Float, star: Path) {
+private fun DrawScope.drawStars(pieces: List<CelebrationPiece>, t: Float, unit: Float, star: Path) {
     pieces.forEachIndexed { i, p ->
         if (i % 2 == 1) return@forEachIndexed // half as many: stars are bigger
         val l = local(p, t)
@@ -196,7 +196,7 @@ private fun DrawScope.drawStars(pieces: List<Piece>, t: Float, unit: Float, star
 }
 
 /** Little Explorer: balloons floating up from the bottom. */
-private fun DrawScope.drawBalloons(pieces: List<Piece>, t: Float, unit: Float, string: Color) {
+private fun DrawScope.drawBalloons(pieces: List<CelebrationPiece>, t: Float, unit: Float, string: Color) {
     val r = 18f * unit
     for (i in 0 until BALLOONS) {
         val p = pieces[i * 7]
