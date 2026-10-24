@@ -16,8 +16,13 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextOverflow
 import com.example.data.LastSound
 import com.example.data.challenge.Challenge
+import com.example.data.challenge.FriendChallenge
+import com.example.data.challenge.FriendChallengeState
 import com.example.ui.screen.challenge.ChallengeTime
 import com.example.ui.screen.challenge.ChallengeViewModel
+import com.example.ui.screen.challenge.FriendDuelIncomingCard
+import com.example.ui.screen.challenge.FriendDuelLiveCard
+import com.example.ui.screen.challenge.FriendDuelVictoryCelebration
 import com.example.ui.screen.radio.PlaybackStatus
 import com.example.ui.screen.radio.StationArt
 import com.example.ui.designsystem.RingClock
@@ -145,6 +150,7 @@ fun TimerScreen(
     val context = LocalContext.current
     val challengeViewModel: ChallengeViewModel = viewModel()
     val challenges by challengeViewModel.state.collectAsState()
+    val friendState by challengeViewModel.friendState.collectAsState()
     val lastAmbient by viewModel.lastAmbient.collectAsState()
     val lastSoundKind by viewModel.lastSoundKind.collectAsState()
     val state by viewModel.timerState.collectAsState()
@@ -157,6 +163,15 @@ fun TimerScreen(
     val stations by radioViewModel.displayedStations.collectAsState()
     val favouriteIds by radioViewModel.favouriteIds.collectAsState()
     val radioStatus by radioViewModel.status.collectAsState()
+
+    var showAutoResumeBanner by remember { mutableStateOf(false) }
+    LaunchedEffect(state.lastAutoResumedAt) {
+        if (state.lastAutoResumedAt > 0L && System.currentTimeMillis() - state.lastAutoResumedAt < 10_000L) {
+            showAutoResumeBanner = true
+            delay(4_500L)
+            showAutoResumeBanner = false
+        }
+    }
 
     // DND access can be granted in system settings while we're away: re-check on resume.
     var hasDndAccess by remember { mutableStateOf(true) }
@@ -230,6 +245,11 @@ fun TimerScreen(
             onNavigateToStyles()
         },
         onDismissStyleTip = settingsViewModel::dismissStyleTip,
+        friendState = friendState,
+        showAutoResumeBanner = showAutoResumeBanner,
+        onAcceptFriendChallenge = challengeViewModel::acceptFriendChallenge,
+        onDeclineFriendChallenge = challengeViewModel::declineFriendChallenge,
+        onSurrenderFriendChallenge = challengeViewModel::surrenderFriendChallenge,
         modifier = Modifier.pointerInput(Unit) {
             awaitPointerEventScope {
                 while (true) {
@@ -270,6 +290,11 @@ fun TimerScreen(
         }
     )
     Celebration(trigger = planted)
+    FriendDuelVictoryCelebration(
+        win = friendState.uncelebratedWin,
+        myUid = friendState.myUid,
+        onAcknowledge = challengeViewModel::acknowledgeFriendWin
+    )
     AnimatedVisibility(
         visible = planted != null,
         enter = fadeIn() + slideInVertically { -it },
@@ -350,11 +375,15 @@ fun FocusContent(
     onToggleSound: () -> Unit,
     onOpenChallenges: () -> Unit,
     onAllowDnd: () -> Unit,
-    modifier: Modifier = Modifier
-,
+    modifier: Modifier = Modifier,
     showStyleTip: Boolean = false,
     onOpenStyles: () -> Unit = {},
-    onDismissStyleTip: () -> Unit = {}
+    onDismissStyleTip: () -> Unit = {},
+    friendState: FriendChallengeState = FriendChallengeState(),
+    showAutoResumeBanner: Boolean = false,
+    onAcceptFriendChallenge: (FriendChallenge) -> Unit = {},
+    onDeclineFriendChallenge: (FriendChallenge) -> Unit = {},
+    onSurrenderFriendChallenge: (FriendChallenge) -> Unit = {}
 ) {
     val view = LocalView.current
     val ringColor = phaseColor(state.phase)
@@ -409,24 +438,58 @@ fun FocusContent(
             }
         }
     }
+    val friendDuelPanel = @Composable {
+        friendState.incomingPending.firstOrNull()?.let { incoming ->
+            FriendDuelIncomingCard(
+                challenge = incoming,
+                onAccept = onAcceptFriendChallenge,
+                onDecline = onDeclineFriendChallenge,
+                modifier = Modifier.widthIn(max = Spacing.formMaxWidth)
+            )
+        }
+        friendState.activeDuel?.let { activeDuel ->
+            FriendDuelLiveCard(
+                duel = activeDuel,
+                myUid = friendState.myUid,
+                onSurrender = onSurrenderFriendChallenge,
+                onOpenDetails = onOpenChallenges,
+                compact = true,
+                modifier = Modifier.widthIn(max = Spacing.formMaxWidth)
+            )
+        }
+    }
     val extras = @Composable {
-        FocusExtras(today, nextExam, sound, challenge, onOpenSounds, onToggleSound, onOpenChallenges)
+        FocusExtras(today, nextExam, sound, challenge, friendState.activeDuel, onOpenSounds, onToggleSound, onOpenChallenges)
     }
     val banner = @Composable {
-        if (showDndBanner) {
-            InfoBanner(
-                text = stringResource(R.string.focus_dnd_banner),
-                tone = BannerTone.Warning,
-                actionLabel = stringResource(R.string.action_allow),
-                onAction = onAllowDnd
-            )
-        } else if (showStyleTip) {
-            InfoBanner(
-                text = stringResource(R.string.style_tip),
-                actionLabel = stringResource(R.string.style_tip_action),
-                onAction = onOpenStyles,
-                onDismiss = onDismissStyleTip
-            )
+        when {
+            state.isAutoPausedByAppSwitch -> {
+                InfoBanner(
+                    text = stringResource(R.string.focus_auto_paused_banner),
+                    tone = BannerTone.Warning
+                )
+            }
+            showAutoResumeBanner -> {
+                InfoBanner(
+                    text = stringResource(R.string.focus_auto_resumed_banner)
+                )
+            }
+            showDndBanner -> {
+                InfoBanner(
+                    text = stringResource(R.string.focus_dnd_banner),
+                    tone = BannerTone.Warning,
+                    actionLabel = stringResource(R.string.action_allow),
+                    onAction = onAllowDnd
+                )
+            }
+            showStyleTip -> {
+                InfoBanner(
+                    text = stringResource(R.string.style_tip),
+                    actionLabel = stringResource(R.string.style_tip_action),
+                    onAction = onOpenStyles,
+                    onDismiss = onDismissStyleTip
+                )
+            }
         }
     }
 
@@ -441,6 +504,7 @@ fun FocusContent(
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm, Alignment.CenterVertically)
                 ) {
                     banner()
+                    friendDuelPanel()
                     dots()
                     controls()
                     extras()
@@ -453,6 +517,7 @@ fun FocusContent(
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
                 banner()
+                friendDuelPanel()
                 dial(Modifier.weight(1f).fillMaxWidth())
                 dots()
                 controls()
@@ -527,11 +592,13 @@ private fun FocusExtras(
     nextExam: NextExam?,
     sound: SoundCard,
     challenge: Challenge?,
+    activeFriendDuel: FriendChallenge?,
     onOpenSounds: () -> Unit,
     onToggleSound: () -> Unit,
     onOpenChallenges: () -> Unit
 ) {
-    var panel by rememberSaveable { mutableStateOf(if (challenge != null) FocusPanel.CHALLENGE else FocusPanel.SOUND) }
+    val hasAnyChallenge = challenge != null || activeFriendDuel != null
+    var panel by rememberSaveable { mutableStateOf(if (hasAnyChallenge) FocusPanel.CHALLENGE else FocusPanel.SOUND) }
     val labels = listOf(
         FocusPanel.SOUND to R.string.sound_title,
         FocusPanel.CHALLENGE to R.string.challenge_card_title,
@@ -546,7 +613,7 @@ private fun FocusExtras(
                     shape = SegmentedButtonDefaults.itemShape(i, labels.size),
                     icon = {
                         // A running challenge shows a flag even when another panel is open.
-                        if (p == FocusPanel.CHALLENGE && challenge != null && panel != p) {
+                        if (p == FocusPanel.CHALLENGE && hasAnyChallenge && panel != p) {
                             Icon(Icons.Rounded.Flag, contentDescription = null, modifier = Modifier.size(SegmentedButtonDefaults.IconSize))
                         } else {
                             SegmentedButtonDefaults.Icon(active = panel == p)

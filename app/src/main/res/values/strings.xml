@@ -1072,4 +1072,39 @@
     <string name="kid_challenge_success_body_tight">Phew, just in time! Well done!</string>
     <string name="kid_challenge_time_up_title">Time\'s up!</string>
     <string name="kid_challenge_time_up_body">Not this time, but you can try again! 💪</string>
+
+    <!-- Friend Daily Study Duel & Auto-Pause -->
+    <string name="timer_notif_auto_paused">Paused (%1$s left) — return to Focus Island to continue</string>
+    <string name="focus_auto_paused_banner">Timer paused while using another app.</string>
+    <string name="focus_auto_resumed_banner">Welcome back! Pomodoro timer resumed automatically.</string>
+    <string name="friend_duel_title">Daily Friend Duel</string>
+    <string name="friend_duel_subtitle_ends_midnight">Most focus minutes today wins · %1$s left</string>
+    <string name="friend_duel_challenge_button">Challenge %1$s today</string>
+    <string name="friend_duel_challenge_short">Challenge friend</string>
+    <string name="friend_duel_already_active">Already in a duel today</string>
+    <string name="friend_duel_waiting_accept">Waiting for %1$s to accept…</string>
+    <string name="friend_duel_incoming_title">%1$s challenged you today!</string>
+    <string name="friend_duel_incoming_body">Who will study more before midnight? Accepting starts your Pomodoro timer.</string>
+    <string name="friend_duel_accept_start">Accept &amp; Start</string>
+    <string name="friend_duel_decline">Decline</string>
+    <string name="friend_duel_you">You</string>
+    <string name="friend_duel_minutes_fmt">%1$d min</string>
+    <string name="friend_duel_lead_you">You lead by %1$d min</string>
+    <string name="friend_duel_lead_friend">%1$s leads by %2$d min</string>
+    <string name="friend_duel_tied">Tied right now!</string>
+    <string name="friend_duel_surrender">Surrender</string>
+    <string name="friend_duel_surrender_title">Surrender this duel?</string>
+    <string name="friend_duel_surrender_body">%1$s will immediately win the challenge and get the victory celebration.</string>
+    <string name="friend_duel_won_title">Victory! You won the duel!</string>
+    <string name="friend_duel_won_by_surrender_body">%1$s surrendered! You win today\'s study challenge (%2$d min vs %3$d min).</string>
+    <string name="friend_duel_won_by_minutes_body">You studied more than %1$s today (%2$d min vs %3$d min)!</string>
+    <string name="friend_duel_history_header">Friend Duels History</string>
+    <string name="friend_duel_history_score">You %1$d min · %2$s %3$d min</string>
+    <string name="friend_duel_badge_won">Won</string>
+    <string name="friend_duel_badge_lost">Lost</string>
+    <string name="friend_duel_badge_surrendered">Surrendered</string>
+    <string name="friend_duel_badge_tie">Tie</string>
+    <string name="community_msg_challenge_sent">Challenge sent to %1$s!</string>
+    <string name="community_msg_challenge_accepted">Challenge accepted! Pomodoro started.</string>
 </resources>
+

@@ -148,6 +148,8 @@ fun FocusModeScreen(
     val activity = remember(context) { context.findActivity() }
     val state by viewModel.timerState.collectAsState()
     val today by viewModel.today.collectAsState()
+    val friendRepo = remember { FocusFlowApplication.instance.friendChallengeRepository }
+    val friendState by friendRepo.state.collectAsState()
     val radio: RadioViewModel = viewModel()
     val radioPlaying by radio.isPlaying.collectAsState()
     val station by radio.currentStation.collectAsState()
@@ -248,6 +250,15 @@ fun FocusModeScreen(
         state.currentAmbientId != PomodoroTimerService.AMBIENT_NONE -> stringResource(ambientLabel(state.currentAmbientId))
         else -> stringResource(R.string.sound_choose)
     }
+    val duelSummaryLine = friendState.activeDuel?.let { duel ->
+        val friendName = duel.friendName(friendState.myUid).ifBlank { stringResource(R.string.community_unnamed) }
+        stringResource(
+            R.string.friend_duel_history_score,
+            duel.myMinutes(friendState.myUid),
+            friendName,
+            duel.friendMinutes(friendState.myUid)
+        )
+    }
 
     val exitLabel = stringResource(R.string.focus_mode_exit)
     val todayLabel = stringResource(R.string.focus_mode_today)
@@ -303,6 +314,7 @@ fun FocusModeScreen(
                         onSounds = { showSounds = true },
                         clockAlpha = clockAlpha,
                         chromeAlpha = chromeAlpha,
+                        duelSummaryLine = duelSummaryLine,
                         modifier = Modifier.weight(1f)
                     )
                     Text(
@@ -332,6 +344,11 @@ fun FocusModeScreen(
                     )
                 }
                 if (flashAlpha > 0f) Box(Modifier.fillMaxSize().background(FocusModePalette.flash.copy(alpha = flashAlpha)))
+                com.example.ui.screen.challenge.FriendDuelVictoryCelebration(
+                    win = friendState.uncelebratedWin,
+                    myUid = friendState.myUid,
+                    onAcknowledge = friendRepo::acknowledgeCelebration
+                )
             }
 
             if (showSounds) {
@@ -411,7 +428,8 @@ internal fun FocusModeContent(
     onSounds: () -> Unit,
     modifier: Modifier = Modifier,
     clockAlpha: Float = 1f,
-    chromeAlpha: Float = 1f
+    chromeAlpha: Float = 1f,
+    duelSummaryLine: String? = null
 ) {
     val details = @Composable {
         Column(
@@ -424,6 +442,13 @@ internal fun FocusModeContent(
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (duelSummaryLine != null) {
+                Text(
+                    duelSummaryLine,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
             Surface(
                 onClick = onSounds,
                 shape = CircleShape,

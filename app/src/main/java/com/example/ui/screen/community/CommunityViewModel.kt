@@ -5,6 +5,9 @@ import android.content.Context
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.FocusFlowApplication
+import com.example.data.challenge.FriendChallenge
+import com.example.data.challenge.FriendChallengeState
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
@@ -96,6 +99,8 @@ sealed interface CommunityMessage {
     data class RequestSent(val name: String) : CommunityMessage
     data class NowFriends(val name: String) : CommunityMessage
     data class FriendRemoved(val name: String) : CommunityMessage
+    data class ChallengeSent(val name: String) : CommunityMessage
+    data object ChallengeAccepted : CommunityMessage
     data object RequestDeclined : CommunityMessage
     data object RequestCancelled : CommunityMessage
     data object Failed : CommunityMessage
@@ -110,6 +115,7 @@ class CommunityViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val firestore: FirebaseFirestore = Firebase.firestore
     private val prefs = application.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val friendChallengeRepo = FocusFlowApplication.instance.friendChallengeRepository
 
     val currentUid: String = Firebase.auth.currentUser?.uid.orEmpty()
     private val users get() = firestore.collection("users")
@@ -117,6 +123,8 @@ class CommunityViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _messages = Channel<CommunityMessage>(Channel.BUFFERED)
     val messages: Flow<CommunityMessage> = _messages.receiveAsFlow()
+
+    val friendChallengeState: StateFlow<FriendChallengeState> = friendChallengeRepo.state
 
     // ------------------------------------------------------------------ profile & friends
 
@@ -264,6 +272,45 @@ class CommunityViewModel(application: Application) : AndroidViewModel(applicatio
                 .update(users.document(friend.uid), "friends", FieldValue.arrayRemove(currentUid))
                 .commit().await()
         }
+    }
+
+    fun challengeFriend(opponentUid: String, opponentName: String) {
+        if (opponentUid.isEmpty() || opponentUid == currentUid) return
+        viewModelScope.launch {
+            val myName = myProfile.value?.username?.takeIf { it.isNotBlank() }
+                ?: runCatching { users.document(currentUid).get().await().getString("username").orEmpty() }.getOrDefault("")
+            val result = friendChallengeRepo.sendChallenge(
+                challengerName = myName.ifBlank { "You" },
+                opponentUid = opponentUid,
+                opponentName = opponentName
+            )
+            if (result.isSuccess) {
+                _messages.send(CommunityMessage.ChallengeSent(opponentName))
+            } else {
+                _messages.send(CommunityMessage.Failed)
+            }
+        }
+    }
+
+    fun acceptFriendChallenge(challenge: FriendChallenge) {
+        viewModelScope.launch {
+            val res = friendChallengeRepo.acceptChallenge(challenge)
+            if (res.isSuccess) {
+                _messages.send(CommunityMessage.ChallengeAccepted)
+            } else {
+                _messages.send(CommunityMessage.Failed)
+            }
+        }
+    }
+
+    fun declineFriendChallenge(challenge: FriendChallenge) {
+        viewModelScope.launch {
+            friendChallengeRepo.declineChallenge(challenge)
+        }
+    }
+
+    fun acknowledgeFriendWin(challengeId: String) {
+        friendChallengeRepo.acknowledgeCelebration(challengeId)
     }
 
     // ------------------------------------------------------------------ listening status (opt-in)

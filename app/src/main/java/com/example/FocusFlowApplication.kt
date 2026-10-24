@@ -1,13 +1,20 @@
 package com.example
 
+import android.app.Activity
 import android.app.Application
+import android.content.Intent
+import android.os.Bundle
+import android.os.PowerManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.example.data.auth.AuthRepository
+import com.example.data.challenge.FriendChallengeRepository
 import com.example.data.db.AppDatabase
 import com.example.data.repository.BlockedAppRepository
 import com.example.data.repository.ExamRepository
 import com.example.data.repository.RevisionRepository
 import com.example.data.repository.SessionRepository
+import com.example.service.PomodoroTimerService
 import com.example.service.RevisionReminderWorker
 import com.example.service.RevisionSyncWorker
 import com.example.widget.WidgetRefreshScheduler
@@ -33,6 +40,13 @@ class FocusFlowApplication : Application() {
     val blockedAppRepository by lazy { BlockedAppRepository(database.blockedAppDao()) }
     val revisionRepository by lazy { RevisionRepository(database) }
     val challengeStore by lazy { com.example.data.challenge.ChallengeStore(this) }
+    val friendChallengeRepository by lazy {
+        FriendChallengeRepository(
+            context = this,
+            sessionDao = database.sessionDao(),
+            appScope = applicationScope
+        )
+    }
     val geminiModels by lazy { com.example.data.repository.GeminiModels(getSharedPreferences("focusflow_prefs", MODE_PRIVATE)) }
 
     /** Account + guest mode. After a real sign-in, local sessions and cards are pushed to the account. */
@@ -42,6 +56,8 @@ class FocusFlowApplication : Application() {
             RevisionSyncWorker.scheduleSyncWork(this)
         }
     }
+
+    private var startedActivitiesCount = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -55,6 +71,11 @@ class FocusFlowApplication : Application() {
             Log.e(TAG, "Firebase initialization failed", e)
         }
 
+        // Eagerly initialize friendChallengeRepository so active challenge listeners and auto-start work app-wide
+        runCatching { friendChallengeRepository }
+
+        registerAppSwitchAutoPause()
+
         try {
             RevisionReminderWorker.createNotificationChannel(this)
             RevisionSyncWorker.schedulePeriodicSyncWork(this)
@@ -64,6 +85,50 @@ class FocusFlowApplication : Application() {
         }
     }
 
+    /**
+     * Automatically pauses the Pomodoro timer when the user leaves Focus Island for another app
+     * (while the device screen is interactive), and automatically resumes it when returning.
+     */
+    private fun registerAppSwitchAutoPause() {
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+            override fun onActivityResumed(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+
+            override fun onActivityStarted(activity: Activity) {
+                val wasBackground = startedActivitiesCount == 0
+                startedActivitiesCount++
+                if (wasBackground && PomodoroTimerService.state.value.isAutoPausedByAppSwitch) {
+                    runCatching {
+                        val intent = Intent(this@FocusFlowApplication, PomodoroTimerService::class.java)
+                            .setAction(PomodoroTimerService.ACTION_AUTO_RESUME)
+                        ContextCompat.startForegroundService(this@FocusFlowApplication, intent)
+                    }.onFailure {
+                        Log.w(TAG, "Failed to auto-resume Pomodoro timer", it)
+                    }
+                }
+            }
+
+            override fun onActivityStopped(activity: Activity) {
+                startedActivitiesCount = (startedActivitiesCount - 1).coerceAtLeast(0)
+                if (startedActivitiesCount == 0 && !activity.isChangingConfigurations) {
+                    val isScreenOn = getSystemService(PowerManager::class.java)?.isInteractive != false
+                    if (isScreenOn && PomodoroTimerService.state.value.isRunning) {
+                        runCatching {
+                            val intent = Intent(this@FocusFlowApplication, PomodoroTimerService::class.java)
+                                .setAction(PomodoroTimerService.ACTION_AUTO_PAUSE)
+                            startService(intent)
+                        }.onFailure {
+                            Log.w(TAG, "Failed to auto-pause Pomodoro timer", it)
+                        }
+                    }
+                }
+            }
+        })
+    }
+
     companion object {
         private const val TAG = "FocusFlowApplication"
 
@@ -71,3 +136,4 @@ class FocusFlowApplication : Application() {
             private set
     }
 }
+

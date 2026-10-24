@@ -81,9 +81,20 @@ class PomodoroTimerService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         settings = TimerSettings.load(this)
         when (intent?.action) {
-            ACTION_START, ACTION_RESUME -> start()
-            ACTION_PAUSE -> pause()
-            ACTION_SKIP -> skip()
+            ACTION_START, ACTION_RESUME -> {
+                _state.update { it.copy(isAutoPausedByAppSwitch = false) }
+                start()
+            }
+            ACTION_PAUSE -> {
+                _state.update { it.copy(isAutoPausedByAppSwitch = false) }
+                pause()
+            }
+            ACTION_AUTO_PAUSE -> autoPauseForAppSwitch()
+            ACTION_AUTO_RESUME -> autoResumeFromAppSwitch()
+            ACTION_SKIP -> {
+                _state.update { it.copy(isAutoPausedByAppSwitch = false) }
+                skip()
+            }
             ACTION_STOP -> {
                 stopTimer()
                 stopSelf()
@@ -163,6 +174,25 @@ class PomodoroTimerService : Service() {
         advancePhase(completedFocus = false)
     }
 
+    private fun autoPauseForAppSwitch() {
+        if (!_state.value.isRunning) return
+        pauseInternal()
+        _state.update { it.copy(isAutoPausedByAppSwitch = true) }
+        persist(this)
+        updateNotification()
+    }
+
+    private fun autoResumeFromAppSwitch() {
+        if (_state.value.isRunning || !_state.value.isAutoPausedByAppSwitch) return
+        _state.update {
+            it.copy(
+                isAutoPausedByAppSwitch = false,
+                lastAutoResumedAt = System.currentTimeMillis()
+            )
+        }
+        start()
+    }
+
     private fun stopTimer() {
         tickerJob?.cancel()
         releaseWakeLock()
@@ -173,7 +203,8 @@ class PomodoroTimerService : Service() {
                 phase = Phase.FOCUS,
                 isRunning = false,
                 remainingMs = settings.focusMs,
-                totalFocusSecs = 0L
+                totalFocusSecs = 0L,
+                isAutoPausedByAppSwitch = false
             )
         }
         persist(this)
@@ -344,8 +375,13 @@ class PomodoroTimerService : Service() {
                 .setContentText(resources.getQuantityString(R.plurals.timer_notif_sessions, s.sessionCount, s.sessionCount))
                 .addAction(0, getString(R.string.timer_action_pause), servicePendingIntent(ACTION_PAUSE, 1))
         } else {
+            val pausedText = if (s.isAutoPausedByAppSwitch) {
+                getString(R.string.timer_notif_auto_paused, formatClock(s.remainingMs))
+            } else {
+                getString(R.string.timer_notif_paused, formatClock(s.remainingMs))
+            }
             builder.setShowWhen(false)
-                .setContentText(getString(R.string.timer_notif_paused, formatClock(s.remainingMs)))
+                .setContentText(pausedText)
                 .addAction(0, getString(R.string.timer_action_resume), servicePendingIntent(ACTION_RESUME, 2))
         }
         return builder
@@ -569,6 +605,8 @@ class PomodoroTimerService : Service() {
         const val ACTION_START = "ACTION_START"
         const val ACTION_PAUSE = "ACTION_PAUSE"
         const val ACTION_RESUME = "ACTION_RESUME"
+        const val ACTION_AUTO_PAUSE = "ACTION_AUTO_PAUSE"
+        const val ACTION_AUTO_RESUME = "ACTION_AUTO_RESUME"
         const val ACTION_SKIP = "ACTION_SKIP"
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_SET_AMBIENT = "ACTION_SET_AMBIENT"
@@ -652,11 +690,12 @@ class PomodoroTimerService : Service() {
             val liveRemaining = savedEndsAt - SystemClock.elapsedRealtime()
             // After a reboot the monotonic clock restarts, so the saved end time is meaningless: resume paused.
             val rebooted = liveRemaining > base.phaseDurationMs
+            val autoPaused = p.getBoolean("auto_paused", false)
             _state.value = if (wasRunning && !rebooted) {
                 endsAtElapsed = savedEndsAt
-                base.copy(isRunning = true, remainingMs = liveRemaining.coerceAtLeast(0L))
+                base.copy(isRunning = true, remainingMs = liveRemaining.coerceAtLeast(0L), isAutoPausedByAppSwitch = false)
             } else {
-                base.copy(isRunning = false, remainingMs = savedRemaining)
+                base.copy(isRunning = false, remainingMs = savedRemaining, isAutoPausedByAppSwitch = autoPaused)
             }
         }
 
@@ -666,6 +705,7 @@ class PomodoroTimerService : Service() {
                 putString("phase", s.phase.name)
                 putInt("session_count", s.sessionCount)
                 putBoolean("running", s.isRunning)
+                putBoolean("auto_paused", s.isAutoPausedByAppSwitch)
                 putLong("remaining_ms", s.remainingMs)
                 putLong("ends_at_elapsed", endsAtElapsed)
                 putLong("focus_ms", s.focusDurationMs)

@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.PersonRemove
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SportsScore
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.TaskAlt
 import androidx.compose.material3.Badge
@@ -98,9 +99,14 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.data.challenge.FriendChallenge
+import com.example.data.challenge.FriendChallengeState
 import com.example.ui.designsystem.ConfirmDialog
+import com.example.ui.screen.challenge.FriendDuelIncomingCard
+import com.example.ui.screen.challenge.FriendDuelVictoryCelebration
 import com.example.ui.designsystem.EmptyState
 import com.example.ui.designsystem.LoadingState
 import com.example.ui.designsystem.SectionHeader
@@ -165,6 +171,7 @@ fun CommunityScreen(
     val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
     val searching by viewModel.searching.collectAsStateWithLifecycle()
     val shareListening by viewModel.shareListening.collectAsStateWithLifecycle()
+    val friendChallengeState by viewModel.friendChallengeState.collectAsStateWithLifecycle()
 
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
@@ -174,6 +181,8 @@ fun CommunityScreen(
                 is CommunityMessage.RequestSent -> context.getString(R.string.community_msg_request_sent, message.name)
                 is CommunityMessage.NowFriends -> context.getString(R.string.community_msg_now_friends, message.name)
                 is CommunityMessage.FriendRemoved -> context.getString(R.string.community_msg_removed, message.name)
+                is CommunityMessage.ChallengeSent -> context.getString(R.string.community_msg_challenge_sent, message.name)
+                CommunityMessage.ChallengeAccepted -> context.getString(R.string.community_msg_challenge_accepted)
                 CommunityMessage.RequestDeclined -> context.getString(R.string.community_msg_declined)
                 CommunityMessage.RequestCancelled -> context.getString(R.string.community_msg_cancelled)
                 CommunityMessage.Failed -> context.getString(R.string.community_msg_failed)
@@ -218,7 +227,15 @@ fun CommunityScreen(
                     onSort = viewModel::setSort,
                     myProfile = myProfile,
                     relations = relations,
-                    actions = actions
+                    actions = actions,
+                    incomingDuels = friendChallengeState.incomingPending,
+                    onAcceptDuel = viewModel::acceptFriendChallenge,
+                    onDeclineDuel = viewModel::declineFriendChallenge,
+                    onEntryClick = { entry ->
+                        if (entry.uid != viewModel.currentUid) {
+                            selectedFriendId = entry.uid
+                        }
+                    }
                 )
                 else -> FriendsPane(
                     me = myProfile,
@@ -228,11 +245,19 @@ fun CommunityScreen(
                     shareListening = shareListening,
                     onShareListening = viewModel::setShareListening,
                     onAddFriends = { showSearch = true },
-                    onFriendClick = { selectedFriendId = it.uid }
+                    onFriendClick = { selectedFriendId = it.uid },
+                    incomingDuels = friendChallengeState.incomingPending,
+                    onAcceptDuel = viewModel::acceptFriendChallenge,
+                    onDeclineDuel = viewModel::declineFriendChallenge
                 )
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+        FriendDuelVictoryCelebration(
+            win = friendChallengeState.uncelebratedWin,
+            myUid = friendChallengeState.myUid.ifEmpty { viewModel.currentUid },
+            onAcknowledge = viewModel::acknowledgeFriendWin
+        )
     }
 
     if (showSearch) {
@@ -249,9 +274,34 @@ fun CommunityScreen(
         )
     }
 
-    friends.firstOrNull { it.uid == selectedFriendId }?.let { friend ->
+    val selectedProfile = remember(selectedFriendId, friends, leaderboard.entries) {
+        val id = selectedFriendId ?: return@remember null
+        friends.firstOrNull { it.uid == id }
+            ?: leaderboard.entries.firstOrNull { it.uid == id }?.let {
+                UserProfile(
+                    uid = it.uid,
+                    username = it.username,
+                    treeCount = it.treeCount,
+                    totalMinutes = it.totalMinutes,
+                    points = it.points,
+                    currentStreak = it.currentStreak
+                )
+            }
+    }
+
+    selectedProfile?.let { friend ->
+        val isFriend = relations.of(friend.uid) == Relation.FRIEND
+        val hasActiveDuel = friendChallengeState.activeDuel != null
+        val isPendingChallenge = friendChallengeState.outgoingPending.any { it.opponentUid == friend.uid }
         FriendSheet(
             friend = friend,
+            isFriend = isFriend,
+            hasActiveDuel = hasActiveDuel,
+            isPendingChallenge = isPendingChallenge,
+            onChallenge = {
+                viewModel.challengeFriend(friend.uid, friend.username)
+                selectedFriendId = null
+            },
             onRemove = {
                 actions.onRemove(friend)
                 selectedFriendId = null
@@ -270,7 +320,11 @@ private fun LeaderboardPane(
     onSort: (LeaderboardSort) -> Unit,
     myProfile: UserProfile?,
     relations: Relations,
-    actions: CommunityActions
+    actions: CommunityActions,
+    incomingDuels: List<FriendChallenge> = emptyList(),
+    onAcceptDuel: (FriendChallenge) -> Unit = {},
+    onDeclineDuel: (FriendChallenge) -> Unit = {},
+    onEntryClick: (LeaderboardEntry) -> Unit = {}
 ) {
     var filter by rememberSaveable { mutableStateOf("") }
     val visible = remember(state.entries, filter) {
@@ -282,6 +336,16 @@ private fun LeaderboardPane(
         contentPadding = PaddingValues(bottom = Spacing.xxl),
         modifier = Modifier.fillMaxSize()
     ) {
+        if (incomingDuels.isNotEmpty()) {
+            items(incomingDuels, key = { "lb_duel_" + it.id }) { incoming ->
+                FriendDuelIncomingCard(
+                    challenge = incoming,
+                    onAccept = onAcceptDuel,
+                    onDecline = onDeclineDuel,
+                    modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.xs)
+                )
+            }
+        }
         item {
             Column(
                 Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
@@ -344,7 +408,8 @@ private fun LeaderboardPane(
                     sort = sort,
                     relation = relations.of(entry.uid),
                     request = relations.received.firstOrNull { it.fromUid == entry.uid } ?: relations.sent.firstOrNull { it.toUid == entry.uid },
-                    actions = actions
+                    actions = actions,
+                    onClick = { onEntryClick(entry) }
                 )
             }
         }
@@ -388,12 +453,20 @@ private fun LeaderboardRow(
     sort: LeaderboardSort,
     relation: Relation,
     request: FriendRequest?,
-    actions: CommunityActions
+    actions: CommunityActions,
+    onClick: () -> Unit = {}
 ) {
     val isMe = relation == Relation.ME
     val name = entry.username.ifBlank { stringResource(R.string.community_unnamed) }
     val streak = pluralStringResource(R.plurals.community_streak_days, entry.currentStreak, entry.currentStreak)
     ListItem(
+        modifier = if (!isMe) {
+            Modifier
+                .clickable(onClickLabel = stringResource(R.string.friend_duel_challenge_short), onClick = onClick)
+                .testTag("leaderboard_row_${entry.uid}")
+        } else {
+            Modifier.testTag("leaderboard_row_me")
+        },
         colors = ListItemDefaults.colors(
             containerColor = if (isMe) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
         ),
@@ -491,13 +564,25 @@ private fun FriendsPane(
     shareListening: Boolean,
     onShareListening: (Boolean) -> Unit,
     onAddFriends: () -> Unit,
-    onFriendClick: (UserProfile) -> Unit
+    onFriendClick: (UserProfile) -> Unit,
+    incomingDuels: List<FriendChallenge> = emptyList(),
+    onAcceptDuel: (FriendChallenge) -> Unit = {},
+    onDeclineDuel: (FriendChallenge) -> Unit = {}
 ) {
     LazyColumn(
         contentPadding = PaddingValues(start = Spacing.md, end = Spacing.md, top = Spacing.sm, bottom = Spacing.xxl),
         verticalArrangement = Arrangement.spacedBy(Spacing.xs),
         modifier = Modifier.fillMaxSize()
     ) {
+        if (incomingDuels.isNotEmpty()) {
+            items(incomingDuels, key = { "fr_duel_" + it.id }) { incoming ->
+                FriendDuelIncomingCard(
+                    challenge = incoming,
+                    onAccept = onAcceptDuel,
+                    onDecline = onDeclineDuel
+                )
+            }
+        }
         item {
             FilledTonalButton(onClick = onAddFriends, modifier = Modifier.fillMaxWidth().heightIn(min = Spacing.minTouchTarget)) {
                 Icon(Icons.Rounded.PersonAdd, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
@@ -841,7 +926,15 @@ private fun AddFriendsSheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FriendSheet(friend: UserProfile, onRemove: () -> Unit, onDismiss: () -> Unit) {
+private fun FriendSheet(
+    friend: UserProfile,
+    isFriend: Boolean = true,
+    hasActiveDuel: Boolean = false,
+    isPendingChallenge: Boolean = false,
+    onChallenge: () -> Unit = {},
+    onRemove: () -> Unit,
+    onDismiss: () -> Unit
+) {
     var confirmRemove by remember { mutableStateOf(false) }
     val name = friend.username.ifBlank { stringResource(R.string.community_unnamed) }
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -875,14 +968,34 @@ private fun FriendSheet(friend: UserProfile, onRemove: () -> Unit, onDismiss: ()
                     supportingContent = { Text(stringResource(R.string.community_listening_now)) }
                 )
             }
-            OutlinedButton(
-                onClick = { confirmRemove = true },
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                modifier = Modifier.fillMaxWidth().heightIn(min = Spacing.minTouchTarget)
+            Button(
+                onClick = onChallenge,
+                enabled = !hasActiveDuel && !isPendingChallenge,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = Spacing.buttonHeight)
+                    .testTag("challenge_friend_button")
             ) {
-                Icon(Icons.Rounded.PersonRemove, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                Icon(Icons.Rounded.SportsScore, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
                 Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                Text(stringResource(R.string.community_remove_friend))
+                Text(
+                    when {
+                        isPendingChallenge -> stringResource(R.string.friend_duel_waiting_accept, name)
+                        hasActiveDuel -> stringResource(R.string.friend_duel_already_active)
+                        else -> stringResource(R.string.friend_duel_challenge_button, name)
+                    }
+                )
+            }
+            if (isFriend) {
+                OutlinedButton(
+                    onClick = { confirmRemove = true },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = Spacing.minTouchTarget)
+                ) {
+                    Icon(Icons.Rounded.PersonRemove, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                    Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                    Text(stringResource(R.string.community_remove_friend))
+                }
             }
             Spacer(Modifier.height(Spacing.sm))
         }

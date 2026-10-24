@@ -17,8 +17,11 @@ data class TimerState(
     val longBreakDurationMs: Long = 15 * 60 * 1000L,
     val sessionsBeforeLongBreak: Int = 4,
     val isDndActive: Boolean = false,
-    val currentAmbientId: String = "none"
+    val currentAmbientId: String = "none",
+    val isAutoPausedByAppSwitch: Boolean = false,
+    val lastAutoResumedAt: Long = 0L
 ) {
+
     fun durationOf(p: Phase): Long = when (p) {
         Phase.FOCUS -> focusDurationMs
         Phase.SHORT_BREAK -> shortBreakDurationMs

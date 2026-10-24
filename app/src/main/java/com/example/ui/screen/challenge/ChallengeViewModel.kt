@@ -2,12 +2,16 @@ package com.example.ui.screen.challenge
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import com.example.FocusFlowApplication
 import com.example.data.challenge.Challenge
 import com.example.data.challenge.ChallengeResult
 import com.example.data.challenge.ChallengeState
+import com.example.data.challenge.FriendChallenge
+import com.example.data.challenge.FriendChallengeState
 import com.example.service.ChallengeAlarmReceiver
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalTime
 import java.time.ZoneId
@@ -17,7 +21,9 @@ import java.time.ZonedDateTime
 class ChallengeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val store = FocusFlowApplication.instance.challengeStore
+    private val friendRepo = FocusFlowApplication.instance.friendChallengeRepository
     val state: StateFlow<ChallengeState> = store.state
+    val friendState: StateFlow<FriendChallengeState> = friendRepo.state
 
     init {
         if (store.expireIfDue() != null) ChallengeAlarmReceiver.cancel(application)
@@ -42,12 +48,33 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun clearHistory() = store.clearHistory()
 
+    fun acceptFriendChallenge(challenge: FriendChallenge) {
+        viewModelScope.launch { friendRepo.acceptChallenge(challenge) }
+    }
+
+    fun declineFriendChallenge(challenge: FriendChallenge) {
+        viewModelScope.launch { friendRepo.declineChallenge(challenge) }
+    }
+
+    fun cancelOutgoingFriendChallenge(challenge: FriendChallenge) {
+        viewModelScope.launch { friendRepo.cancelOutgoingChallenge(challenge) }
+    }
+
+    fun surrenderFriendChallenge(challenge: FriendChallenge) {
+        viewModelScope.launch { friendRepo.surrender(challenge) }
+    }
+
+    fun acknowledgeFriendWin(challengeId: String) {
+        friendRepo.acknowledgeCelebration(challengeId)
+    }
+
     private fun finish(result: ChallengeResult): Challenge? {
         val done = store.finish(result) ?: return null
         ChallengeAlarmReceiver.cancel(getApplication())
         return done
     }
 }
+
 
 /** Deadline arithmetic, kept pure so it can be unit-tested. */
 object ChallengeTime {

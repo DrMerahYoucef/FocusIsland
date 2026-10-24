@@ -91,6 +91,8 @@ import com.example.R
 import com.example.data.challenge.Challenge
 import com.example.data.challenge.ChallengeResult
 import com.example.data.challenge.ChallengeState
+import com.example.data.challenge.FriendChallenge
+import com.example.data.challenge.FriendChallengeState
 import com.example.ui.designsystem.ConfirmDialog
 import com.example.ui.designsystem.Celebration
 import com.example.ui.designsystem.playSuccessSound
@@ -132,6 +134,7 @@ private const val COUNTDOWN_FROM = 5
 @Composable
 fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifier) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val friendState by viewModel.friendState.collectAsStateWithLifecycle()
     var showNew by rememberSaveable { mutableStateOf(false) }
     var pending by rememberSaveable(stateSaver = PendingSaver) { mutableStateOf(null) }
     var celebrated by remember { mutableStateOf<Challenge?>(null) }
@@ -155,6 +158,7 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
     Box(modifier.fillMaxSize()) {
         ChallengesContent(
             state = state,
+            friendState = friendState,
             nowMs = now,
             celebrated = celebrated,
             onNew = { showNew = true },
@@ -164,9 +168,18 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
             },
             onGiveUp = { confirmGiveUp = true },
             onDismissCelebration = { celebrated = null },
-            onClearHistory = { confirmClear = true }
+            onClearHistory = { confirmClear = true },
+            onAcceptFriendDuel = viewModel::acceptFriendChallenge,
+            onDeclineFriendDuel = viewModel::declineFriendChallenge,
+            onCancelFriendDuel = viewModel::cancelOutgoingFriendChallenge,
+            onSurrenderFriendDuel = viewModel::surrenderFriendChallenge
         )
         Celebration(trigger = celebrated?.id)
+        FriendDuelVictoryCelebration(
+            win = friendState.uncelebratedWin,
+            myUid = friendState.myUid,
+            onAcknowledge = viewModel::acknowledgeFriendWin
+        )
         pending?.let { p ->
             StartCountdown(
                 tones = tones,
@@ -219,7 +232,12 @@ internal fun ChallengesContent(
     onGoalReached: () -> Unit,
     onGiveUp: () -> Unit,
     onDismissCelebration: () -> Unit,
-    onClearHistory: () -> Unit
+    onClearHistory: () -> Unit,
+    friendState: FriendChallengeState = FriendChallengeState(),
+    onAcceptFriendDuel: (FriendChallenge) -> Unit = {},
+    onDeclineFriendDuel: (FriendChallenge) -> Unit = {},
+    onCancelFriendDuel: (FriendChallenge) -> Unit = {},
+    onSurrenderFriendDuel: (FriendChallenge) -> Unit = {}
 ) {
     val lastFailed = state.history.firstOrNull()?.takeIf {
         it.result == ChallengeResult.FAILED && it.finishedAt != null && nowMs - it.finishedAt < RECENT_MS && state.active == null
@@ -229,6 +247,42 @@ internal fun ChallengesContent(
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         modifier = Modifier.fillMaxSize()
     ) {
+        // Incoming friend duel invitations
+        items(friendState.incomingPending, key = { "in_duel_" + it.id }) { incoming ->
+            FriendDuelIncomingCard(
+                challenge = incoming,
+                onAccept = onAcceptFriendDuel,
+                onDecline = onDeclineFriendDuel
+            )
+        }
+
+        // Outgoing pending friend duel invitations
+        items(friendState.outgoingPending, key = { "out_duel_" + it.id }) { outgoing ->
+            val opponent = outgoing.opponentName.ifBlank { stringResource(R.string.community_unnamed) }
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.friend_duel_title)) },
+                    supportingContent = { Text(stringResource(R.string.friend_duel_waiting_accept, opponent)) },
+                    trailingContent = {
+                        TextButton(onClick = { onCancelFriendDuel(outgoing) }) {
+                            Text(stringResource(R.string.cancel))
+                        }
+                    }
+                )
+            }
+        }
+
+        // Active head-to-head friend duel
+        friendState.activeDuel?.let { duel ->
+            item(key = "active_duel_" + duel.id) {
+                FriendDuelLiveCard(
+                    duel = duel,
+                    myUid = friendState.myUid,
+                    onSurrender = onSurrenderFriendDuel
+                )
+            }
+        }
+
         item {
             when {
                 state.active != null -> ActiveChallengeCard(state.active, nowMs, onGoalReached, onGiveUp)
@@ -241,7 +295,18 @@ internal fun ChallengesContent(
                 }
             }
         }
-        if (state.history.isEmpty()) {
+
+        // Friend Duels History section
+        if (friendState.history.isNotEmpty()) {
+            item {
+                SectionHeader(stringResource(R.string.friend_duel_history_header))
+            }
+            items(friendState.history, key = { "duel_hist_" + it.id }) { duel ->
+                FriendDuelHistoryRow(duel = duel, myUid = friendState.myUid)
+            }
+        }
+
+        if (state.history.isEmpty() && friendState.history.isEmpty() && friendState.activeDuel == null) {
             if (state.active == null) item {
                 EmptyState(
                     icon = Icons.Rounded.Flag,
@@ -249,7 +314,7 @@ internal fun ChallengesContent(
                     body = stringResource(R.string.challenges_empty_body)
                 )
             }
-        } else {
+        } else if (state.history.isNotEmpty()) {
             item {
                 SectionHeader(stringResource(R.string.challenges_history)) {
                     TextButton(onClick = onClearHistory) { Text(stringResource(R.string.challenges_clear)) }

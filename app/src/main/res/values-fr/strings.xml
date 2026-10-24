@@ -1058,4 +1058,39 @@
     <string name="kid_challenge_success_body_tight">Ouf, juste à temps ! Bravo !</string>
     <string name="kid_challenge_time_up_title">Le temps est écoulé !</string>
     <string name="kid_challenge_time_up_body">Pas cette fois, mais tu peux réessayer ! 💪</string>
+
+    <!-- Friend Daily Study Duel & Auto-Pause -->
+    <string name="timer_notif_auto_paused">En pause (%1$s restant) — revenez dans Focus Island pour continuer</string>
+    <string name="focus_auto_paused_banner">Minuteur mis en pause pendant l\'utilisation d\'une autre application.</string>
+    <string name="focus_auto_resumed_banner">Bon retour ! Le minuteur Pomodoro a repris automatiquement.</string>
+    <string name="friend_duel_title">Défi du jour entre amis</string>
+    <string name="friend_duel_subtitle_ends_midnight">Le plus de minutes de focus aujourd\'hui gagne · %1$s restant</string>
+    <string name="friend_duel_challenge_button">Défier %1$s aujourd\'hui</string>
+    <string name="friend_duel_challenge_short">Défier cet ami</string>
+    <string name="friend_duel_already_active">Déjà en défi aujourd\'hui</string>
+    <string name="friend_duel_waiting_accept">En attente de la réponse de %1$s…</string>
+    <string name="friend_duel_incoming_title">%1$s vous défie aujourd\'hui !</string>
+    <string name="friend_duel_incoming_body">Qui étudiera le plus avant minuit ? Accepter démarre votre minuteur Pomodoro.</string>
+    <string name="friend_duel_accept_start">Accepter et démarrer</string>
+    <string name="friend_duel_decline">Refuser</string>
+    <string name="friend_duel_you">Vous</string>
+    <string name="friend_duel_minutes_fmt">%1$d min</string>
+    <string name="friend_duel_lead_you">Vous menez de %1$d min</string>
+    <string name="friend_duel_lead_friend">%1$s mène de %2$d min</string>
+    <string name="friend_duel_tied">Égalité pour le moment !</string>
+    <string name="friend_duel_surrender">Abandonner</string>
+    <string name="friend_duel_surrender_title">Abandonner ce défi ?</string>
+    <string name="friend_duel_surrender_body">%1$s remportera immédiatement le défi et recevra la célébration de victoire.</string>
+    <string name="friend_duel_won_title">Victoire ! Vous avez gagné le défi !</string>
+    <string name="friend_duel_won_by_surrender_body">%1$s a abandonné ! Vous remportez le défi d\'étude du jour (%2$d min contre %3$d min).</string>
+    <string name="friend_duel_won_by_minutes_body">Vous avez étudié plus que %1$s aujourd\'hui (%2$d min contre %3$d min) !</string>
+    <string name="friend_duel_history_header">Historique des défis entre amis</string>
+    <string name="friend_duel_history_score">Vous %1$d min · %2$s %3$d min</string>
+    <string name="friend_duel_badge_won">Gagné</string>
+    <string name="friend_duel_badge_lost">Perdu</string>
+    <string name="friend_duel_badge_surrendered">Abandonné</string>
+    <string name="friend_duel_badge_tie">Égalité</string>
+    <string name="community_msg_challenge_sent">Défi envoyé à %1$s !</string>
+    <string name="community_msg_challenge_accepted">Défi accepté ! Pomodoro démarré.</string>
 </resources>
+
