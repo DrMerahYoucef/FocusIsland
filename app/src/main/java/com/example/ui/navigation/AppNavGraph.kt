@@ -155,8 +155,13 @@ enum class TopLevel(
     }
 }
 
-/** A deep-link request from MainActivity (notification, widget). [token] makes repeats distinct. */
-data class NavRequest(val tab: TopLevel, val progressTab: Int = 0, val token: Long = System.nanoTime())
+/** A deep-link request from MainActivity (notification, widget, or lock-screen wake). [token] makes repeats distinct. */
+data class NavRequest(
+    val tab: TopLevel,
+    val progressTab: Int = 0,
+    val openFocusMode: Boolean = false,
+    val token: Long = System.nanoTime()
+)
 
 @Composable
 fun AppNavGraph(
@@ -354,6 +359,9 @@ private fun MainShell(
         navRequest ?: return@LaunchedEffect
         progressTab = navRequest.progressTab
         pagerState.scrollToPage(navRequest.tab.ordinal)
+        if (navRequest.openFocusMode && navController.currentDestination?.route != Routes.FOCUS_MODE) {
+            navController.navigate(Routes.FOCUS_MODE) { launchSingleTop = true }
+        }
     }
 
     fun select(tab: TopLevel) {

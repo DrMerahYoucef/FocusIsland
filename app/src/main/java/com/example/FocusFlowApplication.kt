@@ -22,6 +22,7 @@ import com.google.firebase.FirebaseApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class FocusFlowApplication : Application() {
 
@@ -58,6 +59,7 @@ class FocusFlowApplication : Application() {
     }
 
     private var startedActivitiesCount = 0
+    private var autoPauseJob: kotlinx.coroutines.Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -87,7 +89,8 @@ class FocusFlowApplication : Application() {
 
     /**
      * Automatically pauses the Pomodoro timer when the user leaves Focus Island for another app
-     * (while the device screen is interactive), and automatically resumes it when returning.
+     * (while the device screen is interactive and unlocked), and automatically resumes it when returning.
+     * Locking the phone keeps the Pomodoro running uninterrupted.
      */
     private fun registerAppSwitchAutoPause() {
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
@@ -98,6 +101,8 @@ class FocusFlowApplication : Application() {
             override fun onActivityDestroyed(activity: Activity) = Unit
 
             override fun onActivityStarted(activity: Activity) {
+                autoPauseJob?.cancel()
+                autoPauseJob = null
                 val wasBackground = startedActivitiesCount == 0
                 startedActivitiesCount++
                 if (wasBackground && PomodoroTimerService.state.value.isAutoPausedByAppSwitch) {
@@ -114,19 +119,35 @@ class FocusFlowApplication : Application() {
             override fun onActivityStopped(activity: Activity) {
                 startedActivitiesCount = (startedActivitiesCount - 1).coerceAtLeast(0)
                 if (startedActivitiesCount == 0 && !activity.isChangingConfigurations) {
-                    val isScreenOn = getSystemService(PowerManager::class.java)?.isInteractive != false
-                    if (isScreenOn && PomodoroTimerService.state.value.isRunning) {
-                        runCatching {
-                            val intent = Intent(this@FocusFlowApplication, PomodoroTimerService::class.java)
-                                .setAction(PomodoroTimerService.ACTION_AUTO_PAUSE)
-                            startService(intent)
-                        }.onFailure {
-                            Log.w(TAG, "Failed to auto-pause Pomodoro timer", it)
+                    autoPauseJob?.cancel()
+                    autoPauseJob = applicationScope.launch {
+                        // Wait briefly so pressing the Power button to lock the screen has time to
+                        // transition PowerManager.isInteractive to false or engage KeyguardManager.
+                        kotlinx.coroutines.delay(400L)
+                        if (startedActivitiesCount == 0 && shouldAutoPauseForAppSwitch(this@FocusFlowApplication)) {
+                            if (PomodoroTimerService.state.value.isRunning) {
+                                runCatching {
+                                    val intent = Intent(this@FocusFlowApplication, PomodoroTimerService::class.java)
+                                        .setAction(PomodoroTimerService.ACTION_AUTO_PAUSE)
+                                    startService(intent)
+                                }.onFailure {
+                                    Log.w(TAG, "Failed to auto-pause Pomodoro timer", it)
+                                }
+                            }
                         }
                     }
                 }
             }
         })
+    }
+
+    internal fun shouldAutoPauseForAppSwitch(context: android.content.Context): Boolean {
+        val pm = context.getSystemService(PowerManager::class.java)
+        val isScreenOn = pm?.isInteractive == true
+        if (!isScreenOn) return false
+        val km = context.getSystemService(android.app.KeyguardManager::class.java)
+        val isLocked = km?.isKeyguardLocked == true || km?.isDeviceLocked == true
+        return !isLocked
     }
 
     companion object {

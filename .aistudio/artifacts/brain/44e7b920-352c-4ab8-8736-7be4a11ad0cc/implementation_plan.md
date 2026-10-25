@@ -1,84 +1,34 @@
-# Cycle-Reactive Textured Background & In-App Language Switcher
+# Lock-Screen Pomodoro Continuity & Display Plan
 
-This update introduces a fine dot-grain textured background with a soft radial glow that dynamically adapts its palette to the active Pomodoro cycle (**Focus**, **Short Break**, or **Long Break**) across the app shell and Focus screens, and adds an instant **Language** selector (**System**, **English**, **Français**) in Settings.
+## 1. Goal
+Ensure the Pomodoro timer continues running uninterrupted when the user locks their phone, only auto-pauses when genuinely switching to another app while unlocked, and displays both the full-screen Pomodoro timer over the lock screen and a live lock-screen notification with playback controls.
 
-## User Review & Critical Decisions
+## 2. Technical Architecture & Key Changes
 
-> [!IMPORTANT]
-> The following design and behavior choices were confirmed from your answers:
+### A. Prevent Auto-Pause When Locking the Phone (`FocusFlowApplication.kt` & `PomodoroTimerService.kt`)
+- **Debounce & Keyguard Check on `onActivityStopped`**:
+  - When the user presses the Power button to lock the device, `onActivityStopped` can fire milliseconds before `PowerManager.isInteractive` changes to `false` or while `KeyguardManager` is engaging.
+  - Replace the immediate check in `FocusFlowApplication.registerAppSwitchAutoPause()` with a short debounced check (400 ms) on `applicationScope` that verifies:
+    1. `startedActivitiesCount == 0`
+    2. `PowerManager.isInteractive == true`
+    3. `KeyguardManager.isKeyguardLocked == false` and `KeyguardManager.isDeviceLocked == false`
+  - Only send `ACTION_AUTO_PAUSE` if all three conditions hold after the debounce window (meaning the user genuinely switched to another app on an unlocked screen).
+- **Screen-Off Safety Guard (`PomodoroTimerService.kt`)**:
+  - Register a receiver in `PomodoroTimerService` for `Intent.ACTION_SCREEN_OFF`. If the timer was just marked `isAutoPausedByAppSwitch` within the last 2 seconds when the screen turns off, immediately auto-resume it (`autoResumeFromAppSwitch()`) so a race between locking the phone and activity stop never pauses the countdown.
 
-- **Confirmed Decision 1 — Texture Scope**: The phase-colored fine texture background will appear across the entire app shell, secondary screens, and Focus screens so the atmosphere consistently reflects the current Pomodoro cycle.
-- **Confirmed Decision 2 — Texture Style**: A subtle fine dot-grain pattern paired with a soft radial ambient glow that smoothly transitions between the Focus, Short Break, and Long Break colors.
-- **Confirmed Decision 3 — Language Selector**: A 3-option segmented selector (**System**, **English**, **Français**) in Settings under *Appearance and privacy* that updates the app's language immediately and persists across launches.
+### B. Full-Screen Pomodoro Timer on the Lock Screen (`AndroidManifest.xml`, `MainActivity.kt`, `AppNavGraph.kt`)
+- **Lock-Screen Window Flags**:
+  - Add `android:showWhenLocked="true"` to `MainActivity` in `AndroidManifest.xml` and call `setShowWhenLocked(true)` (with `FLAG_SHOW_WHEN_LOCKED` fallback) in `MainActivity.onCreate()`.
+  - This allows `MainActivity` and `FocusModeScreen` to render directly over the lock screen when the phone is locked and the screen is turned on.
+- **Lock-Screen Focus Mode Presentation**:
+  - When the device is locked (`KeyguardManager.isKeyguardLocked == true`) and a Pomodoro session is active (`state.isRunning` or `!state.isUntouched`), automatically surface the Focus screen / `FocusModeScreen` so the live phase ring, countdown clock, and Play/Pause/Skip controls are immediately interactive on the lock screen.
 
-## 1. Overview & Core Concept
+### C. Live Lock-Screen Notification & Controls (`PomodoroTimerService.kt`)
+- **Public Lock-Screen Visibility**:
+  - Set `NotificationCompat.VISIBILITY_PUBLIC` on the timer `NotificationCompat.Builder` and `Notification.VISIBILITY_PUBLIC` on the `NotificationChannel` so the countdown and controls are always visible on the lock screen.
+- **Per-Second Live Countdown & Progress Bar**:
+  - Update the foreground notification in `startTicker()` so the title/content text includes the live `MM:SS` remaining time alongside the chronometer and `.setProgress(totalSeconds, elapsedSeconds, false)`, plus **Pause / Resume**, **Skip**, and **End** action buttons that work directly from the lock screen.
 
-- **What It Does**:
-  1. **Cycle-Reactive Fine Texture Background**: Replaces flat background fills with a layered canvas that renders a soft radial glow and a fine staggered dot-grain texture tinted by the active Pomodoro phase (`FOCUS`, `SHORT_BREAK`, or `LONG_BREAK`).
-  2. **Language Switcher in Settings**: Lets users choose between **System**, **English**, and **Français** directly inside Settings, immediately re-localizing all screens and strings.
-- **Target Audience / Persona**: Students and focus enthusiasts who want tactile visual feedback tied to their current work/rest cycle and seamless bilingual (French/English) control.
-- **Key Value**: Makes the current timer phase immediately perceptible anywhere in the app while giving users full control over the interface language regardless of their phone's OS language.
-
-## 2. User Experience & Visual Design
-
-- **Key User Flows**:
-  - **Cycle-Following Texture**:
-    1. During a **Focus** phase, the background renders a fine stippled dot-grain and soft upper radial glow using the active style's primary Focus color.
-    2. When the timer transitions to **Short Break** or **Long Break** (or when the user skips phases), the radial glow and fine dot-grain smoothly cross-fade (`600ms` animation) into the Short Break (`secondary`) or Long Break (`rest`) accent color.
-  - **Language Selection in Settings**:
-    1. The user opens **Settings → Appearance and privacy** (`Réglages → Apparence et confidentialité`).
-    2. Under **Language / Langue**, a 3-button segmented row offers **System / Système**, **English**, and **Français**.
-    3. Tapping any option immediately switches all UI labels, plurals, and date/time formatting across the app and saves the preference.
-- **Visual Identity & Theme**:
-  - *Aesthetic Direction*: Tactile, atmospheric minimalism—combining a delicate staggered dot-grain grid with a soft radial halo that respects both Light and Dark modes as well as all four app styles (*Lagoon*, *Night Arcade*, *Blossom*, *Little Explorer*).
-  - *Color Palette & Mood*:
-    - **Focus**: `MaterialTheme.colorScheme.primary`
-    - **Short Break**: `MaterialTheme.colorScheme.secondary`
-    - **Long Break**: `MaterialTheme.extendedColors.rest`
-- **Interactive Feedback & Motion**:
-  - Smooth `600ms` color interpolation when switching between Focus, Short Break, and Long Break phases.
-  - Instantaneous Compose recomposition with the localized `Context` and `Configuration` when switching languages in Settings.
-
-## 3. Key Product Decisions & Trade-Offs
-
-- **Decision 1: Custom Canvas `drawBehind` for the Fine Dot-Grain Texture**
-  - *Chosen Approach*: Render the radial glow and staggered micro-dot matrix procedurally via `Modifier.drawBehind` using the animated `phaseColor(timerState.phase)`.
-  - *Why*: Resolution-independent across phones and tablets, zero bitmap memory overhead, and animates smoothly between theme styles, light/dark modes, and timer phases.
-- **Decision 2: Reactive Locale Override + BaseContext Persistence**
-  - *Chosen Approach*: Persist the selected language code (`system`, `en`, `fr`) in `SharedPreferences` and provide a localized `Context` and `Configuration` through `CompositionLocalProvider` at the root theme level (in addition to `attachBaseContext`).
-  - *Why*: Updating `LocalContext` and `LocalConfiguration` reactively in Compose switches all `stringResource` and `pluralStringResource` calls immediately without jarring activity restarts or losing navigation state.
-
-## 4. Technical Architecture & Data Strategy
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         PomodoroTimerService.state                      │
-│                  (Phase.FOCUS | SHORT_BREAK | LONG_BREAK)               │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                       PhaseTexturedBackground                           │
-│  • Animates phaseColor(phase) over 600ms                                │
-│  • Draws soft radial phase glow + fine staggered dot-grain texture      │
-│  • Wraps MainShell, SecondaryScreen, and FocusModeScreen                │
-└─────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────┐
-│                 SettingsViewModel ("app_language" pref)                 │
-│                  AppLanguage: SYSTEM | ENGLISH | FRENCH                 │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│               Localized Context & Configuration Provider                │
-│  • Overrides LocalConfiguration & LocalContext with chosen Locale       │
-│  • Immediately updates all stringResource / pluralStringResource calls  │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-- **Data Model & State**:
-  - `AppLanguage` enum (`SYSTEM("system")`, `ENGLISH("en")`, `FRENCH("fr")`) added to `SettingsState` and persisted in `focusflow_prefs` under `"app_language"`.
-- **Interactive Component & State Mapping**:
-  - `SettingsScreen`: Adds the Language `SingleChoiceSegmentedButtonRow` inside the Appearance group, calling `viewModel.updateAppLanguage(lang)`.
-  - `PhaseTexturedBackground`: Observes `PomodoroTimerService.state` and paints the phase-tinted fine dot-grain and radial glow behind `MainShell` and `SecondaryScreen` (with transparent `Scaffold` containers so the texture remains visible everywhere).
+## 3. Verification Plan
+- Add a unit/Robolectric test verifying that locking the screen (`isKeyguardLocked = true` or `isInteractive = false`) does not trigger `ACTION_AUTO_PAUSE` and that the foreground notification is built with `VISIBILITY_PUBLIC` and live countdown actions.
+- Run `compile_applet` to verify the full Android build succeeds.

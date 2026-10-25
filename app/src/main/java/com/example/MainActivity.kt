@@ -1,10 +1,12 @@
 package com.example
 
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -15,6 +17,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.service.PomodoroTimerService
 import com.example.ui.navigation.AppNavGraph
 import com.example.ui.navigation.NavRequest
 import com.example.ui.navigation.TopLevel
@@ -38,6 +41,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        enableShowOnLockScreen()
         AppLanguage.applyLocale(this)
         enableEdgeToEdge()
 
@@ -60,6 +64,24 @@ class MainActivity : ComponentActivity() {
             ) {
                 AppNavGraph(settingsViewModel = settingsViewModel, navRequest = navRequest.value)
             }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val isLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+        val timerState = PomodoroTimerService.state.value
+        if (isLocked && (timerState.isRunning || !timerState.isUntouched)) {
+            navRequest.value = NavRequest(tab = TopLevel.FOCUS, openFocusMode = true)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun enableShowOnLockScreen() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+        } else {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
         }
     }
 

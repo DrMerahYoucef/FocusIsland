@@ -60,7 +60,22 @@ class PomodoroTimerService : Service() {
     private lateinit var launchMonitor: AppLaunchMonitor
     private var settings = TimerSettings()
     private var lastAmbientRotationElapsed = 0L
+    private var lastAutoPausedElapsed = 0L
     private var exoPlayer: ExoPlayer? = null
+
+    private val screenOffReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                // If an app-switch auto-pause raced with pressing the Power button to lock the phone,
+                // resume immediately so locking the phone never pauses the Pomodoro.
+                if (_state.value.isAutoPausedByAppSwitch &&
+                    SystemClock.elapsedRealtime() - lastAutoPausedElapsed < 3_000L
+                ) {
+                    autoResumeFromAppSwitch()
+                }
+            }
+        }
+    }
 
     // ------------------------------------------------------------------ lifecycle
 
@@ -70,6 +85,9 @@ class PomodoroTimerService : Service() {
         createNotificationChannel()
         loadPersisted(this)
         settings = TimerSettings.load(this)
+        runCatching {
+            registerReceiver(screenOffReceiver, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF))
+        }
         launchMonitor = AppLaunchMonitor(
             context = this,
             scope = scope,
@@ -109,6 +127,7 @@ class PomodoroTimerService : Service() {
 
     override fun onDestroy() {
         serviceAlive = false
+        runCatching { unregisterReceiver(screenOffReceiver) }
         tickerJob?.cancel()
         launchMonitor.stop()
         restoreDnd()
@@ -176,6 +195,13 @@ class PomodoroTimerService : Service() {
 
     private fun autoPauseForAppSwitch() {
         if (!_state.value.isRunning) return
+        // Double-check screen & keyguard state so locking the phone never pauses the Pomodoro
+        val pm = getSystemService(PowerManager::class.java)
+        val km = getSystemService(android.app.KeyguardManager::class.java)
+        if (pm?.isInteractive == false || km?.isKeyguardLocked == true || km?.isDeviceLocked == true) {
+            return
+        }
+        lastAutoPausedElapsed = SystemClock.elapsedRealtime()
         pauseInternal()
         _state.update { it.copy(isAutoPausedByAppSwitch = true) }
         persist(this)
@@ -226,6 +252,7 @@ class PomodoroTimerService : Service() {
                     onPhaseFinished()
                     return@launch
                 }
+                updateNotification()
                 delay((remaining % 1000L).takeIf { it > 0L } ?: 1000L)
             }
         }
@@ -343,28 +370,34 @@ class PomodoroTimerService : Service() {
         getSystemService(NotificationManager::class.java)?.notify(NOTIF_ID, buildNotification())
     }
 
-    private fun buildNotification(): Notification {
+    internal fun buildNotification(): Notification {
         val s = _state.value
-        val title = getString(
+        val phaseTitle = getString(
             when (s.phase) {
                 Phase.FOCUS -> R.string.timer_notif_focus
                 Phase.SHORT_BREAK -> R.string.timer_notif_short_break
                 Phase.LONG_BREAK -> R.string.timer_notif_long_break
             }
         )
+        val clockText = formatClock(s.remainingMs)
         val openApp = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val totalSec = (s.phaseDurationMs / 1000L).toInt().coerceAtLeast(1)
+        val elapsedSec = ((s.phaseDurationMs - s.remainingMs).coerceAtLeast(0L) / 1000L).toInt().coerceIn(0, totalSec)
+
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_widget_clock)
-            .setContentTitle(title)
+            .setContentTitle("$phaseTitle · $clockText")
             .setContentIntent(openApp)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setProgress(totalSec, elapsedSec, false)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
 
         if (s.isRunning) {
@@ -376,9 +409,9 @@ class PomodoroTimerService : Service() {
                 .addAction(0, getString(R.string.timer_action_pause), servicePendingIntent(ACTION_PAUSE, 1))
         } else {
             val pausedText = if (s.isAutoPausedByAppSwitch) {
-                getString(R.string.timer_notif_auto_paused, formatClock(s.remainingMs))
+                getString(R.string.timer_notif_auto_paused, clockText)
             } else {
-                getString(R.string.timer_notif_paused, formatClock(s.remainingMs))
+                getString(R.string.timer_notif_paused, clockText)
             }
             builder.setShowWhen(false)
                 .setContentText(pausedText)
@@ -402,6 +435,7 @@ class PomodoroTimerService : Service() {
         val channel = NotificationChannel(CHANNEL_ID, getString(R.string.timer_channel_name), NotificationManager.IMPORTANCE_LOW).apply {
             description = getString(R.string.timer_channel_description)
             setShowBadge(false)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
         }
         getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
     }

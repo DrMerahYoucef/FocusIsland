@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for adding a cycle-reactive fine dot-grain textured background (following Focus, Short Break, and Long Break colors across the app shell) and an in-app Language selector (System, English, Français) in Settings.",
-  "updatedAt":  "2026-10-25T13:27:22.188228675Z",
+  "summary":  "Implementation plan to keep the Pomodoro timer running when locking the phone, prevent false app-switch auto-pauses during screen lock, display the full Pomodoro timer over the lock screen, and show a live public countdown notification with controls on the lock screen.",
+  "updatedAt":  "2026-10-25T14:48:36.250509120Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
