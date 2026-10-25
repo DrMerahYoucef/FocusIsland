@@ -98,7 +98,6 @@ import com.example.ui.screen.settings.SettingsViewModel
 import com.example.ui.screen.timer.FocusModeScreen
 import com.example.ui.screen.timer.TimerScreen
 import com.example.ui.screen.timer.TimerViewModel
-import com.example.ui.theme.PhaseTexturedBackground
 import com.example.ui.theme.Spacing
 import kotlinx.coroutines.launch
 import java.net.URLDecoder
@@ -167,6 +166,7 @@ data class NavRequest(
 fun AppNavGraph(
     settingsViewModel: SettingsViewModel,
     navRequest: NavRequest? = null,
+    onConsumeNavRequest: () -> Unit = {},
     navController: NavHostController = rememberNavController()
 ) {
     // Activity-scoped view models shared by tabs and their detail screens.
@@ -215,6 +215,7 @@ fun AppNavGraph(
             MainShell(
                 navController = navController,
                 navRequest = navRequest,
+                onConsumeNavRequest = onConsumeNavRequest,
                 settingsViewModel = settingsViewModel,
                 timerViewModel = timerViewModel,
                 analyticsViewModel = analyticsViewModel,
@@ -246,9 +247,17 @@ fun AppNavGraph(
         composable(Routes.FOCUS_MODE) {
             FocusModeScreen(
                 viewModel = timerViewModel,
-                onDismiss = { navController.popBackStack() },
+                onDismiss = {
+                    onConsumeNavRequest()
+                    if (!navController.popBackStack(Routes.MAIN, inclusive = false)) {
+                        navController.popBackStack()
+                    }
+                },
                 onOpenRadio = {
-                    navController.popBackStack()
+                    onConsumeNavRequest()
+                    if (!navController.popBackStack(Routes.MAIN, inclusive = false)) {
+                        navController.popBackStack()
+                    }
                     navController.navigate(Routes.RADIO)
                 }
             )
@@ -340,6 +349,7 @@ fun AppNavGraph(
 private fun MainShell(
     navController: NavHostController,
     navRequest: NavRequest?,
+    onConsumeNavRequest: () -> Unit,
     settingsViewModel: SettingsViewModel,
     timerViewModel: TimerViewModel,
     analyticsViewModel: AnalyticsViewModel,
@@ -356,10 +366,11 @@ private fun MainShell(
     val wide = LocalConfiguration.current.screenWidthDp >= 600
 
     LaunchedEffect(navRequest) {
-        navRequest ?: return@LaunchedEffect
-        progressTab = navRequest.progressTab
-        pagerState.scrollToPage(navRequest.tab.ordinal)
-        if (navRequest.openFocusMode && navController.currentDestination?.route != Routes.FOCUS_MODE) {
+        val req = navRequest ?: return@LaunchedEffect
+        onConsumeNavRequest()
+        progressTab = req.progressTab
+        pagerState.scrollToPage(req.tab.ordinal)
+        if (req.openFocusMode && navController.currentDestination?.route != Routes.FOCUS_MODE) {
             navController.navigate(Routes.FOCUS_MODE) { launchSingleTop = true }
         }
     }
@@ -368,89 +379,90 @@ private fun MainShell(
         scope.launch { pagerState.animateScrollToPage(tab.ordinal) }
     }
 
-    PhaseTexturedBackground {
-        Row(Modifier.fillMaxSize()) {
-            if (wide) {
-                NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.88f)) {
-                    tabs.forEach { tab ->
-                        NavigationRailItem(
-                            selected = tab == current,
-                            onClick = { select(tab) },
-                            icon = { Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null) },
-                            label = { Text(stringResource(tab.label)) }
-                        )
+    Row(Modifier.fillMaxSize()) {
+        if (wide) {
+            NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+                tabs.forEach { tab ->
+                    NavigationRailItem(
+                        selected = tab == current,
+                        onClick = { select(tab) },
+                        icon = { Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null) },
+                        label = { Text(stringResource(tab.label)) }
+                    )
+                }
+            }
+        }
+        Scaffold(
+            modifier = Modifier.weight(1f),
+            topBar = {
+                TopAppBar(
+                    title = { Text(stringResource(current.label)) },
+                    actions = {
+                        IconButton(onClick = { navController.navigate(Routes.SETTINGS) }) {
+                            Icon(Icons.Rounded.Settings, contentDescription = stringResource(R.string.nav_settings))
+                        }
+                    }
+                )
+            },
+            bottomBar = {
+                if (!wide) {
+                    NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+                        tabs.forEach { tab ->
+                            NavigationBarItem(
+                                selected = tab == current,
+                                onClick = { select(tab) },
+                                icon = { Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null) },
+                                label = { Text(stringResource(tab.label)) }
+                            )
+                        }
                     }
                 }
             }
-            Scaffold(
-                modifier = Modifier.weight(1f),
-                containerColor = androidx.compose.ui.graphics.Color.Transparent,
-                topBar = {
-                    TopAppBar(
-                        title = { Text(stringResource(current.label)) },
-                        colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
-                            containerColor = androidx.compose.ui.graphics.Color.Transparent,
-                            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f)
-                        ),
-                        actions = {
-                            IconButton(onClick = { navController.navigate(Routes.SETTINGS) }) {
-                                Icon(Icons.Rounded.Settings, contentDescription = stringResource(R.string.nav_settings))
+        ) { padding ->
+            HorizontalPager(
+                state = pagerState,
+                userScrollEnabled = settings.swipeToNavigate,
+                beyondViewportPageCount = 0,
+                modifier = Modifier.fillMaxSize().padding(padding)
+            ) { page ->
+                if (tabs[page] == TopLevel.FOCUS) {
+                    TimerScreen(
+                        viewModel = timerViewModel,
+                        settingsViewModel = settingsViewModel,
+                        onNavigateToBatterySaver = {
+                            if (navController.currentDestination?.route != Routes.FOCUS_MODE) {
+                                navController.navigate(Routes.FOCUS_MODE) { launchSingleTop = true }
                             }
-                        }
+                        },
+                        onNavigateToRadio = { navController.navigate(Routes.RADIO) },
+                        onNavigateToChallenges = { select(TopLevel.CHALLENGES) },
+                        onNavigateToStyles = { navController.navigate(Routes.STYLE) }
                     )
-                },
-                bottomBar = {
-                    if (!wide) {
-                        NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.90f)) {
-                            tabs.forEach { tab ->
-                                NavigationBarItem(
-                                    selected = tab == current,
-                                    onClick = { select(tab) },
-                                    icon = { Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null) },
-                                    label = { Text(stringResource(tab.label)) }
-                                )
-                            }
-                        }
-                    }
-                }
-            ) { padding ->
-                HorizontalPager(
-                    state = pagerState,
-                    userScrollEnabled = settings.swipeToNavigate,
-                    beyondViewportPageCount = 0,
-                    modifier = Modifier.fillMaxSize().padding(padding)
-                ) { page ->
+                } else {
                     // Tablets, foldables and landscape: keep each tab a readable column instead of stretching it.
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-                    Box(Modifier.widthIn(max = Spacing.contentMaxWidth).fillMaxSize()) {
-                    when (tabs[page]) {
-                        TopLevel.FOCUS -> TimerScreen(
-                            viewModel = timerViewModel,
-                            settingsViewModel = settingsViewModel,
-                            onNavigateToBatterySaver = { navController.navigate(Routes.FOCUS_MODE) },
-                            onNavigateToRadio = { navController.navigate(Routes.RADIO) },
-                            onNavigateToChallenges = { select(TopLevel.CHALLENGES) },
-                            onNavigateToStyles = { navController.navigate(Routes.STYLE) }
-                        )
-                        TopLevel.STUDY -> RevisionsHomeScreen(
-                            viewModel = revisionsViewModel,
-                            onAddClick = { navController.navigate(Routes.CAPTURE) },
-                            onImageCaptured = { navController.navigate(Routes.crop(it)) },
-                            onPageScanned = { navController.navigate(Routes.crop(it, whole = true)) },
-                            onDeckClick = { navController.navigate(Routes.deck(it)) },
-                            onNoteClick = { navController.navigate(Routes.note(it)) },
-                            onStartSessionClick = { navController.navigate(Routes.session(it)) }
-                        )
-                        TopLevel.CHALLENGES -> ChallengesScreen(viewModel = challengeViewModel)
-                        TopLevel.PROGRESS -> ProgressTab(
-                            selected = progressTab,
-                            onSelect = { progressTab = it },
-                            analyticsViewModel = analyticsViewModel,
-                            examsViewModel = examsViewModel
-                        )
-                        TopLevel.COMMUNITY -> CommunityTab(navController)
-                    }
-                    }
+                        Box(Modifier.widthIn(max = Spacing.contentMaxWidth).fillMaxSize()) {
+                            when (tabs[page]) {
+                                TopLevel.FOCUS -> Unit
+                                TopLevel.STUDY -> RevisionsHomeScreen(
+                                    viewModel = revisionsViewModel,
+                                    onAddClick = { navController.navigate(Routes.CAPTURE) },
+                                    onImageCaptured = { navController.navigate(Routes.crop(it)) },
+                                    onPageScanned = { navController.navigate(Routes.crop(it, whole = true)) },
+                                    onDeckClick = { navController.navigate(Routes.deck(it)) },
+                                    onNoteClick = { navController.navigate(Routes.note(it)) },
+                                    onStartSessionClick = { navController.navigate(Routes.session(it)) }
+                                )
+                                TopLevel.CHALLENGES -> ChallengesScreen(viewModel = challengeViewModel)
+                                TopLevel.PROGRESS -> ProgressTab(
+                                    selected = progressTab,
+                                    onSelect = { progressTab = it },
+                                    analyticsViewModel = analyticsViewModel,
+                                    examsViewModel = examsViewModel
+                                )
+                                TopLevel.COMMUNITY -> CommunityTab(navController)
+                            }
+                        }
                     }
                 }
             }
@@ -534,24 +546,17 @@ private fun SecondaryScreen(
     onBack: () -> Unit,
     content: @Composable (androidx.compose.foundation.layout.PaddingValues) -> Unit
 ) {
-    PhaseTexturedBackground {
-        Scaffold(
-            containerColor = androidx.compose.ui.graphics.Color.Transparent,
-            topBar = {
-                TopAppBar(
-                    title = { Text(title) },
-                    colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
-                        containerColor = androidx.compose.ui.graphics.Color.Transparent,
-                        scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f)
-                    ),
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.back))
-                        }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(title) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
-                )
-            },
-            content = content
-        )
-    }
+                }
+            )
+        },
+        content = content
+    )
 }

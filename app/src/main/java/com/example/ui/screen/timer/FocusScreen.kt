@@ -129,6 +129,8 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
 import com.example.ui.designsystem.Celebration
 import com.example.ui.theme.LocalFocusStyle
+import com.example.ui.theme.PhaseTexturedBackground
+import com.example.ui.theme.anchorTimerCircleBounds
 
 /** Session counts arriving this soon after opening come from loading, not from a finished session. */
 private const val PLANTED_GRACE_MS = 2_000L
@@ -232,7 +234,9 @@ fun TimerScreen(
         }
     }
 
-    Box(modifier.fillMaxSize()) {
+    PhaseTexturedBackground(modifier = modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+    Box(Modifier.widthIn(max = Spacing.contentMaxWidth).fillMaxSize()) {
     FocusContent(
         state = state,
         today = today,
@@ -290,6 +294,8 @@ fun TimerScreen(
             context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
     )
+    }
+    }
     Celebration(trigger = planted)
     FriendDuelVictoryCelebration(
         win = friendState.uncelebratedWin,
@@ -542,7 +548,7 @@ private fun TimerDial(state: TimerState, today: FocusToday, ringColor: Color, mo
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         val size = minOf(maxWidth, maxHeight, Spacing.focusDialMax)
         val withDial = size >= Spacing.focusDialMin
-        Box(Modifier.size(size)) {
+        Box(Modifier.size(size).anchorTimerCircleBounds()) {
             if (withDial) {
                 DayDial(
                     blocks = today.blocks,

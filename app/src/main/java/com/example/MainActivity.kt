@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
 
     /** Latest deep-link request (notification / widget / app shortcut). */
     private val navRequest = mutableStateOf<NavRequest?>(null)
+    private var openedFocusModeForCurrentLock = false
 
     private val requestNotificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -62,7 +63,11 @@ class MainActivity : ComponentActivity() {
                 style = settings.appStyle,
                 language = settings.appLanguage
             ) {
-                AppNavGraph(settingsViewModel = settingsViewModel, navRequest = navRequest.value)
+                AppNavGraph(
+                    settingsViewModel = settingsViewModel,
+                    navRequest = navRequest.value,
+                    onConsumeNavRequest = { navRequest.value = null }
+                )
             }
         }
     }
@@ -71,8 +76,25 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         val isLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
         val timerState = PomodoroTimerService.state.value
-        if (isLocked && (timerState.isRunning || !timerState.isUntouched)) {
+        if (!isLocked) {
+            openedFocusModeForCurrentLock = false
+            if (navRequest.value?.openFocusMode == true) {
+                navRequest.value = null
+            }
+        } else if (!openedFocusModeForCurrentLock && (timerState.isRunning || !timerState.isUntouched)) {
+            openedFocusModeForCurrentLock = true
             navRequest.value = NavRequest(tab = TopLevel.FOCUS, openFocusMode = true)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val isLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+        if (!isLocked) {
+            openedFocusModeForCurrentLock = false
+            if (navRequest.value?.openFocusMode == true) {
+                navRequest.value = null
+            }
         }
     }
 

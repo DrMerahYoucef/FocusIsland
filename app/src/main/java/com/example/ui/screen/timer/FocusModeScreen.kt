@@ -113,15 +113,22 @@ import com.example.ui.designsystem.ConfirmDialog
 import com.example.ui.designsystem.PhaseRing
 import com.example.ui.designsystem.ThemePreviews
 import com.example.ui.screen.radio.RadioViewModel
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import com.example.ui.theme.FocusIslandTheme
 import com.example.ui.theme.FocusModePalette
-import com.example.ui.theme.LagoonDarkColors
+import com.example.ui.theme.LocalFocusStyle
+import com.example.ui.theme.LocalTimerCircleBounds
 import com.example.ui.theme.Spacing
+import com.example.ui.theme.TimerCircleBounds
+import com.example.ui.theme.anchorTimerCircleBounds
 import com.example.ui.theme.extendedColors
 import com.example.ui.theme.phaseColor
 import com.example.ui.theme.phaseTextureBackground
 import com.example.ui.theme.pomodoroCurrentMinuteFraction
 import com.example.ui.theme.pomodoroMinutesPassed
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.time.LocalDate
@@ -200,16 +207,39 @@ fun FocusModeScreen(
         }
     }
 
-    // ---- standby: after a few seconds without touch only the clock stays, slightly dimmed and
-    // shifted a little every minute (OLED burn-in). The first tap brings the controls back.
-    // With TalkBack on, the controls never hide.
+    // ---- standby: after a few seconds without touch the controls dim slightly and shift a little
+    // every minute (OLED burn-in). Unlocking the phone or resuming immediately wakes the controls,
+    // and the X exit button always responds on the very first tap.
     val touchExploration = remember(context) {
         context.getSystemService(android.view.accessibility.AccessibilityManager::class.java)?.isTouchExplorationEnabled == true
     }
     var lastTouch by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var idle by remember { mutableStateOf(false) }
     LaunchedEffect(lastTouch) { idle = false; delay(IDLE_DIM_MS); idle = !touchExploration }
-    val chromeAlpha by animateFloatAsState(if (idle) 0f else 1f, tween(600), label = "chrome")
+
+    // Wake controls immediately when the user unlocks the phone or turns the screen on
+    DisposableEffect(context) {
+        val unlockReceiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, intent: Intent) {
+                idle = false
+                lastTouch = System.currentTimeMillis()
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_USER_PRESENT)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
+        context.registerReceiver(unlockReceiver, filter)
+        onDispose { runCatching { context.unregisterReceiver(unlockReceiver) } }
+    }
+    LifecycleResumeEffect(Unit) {
+        idle = false
+        lastTouch = System.currentTimeMillis()
+        onPauseOrDispose { }
+    }
+
+    val chromeAlpha by animateFloatAsState(if (idle) 0.32f else 1f, tween(600), label = "chrome")
+    val topBarAlpha by animateFloatAsState(if (idle) 0.65f else 1f, tween(600), label = "topBar")
     val clockAlpha by animateFloatAsState(if (idle) 0.75f else 1f, tween(600), label = "clock")
     val shift by produceState(IntOffset.Zero, idle) {
         value = IntOffset.Zero
@@ -266,22 +296,38 @@ fun FocusModeScreen(
 
     val exitLabel = stringResource(R.string.focus_mode_exit)
     val todayLabel = stringResource(R.string.focus_mode_today)
+    val currentStyle = LocalFocusStyle.current.id
 
-    FocusIslandTheme(darkTheme = true) {
-        MaterialTheme(colorScheme = LagoonDarkColors.copy(background = FocusModePalette.background, surface = FocusModePalette.background)) {
+    FocusIslandTheme(darkTheme = true, style = currentStyle) {
+        MaterialTheme(
+            colorScheme = MaterialTheme.colorScheme.copy(
+                background = FocusModePalette.background,
+                surface = FocusModePalette.background
+            )
+        ) {
             var dragY by remember { mutableFloatStateOf(0f) }
             val cycleColor = phaseColor(state.phase)
             val minutesPassed = state.pomodoroMinutesPassed()
             val currentMinuteFraction = state.pomodoroCurrentMinuteFraction()
+            val circleBounds = remember { TimerCircleBounds() }
+            CompositionLocalProvider(LocalTimerCircleBounds provides circleBounds) {
             Box(
                 Modifier
                     .fillMaxSize()
+                    .onGloballyPositioned { coords ->
+                        if (coords.isAttached) {
+                            circleBounds.backgroundRootOffset = coords.positionInRoot()
+                        }
+                    }
                     .phaseTextureBackground(
                         cycleColor = cycleColor,
                         baseColor = FocusModePalette.background,
                         isDark = true,
+                        style = currentStyle,
                         minutesPassed = minutesPassed,
-                        currentMinuteFraction = currentMinuteFraction
+                        currentMinuteFraction = currentMinuteFraction,
+                        circleCenterOverride = circleBounds.localCenter,
+                        circleRadiusOverride = circleBounds.circleRadiusPx
                     )
                     .pointerInput(Unit) {
                         detectTapGestures(
@@ -310,11 +356,11 @@ fun FocusModeScreen(
                 val landscape = landscapeLock ?: (LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE)
                 Column(Modifier.fillMaxSize().safeDrawingPadding().offset { shift }) {
                     TopBar(
-                        modifier = Modifier.alpha(chromeAlpha),
+                        modifier = Modifier.alpha(topBarAlpha),
                         battery = battery,
                         powerSave = powerSave,
                         onExit = onDismiss,
-                        onRotate = { toggleRotation(landscape) }
+                        onRotate = { lastTouch = System.currentTimeMillis(); toggleRotation(landscape) }
                     )
                     FocusModeContent(
                         state = state,
@@ -322,9 +368,9 @@ fun FocusModeScreen(
                         soundLabel = soundLabel,
                         landscape = landscape,
                         onStartPause = { lastTouch = System.currentTimeMillis(); startPause() },
-                        onSkip = viewModel::skipPhase,
-                        onEnd = end,
-                        onSounds = { showSounds = true },
+                        onSkip = { lastTouch = System.currentTimeMillis(); viewModel.skipPhase() },
+                        onEnd = { lastTouch = System.currentTimeMillis(); end() },
+                        onSounds = { lastTouch = System.currentTimeMillis(); showSounds = true },
                         clockAlpha = clockAlpha,
                         chromeAlpha = chromeAlpha,
                         duelSummaryLine = duelSummaryLine,
@@ -343,25 +389,13 @@ fun FocusModeScreen(
                     onChange = { lastTouch = System.currentTimeMillis(); setBrightness(it) },
                     modifier = Modifier.align(Alignment.CenterEnd).safeDrawingPadding().alpha(chromeAlpha)
                 )
-                // While the controls are hidden, a tap only wakes them (no accidental pause or exit by an
-                // invisible button); double-tap and long-press keep working.
-                if (idle) {
-                    Box(
-                        Modifier.fillMaxSize().pointerInput(Unit) {
-                            detectTapGestures(
-                                onTap = { lastTouch = System.currentTimeMillis() },
-                                onDoubleTap = { view.performHapticFeedback(HapticFeedbackConstants.CONFIRM); onDismiss() },
-                                onLongPress = { lastTouch = System.currentTimeMillis(); view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); startPause() }
-                            )
-                        }
-                    )
-                }
                 if (flashAlpha > 0f) Box(Modifier.fillMaxSize().background(FocusModePalette.flash.copy(alpha = flashAlpha)))
                 com.example.ui.screen.challenge.FriendDuelVictoryCelebration(
                     win = friendState.uncelebratedWin,
                     myUid = friendState.myUid,
                     onAcknowledge = friendRepo::acknowledgeCelebration
                 )
+            }
             }
 
             if (showSounds) {
@@ -532,6 +566,7 @@ private fun TimerRing(state: TimerState, size: Dp) {
         strokeWidth = Spacing.focusRingStroke,
         modifier = Modifier
             .size(size)
+            .anchorTimerCircleBounds()
             .semantics(mergeDescendants = true) {
                 contentDescription = "$phase, $time"
                 progressBarRangeInfo = ProgressBarRangeInfo(1f - fraction, 0f..1f)
