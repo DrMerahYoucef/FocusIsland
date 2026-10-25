@@ -19,6 +19,7 @@ import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.ui.theme.AppLanguage
 import com.example.ui.theme.AppStyle
 import com.example.ui.theme.WallpaperTheme
 import com.example.R
@@ -50,6 +51,7 @@ data class SettingsState(
     val autoFocusMode: Boolean = true,
     val shareListening: Boolean = false,
     val appStyle: AppStyle = AppStyle.LAGOON,
+    val appLanguage: AppLanguage = AppLanguage.SYSTEM,
     /** The "choose your style" tip on the Focus tab was opened or dismissed. */
     val styleTipSeen: Boolean = true
 ) {
@@ -103,6 +105,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 autoFocusMode = sharedPrefs.getBoolean("auto_focus_mode", true),
                 shareListening = sharedPrefs.getBoolean(KEY_SHARE_LISTENING, false),
                 appStyle = AppStyle.from(sharedPrefs.getString(AppStyle.PREF_KEY, null)),
+                appLanguage = AppLanguage.from(sharedPrefs.getString(AppLanguage.PREF_KEY, null)),
                 styleTipSeen = sharedPrefs.getBoolean(AppStyle.PREF_TIP_SEEN, false)
             )
         }
@@ -125,6 +128,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         sharedPrefs.edit().putString(AppStyle.PREF_KEY, value.key).putBoolean(AppStyle.PREF_TIP_SEEN, true).apply()
         _state.update { it.copy(appStyle = value, styleTipSeen = true) }
         // Widgets and the wallpaper read the style from the same preferences.
+        com.example.widget.ExamCountdownWidgetReceiver.triggerWidgetUpdate(getApplication())
+    }
+
+    fun updateAppLanguage(value: AppLanguage) {
+        sharedPrefs.edit().putString(AppLanguage.PREF_KEY, value.key).apply()
+        _state.update { it.copy(appLanguage = value) }
         com.example.widget.ExamCountdownWidgetReceiver.triggerWidgetUpdate(getApplication())
     }
 

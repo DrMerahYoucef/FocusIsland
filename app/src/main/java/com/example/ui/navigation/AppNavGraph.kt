@@ -17,12 +17,14 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.EmojiEvents
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Settings
@@ -76,6 +78,7 @@ import com.example.ui.screen.analytics.AnalyticsViewModel
 import com.example.ui.screen.appblocker.AppBlockerScreen
 import com.example.ui.screen.auth.AuthMode
 import com.example.ui.screen.auth.AuthScreen
+import com.example.ui.screen.challenge.ChallengeViewModel
 import com.example.ui.screen.challenge.ChallengesScreen
 import com.example.ui.screen.community.CommunityScreen
 import com.example.ui.screen.community.CommunityViewModel
@@ -95,6 +98,7 @@ import com.example.ui.screen.settings.SettingsViewModel
 import com.example.ui.screen.timer.FocusModeScreen
 import com.example.ui.screen.timer.TimerScreen
 import com.example.ui.screen.timer.TimerViewModel
+import com.example.ui.theme.PhaseTexturedBackground
 import com.example.ui.theme.Spacing
 import kotlinx.coroutines.launch
 import java.net.URLDecoder
@@ -126,7 +130,7 @@ object Routes {
     fun note(noteId: String) = "revisions/note/${URLEncoder.encode(noteId, "UTF-8")}"
 }
 
-/** The four top-level destinations, in bottom-bar order. */
+/** The five top-level destinations, in bottom-bar order. */
 enum class TopLevel(
     val key: String,
     @StringRes val label: Int,
@@ -135,6 +139,7 @@ enum class TopLevel(
 ) {
     FOCUS("focus", R.string.nav_focus, Icons.Rounded.Timer, Icons.Outlined.Timer),
     STUDY("study", R.string.nav_study, Icons.Rounded.Style, Icons.Outlined.Style),
+    CHALLENGES("challenges", R.string.nav_challenges, Icons.Rounded.Flag, Icons.Outlined.Flag),
     PROGRESS("progress", R.string.nav_progress, Icons.Rounded.Insights, Icons.Outlined.Insights),
     COMMUNITY("community", R.string.nav_community, Icons.Rounded.Groups, Icons.Outlined.Groups);
 
@@ -143,6 +148,7 @@ enum class TopLevel(
         fun fromKey(key: String?): TopLevel? = when (key) {
             null -> null
             "revisions", "review" -> STUDY
+            "challenge", "challenges", "defi", "defis" -> CHALLENGES
             "exams", "stats" -> PROGRESS
             else -> entries.firstOrNull { it.key == key }
         }
@@ -163,6 +169,7 @@ fun AppNavGraph(
     val analyticsViewModel: AnalyticsViewModel = viewModel()
     val examsViewModel: ExamsViewModel = viewModel()
     val revisionsViewModel: RevisionsViewModel = viewModel()
+    val challengeViewModel: ChallengeViewModel = viewModel()
 
     // Keeps the "auto-sync wallpaper with theme" feature working app-wide.
     val forestViewModel: ForestViewModel = viewModel()
@@ -207,7 +214,8 @@ fun AppNavGraph(
                 timerViewModel = timerViewModel,
                 analyticsViewModel = analyticsViewModel,
                 examsViewModel = examsViewModel,
-                revisionsViewModel = revisionsViewModel
+                revisionsViewModel = revisionsViewModel,
+                challengeViewModel = challengeViewModel
             )
         }
 
@@ -249,7 +257,7 @@ fun AppNavGraph(
 
         composable(Routes.CHALLENGES) {
             SecondaryScreen(title = stringResource(R.string.challenges_title), onBack = { navController.popBackStack() }) { padding ->
-                ChallengesScreen(viewModel = viewModel(), modifier = Modifier.padding(padding))
+                ChallengesScreen(viewModel = challengeViewModel, modifier = Modifier.padding(padding))
             }
         }
 
@@ -331,7 +339,8 @@ private fun MainShell(
     timerViewModel: TimerViewModel,
     analyticsViewModel: AnalyticsViewModel,
     examsViewModel: ExamsViewModel,
-    revisionsViewModel: RevisionsViewModel
+    revisionsViewModel: RevisionsViewModel,
+    challengeViewModel: ChallengeViewModel
 ) {
     val settings by settingsViewModel.state.collectAsState()
     val tabs = TopLevel.entries
@@ -351,82 +360,90 @@ private fun MainShell(
         scope.launch { pagerState.animateScrollToPage(tab.ordinal) }
     }
 
-    Row(Modifier.fillMaxSize()) {
-        if (wide) {
-            NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
-                tabs.forEach { tab ->
-                    NavigationRailItem(
-                        selected = tab == current,
-                        onClick = { select(tab) },
-                        icon = { Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null) },
-                        label = { Text(stringResource(tab.label)) }
-                    )
-                }
-            }
-        }
-        Scaffold(
-            modifier = Modifier.weight(1f),
-            topBar = {
-                TopAppBar(
-                    title = { Text(stringResource(current.label)) },
-                    actions = {
-                        IconButton(onClick = { navController.navigate(Routes.SETTINGS) }) {
-                            Icon(Icons.Rounded.Settings, contentDescription = stringResource(R.string.nav_settings))
-                        }
-                    }
-                )
-            },
-            bottomBar = {
-                if (!wide) {
-                    NavigationBar {
-                        tabs.forEach { tab ->
-                            NavigationBarItem(
-                                selected = tab == current,
-                                onClick = { select(tab) },
-                                icon = { Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null) },
-                                label = { Text(stringResource(tab.label)) }
-                            )
-                        }
+    PhaseTexturedBackground {
+        Row(Modifier.fillMaxSize()) {
+            if (wide) {
+                NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.88f)) {
+                    tabs.forEach { tab ->
+                        NavigationRailItem(
+                            selected = tab == current,
+                            onClick = { select(tab) },
+                            icon = { Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null) },
+                            label = { Text(stringResource(tab.label)) }
+                        )
                     }
                 }
             }
-        ) { padding ->
-            HorizontalPager(
-                state = pagerState,
-                userScrollEnabled = settings.swipeToNavigate,
-                beyondViewportPageCount = 0,
-                modifier = Modifier.fillMaxSize().padding(padding)
-            ) { page ->
-                // Tablets, foldables and landscape: keep each tab a readable column instead of stretching it.
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-                Box(Modifier.widthIn(max = Spacing.contentMaxWidth).fillMaxSize()) {
-                when (tabs[page]) {
-                    TopLevel.FOCUS -> TimerScreen(
-                        viewModel = timerViewModel,
-                        settingsViewModel = settingsViewModel,
-                        onNavigateToBatterySaver = { navController.navigate(Routes.FOCUS_MODE) },
-                        onNavigateToRadio = { navController.navigate(Routes.RADIO) },
-                        onNavigateToChallenges = { navController.navigate(Routes.CHALLENGES) },
-                        onNavigateToStyles = { navController.navigate(Routes.STYLE) }
+            Scaffold(
+                modifier = Modifier.weight(1f),
+                containerColor = androidx.compose.ui.graphics.Color.Transparent,
+                topBar = {
+                    TopAppBar(
+                        title = { Text(stringResource(current.label)) },
+                        colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                            containerColor = androidx.compose.ui.graphics.Color.Transparent,
+                            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f)
+                        ),
+                        actions = {
+                            IconButton(onClick = { navController.navigate(Routes.SETTINGS) }) {
+                                Icon(Icons.Rounded.Settings, contentDescription = stringResource(R.string.nav_settings))
+                            }
+                        }
                     )
-                    TopLevel.STUDY -> RevisionsHomeScreen(
-                        viewModel = revisionsViewModel,
-                        onAddClick = { navController.navigate(Routes.CAPTURE) },
-                        onImageCaptured = { navController.navigate(Routes.crop(it)) },
-                        onPageScanned = { navController.navigate(Routes.crop(it, whole = true)) },
-                        onDeckClick = { navController.navigate(Routes.deck(it)) },
-                        onNoteClick = { navController.navigate(Routes.note(it)) },
-                        onStartSessionClick = { navController.navigate(Routes.session(it)) }
-                    )
-                    TopLevel.PROGRESS -> ProgressTab(
-                        selected = progressTab,
-                        onSelect = { progressTab = it },
-                        analyticsViewModel = analyticsViewModel,
-                        examsViewModel = examsViewModel
-                    )
-                    TopLevel.COMMUNITY -> CommunityTab(navController)
+                },
+                bottomBar = {
+                    if (!wide) {
+                        NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.90f)) {
+                            tabs.forEach { tab ->
+                                NavigationBarItem(
+                                    selected = tab == current,
+                                    onClick = { select(tab) },
+                                    icon = { Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null) },
+                                    label = { Text(stringResource(tab.label)) }
+                                )
+                            }
+                        }
+                    }
                 }
-                }
+            ) { padding ->
+                HorizontalPager(
+                    state = pagerState,
+                    userScrollEnabled = settings.swipeToNavigate,
+                    beyondViewportPageCount = 0,
+                    modifier = Modifier.fillMaxSize().padding(padding)
+                ) { page ->
+                    // Tablets, foldables and landscape: keep each tab a readable column instead of stretching it.
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    Box(Modifier.widthIn(max = Spacing.contentMaxWidth).fillMaxSize()) {
+                    when (tabs[page]) {
+                        TopLevel.FOCUS -> TimerScreen(
+                            viewModel = timerViewModel,
+                            settingsViewModel = settingsViewModel,
+                            onNavigateToBatterySaver = { navController.navigate(Routes.FOCUS_MODE) },
+                            onNavigateToRadio = { navController.navigate(Routes.RADIO) },
+                            onNavigateToChallenges = { select(TopLevel.CHALLENGES) },
+                            onNavigateToStyles = { navController.navigate(Routes.STYLE) }
+                        )
+                        TopLevel.STUDY -> RevisionsHomeScreen(
+                            viewModel = revisionsViewModel,
+                            onAddClick = { navController.navigate(Routes.CAPTURE) },
+                            onImageCaptured = { navController.navigate(Routes.crop(it)) },
+                            onPageScanned = { navController.navigate(Routes.crop(it, whole = true)) },
+                            onDeckClick = { navController.navigate(Routes.deck(it)) },
+                            onNoteClick = { navController.navigate(Routes.note(it)) },
+                            onStartSessionClick = { navController.navigate(Routes.session(it)) }
+                        )
+                        TopLevel.CHALLENGES -> ChallengesScreen(viewModel = challengeViewModel)
+                        TopLevel.PROGRESS -> ProgressTab(
+                            selected = progressTab,
+                            onSelect = { progressTab = it },
+                            analyticsViewModel = analyticsViewModel,
+                            examsViewModel = examsViewModel
+                        )
+                        TopLevel.COMMUNITY -> CommunityTab(navController)
+                    }
+                    }
+                    }
                 }
             }
         }
@@ -442,7 +459,10 @@ private fun ProgressTab(
     examsViewModel: ExamsViewModel
 ) {
     Column(Modifier.fillMaxSize()) {
-        PrimaryTabRow(selectedTabIndex = selected) {
+        PrimaryTabRow(
+            selectedTabIndex = selected,
+            containerColor = androidx.compose.ui.graphics.Color.Transparent
+        ) {
             Tab(selected = selected == 0, onClick = { onSelect(0) }, text = { Text(stringResource(R.string.progress_tab_stats)) })
             Tab(selected = selected == 1, onClick = { onSelect(1) }, text = { Text(stringResource(R.string.progress_tab_exams)) })
         }
@@ -506,17 +526,24 @@ private fun SecondaryScreen(
     onBack: () -> Unit,
     content: @Composable (androidx.compose.foundation.layout.PaddingValues) -> Unit
 ) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(title) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.back))
+    PhaseTexturedBackground {
+        Scaffold(
+            containerColor = androidx.compose.ui.graphics.Color.Transparent,
+            topBar = {
+                TopAppBar(
+                    title = { Text(title) },
+                    colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+                        scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f)
+                    ),
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.back))
+                        }
                     }
-                }
-            )
-        },
-        content = content
-    )
+                )
+            },
+            content = content
+        )
+    }
 }

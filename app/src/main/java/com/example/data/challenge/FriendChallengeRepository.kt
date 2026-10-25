@@ -107,13 +107,19 @@ class FriendChallengeRepository(
     private val _state = MutableStateFlow(FriendChallengeState())
     val state: StateFlow<FriendChallengeState> = _state.asStateFlow()
 
-    private var listenerRegistration: ListenerRegistration? = null
+    private val listenerRegistrations = java.util.concurrent.CopyOnWriteArrayList<ListenerRegistration>()
+    private val friendDocListeners = java.util.concurrent.ConcurrentHashMap<String, ListenerRegistration>()
+    private val remoteUserDuels = java.util.concurrent.ConcurrentHashMap<String, FriendChallenge>()
+    private val remoteCollectionDuels = java.util.concurrent.ConcurrentHashMap<String, FriendChallenge>()
+    @Volatile
     private var currentObservedUid: String = ""
 
-    private val celebratedIds: MutableSet<String> =
+    private val celebratedIds: MutableSet<String> = java.util.Collections.synchronizedSet(
         (prefs.getStringSet(KEY_CELEBRATED_IDS, emptySet()) ?: emptySet()).toMutableSet()
-    private val autoStartedIds: MutableSet<String> =
+    )
+    private val autoStartedIds: MutableSet<String> = java.util.Collections.synchronizedSet(
         (prefs.getStringSet(KEY_AUTO_STARTED_IDS, emptySet()) ?: emptySet()).toMutableSet()
+    )
 
     init {
         val cached = loadCachedChallenges()
@@ -146,29 +152,111 @@ class FriendChallengeRepository(
         }
     }
 
+    private fun clearListeners() {
+        listenerRegistrations.forEach { runCatching { it.remove() } }
+        listenerRegistrations.clear()
+        friendDocListeners.values.forEach { runCatching { it.remove() } }
+        friendDocListeners.clear()
+        remoteUserDuels.clear()
+        remoteCollectionDuels.clear()
+    }
+
     private fun attachFirestoreListener(uid: String) {
-        listenerRegistration?.remove()
-        listenerRegistration = null
+        clearListeners()
         if (uid.isEmpty()) {
             rebuildState(loadCachedChallenges(), "", _state.value.myLiveMinutesToday)
             return
         }
         runCatching {
             val db = Firebase.firestore
-            listenerRegistration = db.collection(COLLECTION)
-                .whereArrayContains("participants", uid)
+            val users = db.collection(USERS_COLLECTION)
+
+            // 1. Listen for any user documents where I am the challenged opponent
+            listenerRegistrations += users
+                .whereEqualTo("duelOpponentUid", uid)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
-                        Log.w(TAG, "Friend challenges listener failed: ${error.message}")
+                        Log.w(TAG, "Incoming user duels listener error: ${error.message}")
                         return@addSnapshotListener
                     }
-                    val remote = snapshot?.documents?.mapNotNull { it.toFriendChallenge() }.orEmpty()
-                    saveCachedChallenges(remote)
-                    rebuildState(remote, uid, _state.value.myLiveMinutesToday)
+                    snapshot?.documents?.forEach { doc ->
+                        val ch = doc.toUserDuelChallenge()
+                        if (ch != null) remoteUserDuels[doc.id] = ch else remoteUserDuels.remove(doc.id)
+                    }
+                    onRemoteUpdated(uid)
+                }
+
+            // 2. Listen for any user documents where I am the challenger (including my own and opponent's accepted copy)
+            listenerRegistrations += users
+                .whereEqualTo("duelChallengerUid", uid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.w(TAG, "Challenger user duels listener error: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    snapshot?.documents?.forEach { doc ->
+                        val ch = doc.toUserDuelChallenge()
+                        if (ch != null) remoteUserDuels[doc.id] = ch else remoteUserDuels.remove(doc.id)
+                    }
+                    onRemoteUpdated(uid)
+                }
+
+            // 3. Optional listener on dedicated collection if rules allow it
+            listenerRegistrations += db.collection(COLLECTION)
+                .whereArrayContains("participants", uid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) return@addSnapshotListener
+                    snapshot?.documents?.forEach { doc ->
+                        val ch = doc.toFriendChallenge()
+                        if (ch != null) remoteCollectionDuels[ch.id] = ch
+                    }
+                    onRemoteUpdated(uid)
                 }
         }.onFailure {
             Log.w(TAG, "Failed to attach Firestore listener: ${it.message}")
         }
+    }
+
+    private fun ensureFriendDocListeners(uid: String, challenges: List<FriendChallenge>) {
+        if (uid.isEmpty()) return
+        val activeOrPendingFriends = challenges
+            .filter { it.status == FriendChallengeStatus.PENDING || it.status == FriendChallengeStatus.ACTIVE }
+            .map { it.friendUid(uid) }
+            .filter { it.isNotEmpty() && it != uid }
+            .toSet()
+
+        activeOrPendingFriends.forEach { friendUid ->
+            if (!friendDocListeners.containsKey(friendUid)) {
+                runCatching {
+                    val reg = Firebase.firestore.collection(USERS_COLLECTION).document(friendUid)
+                        .addSnapshotListener { snapshot, error ->
+                            if (error != null || snapshot == null) return@addSnapshotListener
+                            val ch = snapshot.toUserDuelChallenge()
+                            if (ch != null && remoteUserDuels[snapshot.id] != ch) {
+                                remoteUserDuels[snapshot.id] = ch
+                                onRemoteUpdated(uid)
+                            }
+                        }
+                    friendDocListeners[friendUid] = reg
+                }
+            }
+        }
+    }
+
+    @Synchronized
+    private fun onRemoteUpdated(uid: String) {
+        val byId = LinkedHashMap<String, FriendChallenge>()
+        loadCachedChallenges().forEach { byId[it.id] = it }
+        remoteCollectionDuels.values.toList().forEach { ch ->
+            byId[ch.id] = byId[ch.id]?.let { mergeChallenges(it, ch) } ?: ch
+        }
+        remoteUserDuels.values.toList().forEach { ch ->
+            byId[ch.id] = byId[ch.id]?.let { mergeChallenges(it, ch) } ?: ch
+        }
+        val mergedList = byId.values.toList()
+        saveCachedChallenges(mergedList)
+        ensureFriendDocListeners(uid, mergedList)
+        rebuildState(mergedList, uid, _state.value.myLiveMinutesToday)
     }
 
     /**
@@ -287,15 +375,47 @@ class FriendChallengeRepository(
     }
 
     private fun markAutoStarted(challengeId: String) {
-        autoStartedIds.add(challengeId)
-        prefs.edit().putStringSet(KEY_AUTO_STARTED_IDS, autoStartedIds.toSet()).apply()
+        val snapshot = synchronized(autoStartedIds) {
+            autoStartedIds.add(challengeId)
+            autoStartedIds.toSet()
+        }
+        prefs.edit().putStringSet(KEY_AUTO_STARTED_IDS, snapshot).apply()
     }
 
     fun acknowledgeCelebration(challengeId: String) {
-        celebratedIds.add(challengeId)
-        prefs.edit().putStringSet(KEY_CELEBRATED_IDS, celebratedIds.toSet()).apply()
+        val snapshot = synchronized(celebratedIds) {
+            celebratedIds.add(challengeId)
+            celebratedIds.toSet()
+        }
+        prefs.edit().putStringSet(KEY_CELEBRATED_IDS, snapshot).apply()
         if (_state.value.uncelebratedWin?.id == challengeId) {
             _state.value = _state.value.copy(uncelebratedWin = null)
+        }
+    }
+
+    /**
+     * Publishes our duel state to `/users/{myUid}` (which is always writable by the owner under
+     * the live Firestore rules) and best-effort to `/friend_challenges/{id}`.
+     */
+    private fun syncChallengeToFirestoreAsync(challenge: FriendChallenge) {
+        val myUid = currentUid()
+        if (myUid.isEmpty()) return
+        ensureFriendDocListeners(myUid, listOf(challenge))
+        appScope.launch {
+            runCatching {
+                Firebase.firestore.collection(USERS_COLLECTION)
+                    .document(myUid)
+                    .set(challenge.toUserDuelFields(myUid), SetOptions.merge())
+                    .await()
+            }.onFailure {
+                Log.w(TAG, "User duel sync warning: ${it.message}")
+            }
+            runCatching {
+                Firebase.firestore.collection(COLLECTION)
+                    .document(challenge.id)
+                    .set(challenge.toFirestoreMap(), SetOptions.merge())
+                    .await()
+            }
         }
     }
 
@@ -335,12 +455,7 @@ class FriendChallengeRepository(
         )
 
         upsertLocalCache(challenge)
-        if (currentUid().isNotEmpty()) {
-            Firebase.firestore.collection(COLLECTION)
-                .document(id)
-                .set(challenge.toFirestoreMap())
-                .await()
-        }
+        syncChallengeToFirestoreAsync(challenge)
         challenge
     }
 
@@ -356,46 +471,46 @@ class FriendChallengeRepository(
             opponentMinutes = maxOf(challenge.opponentMinutes, myMins)
         )
         upsertLocalCache(updated)
-        if (currentUid().isNotEmpty()) {
-            Firebase.firestore.collection(COLLECTION)
-                .document(challenge.id)
-                .update(
-                    mapOf(
-                        "status" to FriendChallengeStatus.ACTIVE.name.lowercase(),
-                        "acceptedAt" to now,
-                        "opponentMinutes" to updated.opponentMinutes
-                    )
-                )
-                .await()
-        }
+        syncChallengeToFirestoreAsync(updated)
         updated
     }
 
     suspend fun declineChallenge(challenge: FriendChallenge): Result<Unit> = runCatching {
         val updated = challenge.copy(status = FriendChallengeStatus.DECLINED, finishedAt = clock())
         upsertLocalCache(updated)
-        if (currentUid().isNotEmpty()) {
-            Firebase.firestore.collection(COLLECTION)
-                .document(challenge.id)
-                .update(
-                    mapOf(
-                        "status" to FriendChallengeStatus.DECLINED.name.lowercase(),
-                        "finishedAt" to updated.finishedAt
-                    )
-                )
-                .await()
-        }
+        syncChallengeToFirestoreAsync(updated)
     }
 
     suspend fun cancelOutgoingChallenge(challenge: FriendChallenge): Result<Unit> = runCatching {
+        val myUid = currentUid()
+        remoteUserDuels.remove(myUid)
+        remoteCollectionDuels.remove(challenge.id)
         val current = loadCachedChallenges().filterNot { it.id == challenge.id }
         saveCachedChallenges(current)
         rebuildState(current, _state.value.myUid, _state.value.myLiveMinutesToday)
-        if (currentUid().isNotEmpty()) {
-            Firebase.firestore.collection(COLLECTION)
-                .document(challenge.id)
-                .delete()
-                .await()
+        if (myUid.isNotEmpty()) {
+            appScope.launch {
+                runCatching {
+                    Firebase.firestore.collection(USERS_COLLECTION)
+                        .document(myUid)
+                        .set(
+                            mapOf(
+                                "duelId" to "",
+                                "duelOpponentUid" to "",
+                                "duelChallengerUid" to "",
+                                "duelStatus" to "cancelled"
+                            ),
+                            SetOptions.merge()
+                        )
+                        .await()
+                }
+                runCatching {
+                    Firebase.firestore.collection(COLLECTION)
+                        .document(challenge.id)
+                        .delete()
+                        .await()
+                }
+            }
         }
     }
 
@@ -413,19 +528,7 @@ class FriendChallengeRepository(
             finishedAt = now
         )
         upsertLocalCache(updated)
-        if (currentUid().isNotEmpty()) {
-            Firebase.firestore.collection(COLLECTION)
-                .document(challenge.id)
-                .update(
-                    mapOf(
-                        "status" to FriendChallengeStatus.SURRENDERED.name.lowercase(),
-                        "surrenderedByUid" to myUid,
-                        "winnerUid" to winner,
-                        "finishedAt" to now
-                    )
-                )
-                .await()
-        }
+        syncChallengeToFirestoreAsync(updated)
         updated
     }
 
@@ -436,17 +539,7 @@ class FriendChallengeRepository(
             challenge.copy(opponentMinutes = minutes)
         }
         upsertLocalCache(updated)
-        if (currentUid().isNotEmpty()) {
-            val field = if (challenge.isChallenger(myUid)) "challengerMinutes" else "opponentMinutes"
-            runCatching {
-                Firebase.firestore.collection(COLLECTION)
-                    .document(challenge.id)
-                    .set(mapOf(field to minutes), SetOptions.merge())
-                    .await()
-            }.onFailure {
-                Log.d(TAG, "Live minutes sync skipped: ${it.message}")
-            }
-        }
+        syncChallengeToFirestoreAsync(updated)
     }
 
     private suspend fun completeExpiredChallenge(challenge: FriendChallenge) {
@@ -462,26 +555,13 @@ class FriendChallengeRepository(
             finishedAt = finishedAt
         )
         upsertLocalCache(updated)
-        if (currentUid().isNotEmpty()) {
-            runCatching {
-                Firebase.firestore.collection(COLLECTION)
-                    .document(challenge.id)
-                    .update(
-                        mapOf(
-                            "status" to FriendChallengeStatus.COMPLETED.name.lowercase(),
-                            "winnerUid" to winner,
-                            "finishedAt" to finishedAt
-                        )
-                    )
-                    .await()
-            }
-        }
+        syncChallengeToFirestoreAsync(updated)
     }
 
     private fun upsertLocalCache(challenge: FriendChallenge) {
         val existing = loadCachedChallenges().toMutableList()
         val idx = existing.indexOfFirst { it.id == challenge.id }
-        if (idx >= 0) existing[idx] = challenge else existing.add(0, challenge)
+        if (idx >= 0) existing[idx] = mergeChallenges(existing[idx], challenge) else existing.add(0, challenge)
         saveCachedChallenges(existing)
         rebuildState(existing, _state.value.myUid.ifEmpty { currentUid() }, _state.value.myLiveMinutesToday)
     }
@@ -502,11 +582,78 @@ class FriendChallengeRepository(
     companion object {
         private const val TAG = "FriendChallengeRepo"
         private const val COLLECTION = "friend_challenges"
+        private const val USERS_COLLECTION = "users"
         private const val PREFS_NAME = "friend_challenges_prefs"
         private const val KEY_CACHE = "cached_challenges"
         private const val KEY_CELEBRATED_IDS = "celebrated_ids"
         private const val KEY_AUTO_STARTED_IDS = "auto_started_ids"
         private const val MAX_CACHE = 100
+
+        private fun statusRank(status: FriendChallengeStatus): Int = when (status) {
+            FriendChallengeStatus.PENDING -> 1
+            FriendChallengeStatus.ACTIVE -> 2
+            FriendChallengeStatus.DECLINED -> 3
+            FriendChallengeStatus.COMPLETED -> 4
+            FriendChallengeStatus.SURRENDERED -> 5
+        }
+
+        internal fun mergeChallenges(a: FriendChallenge, b: FriendChallenge): FriendChallenge {
+            val primary = if (statusRank(b.status) >= statusRank(a.status)) b else a
+            return primary.copy(
+                challengerName = b.challengerName.ifBlank { a.challengerName },
+                opponentName = b.opponentName.ifBlank { a.opponentName },
+                challengerMinutes = maxOf(a.challengerMinutes, b.challengerMinutes),
+                opponentMinutes = maxOf(a.opponentMinutes, b.opponentMinutes),
+                acceptedAt = listOfNotNull(a.acceptedAt, b.acceptedAt).maxOrNull(),
+                finishedAt = listOfNotNull(a.finishedAt, b.finishedAt).maxOrNull(),
+                surrenderedByUid = b.surrenderedByUid ?: a.surrenderedByUid,
+                winnerUid = b.winnerUid ?: a.winnerUid
+            )
+        }
+
+        private fun DocumentSnapshot.toUserDuelChallenge(): FriendChallenge? = runCatching {
+            val duelId = getString("duelId")?.takeIf { it.isNotBlank() } ?: return null
+            val rawStatus = getString("duelStatus")?.lowercase() ?: return null
+            if (rawStatus == "cancelled") return null
+            val challengerUid = getString("duelChallengerUid")?.takeIf { it.isNotBlank() } ?: return null
+            val opponentUid = getString("duelOpponentUid")?.takeIf { it.isNotBlank() } ?: return null
+            FriendChallenge(
+                id = duelId,
+                challengerUid = challengerUid,
+                challengerName = getString("duelChallengerName").orEmpty(),
+                challengerMinutes = (getLong("duelChallengerMinutes") ?: 0L).toInt(),
+                opponentUid = opponentUid,
+                opponentName = getString("duelOpponentName").orEmpty(),
+                opponentMinutes = (getLong("duelOpponentMinutes") ?: 0L).toInt(),
+                dayKey = getString("duelDayKey").orEmpty(),
+                createdAt = getLong("duelCreatedAt") ?: 0L,
+                acceptedAt = getLong("duelAcceptedAt"),
+                endAt = getLong("duelEndAt") ?: 0L,
+                finishedAt = getLong("duelFinishedAt"),
+                status = FriendChallengeStatus.from(rawStatus),
+                surrenderedByUid = getString("duelSurrenderedByUid")?.takeIf { it.isNotBlank() },
+                winnerUid = getString("duelWinnerUid")?.takeIf { it.isNotBlank() }
+            )
+        }.getOrNull()
+
+        private fun FriendChallenge.toUserDuelFields(myUid: String): Map<String, Any?> = mapOf(
+            "uid" to myUid,
+            "duelId" to id,
+            "duelChallengerUid" to challengerUid,
+            "duelChallengerName" to challengerName,
+            "duelChallengerMinutes" to challengerMinutes,
+            "duelOpponentUid" to opponentUid,
+            "duelOpponentName" to opponentName,
+            "duelOpponentMinutes" to opponentMinutes,
+            "duelDayKey" to dayKey,
+            "duelCreatedAt" to createdAt,
+            "duelAcceptedAt" to acceptedAt,
+            "duelEndAt" to endAt,
+            "duelFinishedAt" to finishedAt,
+            "duelStatus" to status.name.lowercase(),
+            "duelSurrenderedByUid" to surrenderedByUid,
+            "duelWinnerUid" to winnerUid
+        )
 
         private fun DocumentSnapshot.toFriendChallenge(): FriendChallenge? = runCatching {
             val challengerUid = getString("challengerUid") ?: return null

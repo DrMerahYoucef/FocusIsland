@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -19,6 +20,7 @@ import com.example.ui.navigation.NavRequest
 import com.example.ui.navigation.TopLevel
 import com.example.ui.screen.settings.SettingsViewModel
 import com.example.ui.theme.AppIcon
+import com.example.ui.theme.AppLanguage
 import com.example.ui.theme.AppStyle
 import com.example.ui.theme.FocusIslandTheme
 import com.example.ui.theme.ThemeMode
@@ -36,6 +38,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        AppLanguage.applyLocale(this)
         enableEdgeToEdge()
 
         if (savedInstanceState == null) handleDeepLink(intent)
@@ -52,7 +55,8 @@ class MainActivity : ComponentActivity() {
             FocusIslandTheme(
                 themeMode = ThemeMode.from(settings.themeMode),
                 dynamicColor = settings.dynamicColor,
-                style = settings.appStyle
+                style = settings.appStyle,
+                language = settings.appLanguage
             ) {
                 AppNavGraph(settingsViewModel = settingsViewModel, navRequest = navRequest.value)
             }

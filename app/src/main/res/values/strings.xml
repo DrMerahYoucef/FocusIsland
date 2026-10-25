@@ -1106,5 +1106,15 @@
     <string name="friend_duel_badge_tie">Tie</string>
     <string name="community_msg_challenge_sent">Challenge sent to %1$s!</string>
     <string name="community_msg_challenge_accepted">Challenge accepted! Pomodoro started.</string>
+    <string name="nav_challenges">Challenges</string>
+    <string name="challenge_overtime_label">Overtime</string>
+    <string name="challenge_overtime_badge">Time\'s up · Failed</string>
+    <string name="challenge_total_elapsed">Total time: %1$s (goal: %2$s)</string>
+    <string name="challenge_stop_overtime">Stop timer</string>
+    <string name="challenge_history_overtime">%1$s · %2$s (total %3$s)</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_language_system">System</string>
+    <string name="settings_language_en" translatable="false">English</string>
+    <string name="settings_language_fr" translatable="false">Français</string>
 </resources>
 

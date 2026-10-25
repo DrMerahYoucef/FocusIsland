@@ -30,7 +30,9 @@ class MlKitOcrEngine : OcrEngine {
     private fun defaultTitle() = com.example.FocusFlowApplication.instance.getString(com.example.R.string.study_untitled)
 
 
-    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    private val recognizer by lazy {
+        TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    }
 
     override suspend fun extractStructuredContent(
         bitmap: Bitmap,

@@ -126,6 +126,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import com.example.ui.designsystem.Celebration
 import com.example.ui.theme.LocalFocusStyle
 
@@ -459,7 +460,7 @@ fun FocusContent(
         }
     }
     val extras = @Composable {
-        FocusExtras(today, nextExam, sound, challenge, friendState.activeDuel, onOpenSounds, onToggleSound, onOpenChallenges)
+        FocusExtras(today, nextExam, sound, onOpenSounds, onToggleSound)
     }
     val banner = @Composable {
         when {
@@ -583,50 +584,132 @@ private fun TimerDial(state: TimerState, today: FocusToday, ringColor: Color, mo
     }
 }
 
-private enum class FocusPanel { SOUND, CHALLENGE, TODAY }
+private enum class FocusPanel { SOUND, TODAY }
 
-/** Sound, Challenge and Today share one place under the timer, switched by a segmented row. */
+private const val DIAPORAMA_INTERVAL_MS = 6_000L
+
+/** Sound and Today share one diaporama (auto-cycling + swipeable/tappable slideshow) under the timer. */
 @Composable
 private fun FocusExtras(
     today: FocusToday,
     nextExam: NextExam?,
     sound: SoundCard,
-    challenge: Challenge?,
-    activeFriendDuel: FriendChallenge?,
     onOpenSounds: () -> Unit,
-    onToggleSound: () -> Unit,
-    onOpenChallenges: () -> Unit
+    onToggleSound: () -> Unit
 ) {
-    val hasAnyChallenge = challenge != null || activeFriendDuel != null
-    var panel by rememberSaveable { mutableStateOf(if (hasAnyChallenge) FocusPanel.CHALLENGE else FocusPanel.SOUND) }
-    val labels = listOf(
-        FocusPanel.SOUND to R.string.sound_title,
-        FocusPanel.CHALLENGE to R.string.challenge_card_title,
-        FocusPanel.TODAY to R.string.focus_panel_today
-    )
-    Column(Modifier.widthIn(max = Spacing.formMaxWidth).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            labels.forEachIndexed { i, (p, label) ->
-                SegmentedButton(
-                    selected = panel == p,
-                    onClick = { panel = p },
-                    shape = SegmentedButtonDefaults.itemShape(i, labels.size),
-                    icon = {
-                        // A running challenge shows a flag even when another panel is open.
-                        if (p == FocusPanel.CHALLENGE && hasAnyChallenge && panel != p) {
-                            Icon(Icons.Rounded.Flag, contentDescription = null, modifier = Modifier.size(SegmentedButtonDefaults.IconSize))
+    val slides = remember { listOf(FocusPanel.SOUND, FocusPanel.TODAY) }
+    var panelIndex by rememberSaveable { mutableIntStateOf(0) }
+    var manualInteractionTick by remember { mutableIntStateOf(0) }
+    val currentPanel = slides[panelIndex.coerceIn(0, slides.lastIndex)]
+
+    LaunchedEffect(panelIndex, manualInteractionTick) {
+        delay(DIAPORAMA_INTERVAL_MS)
+        panelIndex = (panelIndex + 1) % slides.size
+    }
+
+    var dragAccumulator by remember { mutableStateOf(0f) }
+
+    Column(
+        Modifier
+            .widthIn(max = Spacing.formMaxWidth)
+            .fillMaxWidth()
+            .pointerInput(slides.size) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull() ?: continue
+                        if (change.pressed) {
+                            val deltaX = change.position.x - change.previousPosition.x
+                            dragAccumulator += deltaX
+                            if (kotlin.math.abs(dragAccumulator) > 48f) {
+                                panelIndex = if (dragAccumulator < 0f) {
+                                    (panelIndex + 1) % slides.size
+                                } else {
+                                    (panelIndex - 1 + slides.size) % slides.size
+                                }
+                                manualInteractionTick++
+                                dragAccumulator = 0f
+                            }
                         } else {
-                            SegmentedButtonDefaults.Icon(active = panel == p)
+                            dragAccumulator = 0f
                         }
                     }
-                ) { Text(stringResource(label), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                }
+            },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+    ) {
+        androidx.compose.animation.AnimatedContent(
+            targetState = currentPanel,
+            transitionSpec = {
+                val forward = targetState.ordinal >= initialState.ordinal
+                (androidx.compose.animation.slideInHorizontally { width -> if (forward) width / 3 else -width / 3 } + fadeIn())
+                    .togetherWith(
+                        androidx.compose.animation.slideOutHorizontally { width -> if (forward) -width / 3 else width / 3 } + fadeOut()
+                    )
+            },
+            label = "focus_diaporama",
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = Spacing.focusPanelHeight)
+                .animateContentSize()
+        ) { targetPanel ->
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                when (targetPanel) {
+                    FocusPanel.SOUND -> SoundCardView(sound = sound, onOpen = onOpenSounds, onToggle = onToggleSound)
+                    FocusPanel.TODAY -> TodayPanel(today, nextExam)
+                }
             }
         }
-        Box(Modifier.fillMaxWidth().heightIn(min = Spacing.focusPanelHeight).animateContentSize(), contentAlignment = Alignment.Center) {
-            when (panel) {
-                FocusPanel.SOUND -> SoundCardView(sound = sound, onOpen = onOpenSounds, onToggle = onToggleSound)
-                FocusPanel.CHALLENGE -> ChallengeEntry(challenge = challenge, onOpen = onOpenChallenges)
-                FocusPanel.TODAY -> TodayPanel(today, nextExam)
+
+        // Diaporama indicator pills (Sound / Today) — tap to switch slide directly
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            slides.forEachIndexed { index, slide ->
+                val selected = index == panelIndex
+                val labelRes = when (slide) {
+                    FocusPanel.SOUND -> R.string.sound_title
+                    FocusPanel.TODAY -> R.string.focus_panel_today
+                }
+                Surface(
+                    onClick = {
+                        panelIndex = index
+                        manualInteractionTick++
+                    },
+                    shape = androidx.compose.foundation.shape.CircleShape,
+                    color = if (selected) {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.65f)
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xxs),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)
+                    ) {
+                        Box(
+                            Modifier
+                                .size(if (selected) Spacing.xs else 6.dp)
+                                .background(
+                                    if (selected) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                    androidx.compose.foundation.shape.CircleShape
+                                )
+                        )
+                        Text(
+                            text = stringResource(labelRes),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.onSecondaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                    }
+                }
             }
         }
     }
@@ -637,6 +720,12 @@ private fun FocusExtras(
 private fun TodayPanel(today: FocusToday, nextExam: NextExam?) {
     Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Text(
+                stringResource(R.string.focus_panel_today),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = Spacing.xs)
+            )
             Row(Modifier.fillMaxWidth()) {
                 TodayValue(today.sessions.toString(), pluralStringResource(R.plurals.focus_sessions_today_label, today.sessions), Icons.Rounded.TaskAlt, MaterialTheme.colorScheme.primary, Modifier.weight(1f))
                 TodayValue(today.minutes.toString(), stringResource(R.string.focus_minutes_today_label), Icons.Rounded.Timer, MaterialTheme.colorScheme.primary, Modifier.weight(1f))
@@ -740,7 +829,7 @@ private fun SoundCardView(sound: SoundCard, onOpen: () -> Unit, onToggle: () -> 
     }
 }
 
-/** Entry to Challenges; while one runs, its goal and the time left. */
+/** Entry to Challenges; while one runs, its goal and the time left (or overtime if expired). */
 @Composable
 private fun ChallengeEntry(challenge: Challenge?, onOpen: () -> Unit) {
     val now by produceState(System.currentTimeMillis(), challenge?.id) {
@@ -749,18 +838,42 @@ private fun ChallengeEntry(challenge: Challenge?, onOpen: () -> Unit) {
             delay(1_000L - value % 1_000L)
         }
     }
-    val container = if (challenge != null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow
+    val isOvertime = challenge != null && now >= challenge.endAt
+    val container = when {
+        isOvertime -> MaterialTheme.colorScheme.errorContainer
+        challenge != null -> MaterialTheme.colorScheme.primaryContainer
+        else -> MaterialTheme.colorScheme.surfaceContainerLow
+    }
     Surface(onClick = onOpen, shape = MaterialTheme.shapes.medium, color = container, modifier = Modifier.fillMaxWidth()) {
         ListItem(
-            overlineContent = if (challenge != null) { { Text(stringResource(R.string.challenge_in_progress)) } } else null,
+            overlineContent = if (challenge != null) {
+                {
+                    Text(
+                        stringResource(if (isOvertime) R.string.challenge_overtime_badge else R.string.challenge_in_progress),
+                        color = if (isOvertime) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            } else null,
             headlineContent = { Text(challenge?.goal ?: stringResource(R.string.challenge_card_title), maxLines = 1, overflow = TextOverflow.Ellipsis) },
             supportingContent = {
                 Text(
-                    if (challenge != null) stringResource(R.string.challenge_card_running, ChallengeTime.clock(challenge.endAt - now))
-                    else stringResource(R.string.challenge_card_body)
+                    when {
+                        challenge != null && isOvertime ->
+                            "+${ChallengeTime.clock((now - challenge.endAt).coerceAtLeast(0L))} · ${ChallengeTime.clock((now - challenge.startAt).coerceAtLeast(challenge.durationMs))}"
+                        challenge != null ->
+                            stringResource(R.string.challenge_card_running, ChallengeTime.clock(challenge.endAt - now))
+                        else ->
+                            stringResource(R.string.challenge_card_body)
+                    }
                 )
             },
-            leadingContent = { Icon(Icons.Rounded.Flag, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+            leadingContent = {
+                Icon(
+                    Icons.Rounded.Flag,
+                    contentDescription = null,
+                    tint = if (isOvertime) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                )
+            },
             trailingContent = { Icon(Icons.Rounded.ChevronRight, contentDescription = null) },
             colors = ListItemDefaults.colors(containerColor = container)
         )

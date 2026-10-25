@@ -124,14 +124,16 @@ fun RevisionsHomeScreen(
     // Google Play services; without it, the in-app camera opens instead.
     val scanUnavailable = stringResource(R.string.study_scan_unavailable)
     val scanner = remember {
-        GmsDocumentScanning.getClient(
-            GmsDocumentScannerOptions.Builder()
-                .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
-                .setGalleryImportAllowed(true)
-                .setPageLimit(1)
-                .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_JPEG)
-                .build()
-        )
+        runCatching {
+            GmsDocumentScanning.getClient(
+                GmsDocumentScannerOptions.Builder()
+                    .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+                    .setGalleryImportAllowed(true)
+                    .setPageLimit(1)
+                    .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_JPEG)
+                    .build()
+            )
+        }.getOrNull()
     }
     val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
@@ -144,8 +146,9 @@ fun RevisionsHomeScreen(
     }
     fun startScan() {
         val activity = context.findActivity()
-        if (activity == null) { onAddClick(); return }
-        scanner.getStartScanIntent(activity)
+        val activeScanner = scanner
+        if (activity == null || activeScanner == null) { onAddClick(); return }
+        activeScanner.getStartScanIntent(activity)
             .addOnSuccessListener { scanLauncher.launch(IntentSenderRequest.Builder(it).build()) }
             .addOnFailureListener {
                 scope.launch { snackbar.showSnackbar(scanUnavailable) }

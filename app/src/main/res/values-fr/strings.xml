@@ -1092,5 +1092,13 @@
     <string name="friend_duel_badge_tie">Égalité</string>
     <string name="community_msg_challenge_sent">Défi envoyé à %1$s !</string>
     <string name="community_msg_challenge_accepted">Défi accepté ! Pomodoro démarré.</string>
+    <string name="nav_challenges">Défis</string>
+    <string name="challenge_overtime_label">Temps dépassé</string>
+    <string name="challenge_overtime_badge">Temps écoulé · Échoué</string>
+    <string name="challenge_total_elapsed">Temps total : %1$s (objectif : %2$s)</string>
+    <string name="challenge_stop_overtime">Arrêter le chrono</string>
+    <string name="challenge_history_overtime">%1$s · %2$s (total %3$s)</string>
+    <string name="settings_language">Langue</string>
+    <string name="settings_language_system">Système</string>
 </resources>
 

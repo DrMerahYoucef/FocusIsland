@@ -150,9 +150,11 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
             delay(1_000L - value % 1_000L)
         }
     }
-    LaunchedEffect(now, state.active?.id) {
+    LaunchedEffect(now, state.active?.id, state.active?.result) {
         val active = state.active ?: return@LaunchedEffect
-        if (now >= active.endAt) viewModel.timeUp()
+        if (now >= active.endAt && active.result != ChallengeResult.FAILED) {
+            viewModel.timeUp()
+        }
     }
 
     Box(modifier.fillMaxSize()) {
@@ -167,6 +169,7 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
                 playSuccessSound(context, focusStyle.successSound)
             },
             onGiveUp = { confirmGiveUp = true },
+            onStopOvertime = viewModel::stopOvertime,
             onDismissCelebration = { celebrated = null },
             onClearHistory = { confirmClear = true },
             onAcceptFriendDuel = viewModel::acceptFriendChallenge,
@@ -233,6 +236,7 @@ internal fun ChallengesContent(
     onGiveUp: () -> Unit,
     onDismissCelebration: () -> Unit,
     onClearHistory: () -> Unit,
+    onStopOvertime: () -> Unit = {},
     friendState: FriendChallengeState = FriendChallengeState(),
     onAcceptFriendDuel: (FriendChallenge) -> Unit = {},
     onDeclineFriendDuel: (FriendChallenge) -> Unit = {},
@@ -285,7 +289,14 @@ internal fun ChallengesContent(
 
         item {
             when {
-                state.active != null -> ActiveChallengeCard(state.active, nowMs, onGoalReached, onGiveUp)
+                state.active != null -> ActiveChallengeCard(
+                    challenge = state.active,
+                    nowMs = nowMs,
+                    onGoalReached = onGoalReached,
+                    onGiveUp = onGiveUp,
+                    onStopOvertime = onStopOvertime,
+                    onNew = onNew
+                )
                 celebrated != null -> ResultCard(celebrated, success = true, onDismiss = onDismissCelebration, onNew = onNew)
                 lastFailed != null -> ResultCard(lastFailed, success = false, onDismiss = null, onNew = onNew)
                 else -> Button(onClick = onNew, modifier = Modifier.fillMaxWidth().heightIn(min = Spacing.buttonHeight)) {
@@ -329,7 +340,7 @@ internal fun ChallengesContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            items(state.history, key = { it.id }) { HistoryRow(it) }
+            items(state.history, key = { it.id }) { HistoryRow(it, activeChallenge = state.active, nowMs = nowMs) }
         }
     }
 }
@@ -337,8 +348,90 @@ internal fun ChallengesContent(
 private const val RECENT_MS = 10 * 60_000L
 
 @Composable
-private fun ActiveChallengeCard(challenge: Challenge, nowMs: Long, onGoalReached: () -> Unit, onGiveUp: () -> Unit) {
+private fun ActiveChallengeCard(
+    challenge: Challenge,
+    nowMs: Long,
+    onGoalReached: () -> Unit,
+    onGiveUp: () -> Unit,
+    onStopOvertime: () -> Unit,
+    onNew: () -> Unit
+) {
     val view = LocalView.current
+    val isOvertime = nowMs >= challenge.endAt || challenge.result == ChallengeResult.FAILED
+
+    if (isOvertime) {
+        val overtimeMs = (nowMs - challenge.endAt).coerceAtLeast(0L)
+        val overtimeClock = "+${ChallengeTime.clock(overtimeMs)}"
+        val totalElapsedClock = ChallengeTime.clock((nowMs - challenge.startAt).coerceAtLeast(challenge.durationMs))
+        val plannedText = durationText((challenge.durationMs / 60_000L).toInt().coerceAtLeast(1))
+        val overtimeLabel = stringResource(R.string.challenge_overtime_label)
+
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f))) {
+            Column(
+                Modifier.fillMaxWidth().padding(Spacing.lg),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(Spacing.md)
+            ) {
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                ) {
+                    Text(
+                        stringResource(R.string.challenge_overtime_badge),
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xxs)
+                    )
+                }
+                Text(
+                    challenge.goal,
+                    style = MaterialTheme.typography.titleLarge,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.semantics { heading() }
+                )
+                PhaseRing(
+                    progress = 1f,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .size(Spacing.focusRingCompact)
+                        .semantics(mergeDescendants = true) { contentDescription = "$overtimeLabel $overtimeClock" }
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        RingClock(overtimeClock, MaterialTheme.colorScheme.error)
+                        Text(overtimeLabel, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                Text(
+                    stringResource(R.string.challenge_total_elapsed, totalElapsedClock, plannedText),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    styledString(R.string.challenge_time_up_body),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+                Button(
+                    onClick = onNew,
+                    modifier = Modifier.widthIn(max = Spacing.formMaxWidth).fillMaxWidth().heightIn(min = Spacing.buttonHeight)
+                ) {
+                    Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                    Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                    Text(stringResource(R.string.challenge_new))
+                }
+                OutlinedButton(
+                    onClick = onStopOvertime,
+                    modifier = Modifier.widthIn(max = Spacing.formMaxWidth).fillMaxWidth().heightIn(min = Spacing.buttonHeight)
+                ) {
+                    Text(stringResource(R.string.challenge_stop_overtime))
+                }
+            }
+        }
+        return
+    }
+
     val remaining = (challenge.endAt - nowMs).coerceAtLeast(0L)
     val clock = ChallengeTime.clock(remaining)
     val leftLabel = stringResource(R.string.challenge_time_left)
@@ -427,11 +520,19 @@ private fun ResultCard(challenge: Challenge, success: Boolean, onDismiss: (() ->
 }
 
 @Composable
-private fun HistoryRow(challenge: Challenge) {
+private fun HistoryRow(challenge: Challenge, activeChallenge: Challenge? = null, nowMs: Long = 0L) {
     val done = challenge.result == ChallengeResult.DONE
     val day = remember(challenge.startAt) {
         DateTimeFormatter.ofPattern("EEE d MMM").format(Instant.ofEpochMilli(challenge.startAt).atZone(ZoneId.systemDefault()))
     }
+    val plannedDurationText = durationText((challenge.durationMs / 60_000L).toInt().coerceAtLeast(1))
+    val totalMs = if (activeChallenge?.id == challenge.id && nowMs > challenge.endAt) {
+        (nowMs - challenge.startAt).coerceAtLeast(challenge.durationMs)
+    } else {
+        challenge.actualDurationMs
+    }
+    val hasOvertime = !done && totalMs >= challenge.durationMs + 1_000L
+
     ListItem(
         leadingContent = {
             Icon(
@@ -441,7 +542,15 @@ private fun HistoryRow(challenge: Challenge) {
             )
         },
         headlineContent = { Text(challenge.goal, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-        supportingContent = { Text("$day · ${durationText((challenge.durationMs / 60_000L).toInt())}") },
+        supportingContent = {
+            Text(
+                if (hasOvertime) {
+                    stringResource(R.string.challenge_history_overtime, day, plannedDurationText, ChallengeTime.clock(totalMs))
+                } else {
+                    "$day · $plannedDurationText"
+                }
+            )
+        },
         trailingContent = {
             Surface(
                 shape = MaterialTheme.shapes.small,

@@ -51,6 +51,7 @@ import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Landscape
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.NotificationsActive
@@ -363,6 +364,27 @@ fun SettingsScreen(
                                 selected = ThemeMode.from(state.themeMode) == mode,
                                 onClick = { viewModel.updateThemeMode(mode.key) },
                                 shape = SegmentedButtonDefaults.itemShape(i, modes.size)
+                            ) { Text(stringResource(label), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        }
+                    }
+                }
+                SettingsDivider()
+                Column(Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                        Icon(androidx.compose.material.icons.Icons.Rounded.Language, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.settings_language), style = MaterialTheme.typography.bodyLarge)
+                    }
+                    val languages = listOf(
+                        com.example.ui.theme.AppLanguage.SYSTEM to R.string.settings_language_system,
+                        com.example.ui.theme.AppLanguage.ENGLISH to R.string.settings_language_en,
+                        com.example.ui.theme.AppLanguage.FRENCH to R.string.settings_language_fr
+                    )
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        languages.forEachIndexed { i, (lang, label) ->
+                            SegmentedButton(
+                                selected = state.appLanguage == lang,
+                                onClick = { viewModel.updateAppLanguage(lang) },
+                                shape = SegmentedButtonDefaults.itemShape(i, languages.size)
                             ) { Text(stringResource(label), maxLines = 1, overflow = TextOverflow.Ellipsis) }
                         }
                     }

@@ -43,7 +43,16 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
 
     /** Called by the screen when its countdown reaches zero. */
     fun timeUp() {
-        if (store.expireIfDue() != null) ChallengeAlarmReceiver.cancel(getApplication())
+        val active = store.state.value.active ?: return
+        if (active.result != ChallengeResult.FAILED && store.expireIfDue() != null) {
+            ChallengeAlarmReceiver.cancel(getApplication())
+        }
+    }
+
+    /** Stops the overtime timer on an expired challenge and records total time spent in history. */
+    fun stopOvertime() {
+        store.stopOvertime()
+        ChallengeAlarmReceiver.cancel(getApplication())
     }
 
     fun clearHistory() = store.clearHistory()

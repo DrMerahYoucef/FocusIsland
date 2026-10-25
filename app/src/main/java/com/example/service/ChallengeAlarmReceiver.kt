@@ -119,7 +119,7 @@ class ChallengeAlarmReceiver : BroadcastReceiver() {
         private fun openApp(context: Context): PendingIntent = PendingIntent.getActivity(
             context, 3,
             Intent(context, MainActivity::class.java)
-                .putExtra(MainActivity.EXTRA_TARGET_SCREEN, "focus")
+                .putExtra(MainActivity.EXTRA_TARGET_SCREEN, "challenges")
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

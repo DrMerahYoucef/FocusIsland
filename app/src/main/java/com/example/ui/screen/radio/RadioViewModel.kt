@@ -106,10 +106,11 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     // ------------------------------------------------------------------ playback
 
     private fun initController(context: Context) {
-        if (mediaController != null) return
-        val token = SessionToken(context, ComponentName(context, RadioPlayerService::class.java))
-        val future = MediaController.Builder(context, token).buildAsync()
-        future.addListener({
+        if (mediaController != null || android.os.Build.FINGERPRINT == "robolectric") return
+        runCatching {
+            val token = SessionToken(context, ComponentName(context, RadioPlayerService::class.java))
+            val future = MediaController.Builder(context, token).buildAsync()
+            future.addListener({
             try {
                 val controller = future.get()
                 mediaController = controller
@@ -141,7 +142,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 android.util.Log.e("RadioViewModel", "Media controller unavailable", e)
             }
-        }, context.mainExecutor)
+            }, context.mainExecutor)
+        }
     }
 
     private fun refreshStatus(controller: Player) {

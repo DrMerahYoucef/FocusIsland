@@ -118,6 +118,8 @@ import com.example.ui.theme.FocusModePalette
 import com.example.ui.theme.LagoonDarkColors
 import com.example.ui.theme.Spacing
 import com.example.ui.theme.extendedColors
+import com.example.ui.theme.phaseColor
+import com.example.ui.theme.phaseTextureBackground
 import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.time.LocalDate
@@ -266,10 +268,11 @@ fun FocusModeScreen(
     FocusIslandTheme(darkTheme = true) {
         MaterialTheme(colorScheme = LagoonDarkColors.copy(background = FocusModePalette.background, surface = FocusModePalette.background)) {
             var dragY by remember { mutableFloatStateOf(0f) }
+            val cycleColor = phaseColor(state.phase)
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(FocusModePalette.background)
+                    .phaseTextureBackground(cycleColor = cycleColor, baseColor = FocusModePalette.background, isDark = true)
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onTap = { lastTouch = System.currentTimeMillis() },

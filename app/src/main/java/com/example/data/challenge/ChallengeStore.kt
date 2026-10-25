@@ -19,6 +19,7 @@ data class Challenge(
     val result: ChallengeResult? = null
 ) {
     val durationMs: Long get() = endAt - startAt
+    val actualDurationMs: Long get() = ((finishedAt ?: endAt) - startAt).coerceAtLeast(durationMs)
 }
 
 data class ChallengeState(val active: Challenge? = null, val history: List<Challenge> = emptyList()) {
@@ -35,10 +36,20 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
     private val _state = MutableStateFlow(load())
     val state: StateFlow<ChallengeState> = _state.asStateFlow()
 
+    @Synchronized
     fun start(goal: String, endAt: Long): Challenge {
         val now = clock()
+        val historyWithPrevious = _state.value.active?.let { prev ->
+            if (prev.result == ChallengeResult.FAILED || now >= prev.endAt) {
+                val finalized = prev.copy(finishedAt = now, result = ChallengeResult.FAILED)
+                upsertHistory(finalized, _state.value.history)
+            } else {
+                _state.value.history
+            }
+        } ?: _state.value.history
+
         val challenge = Challenge(id = now, goal = goal.trim(), startAt = now, endAt = endAt)
-        save(_state.value.copy(active = challenge))
+        save(ChallengeState(active = challenge, history = historyWithPrevious))
         return challenge
     }
 
@@ -47,15 +58,41 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
     fun finish(result: ChallengeResult): Challenge? {
         val active = _state.value.active ?: return null
         val done = active.copy(finishedAt = clock(), result = result)
-        save(ChallengeState(active = null, history = (listOf(done) + _state.value.history).take(MAX_HISTORY)))
+        save(ChallengeState(active = null, history = upsertHistory(done, _state.value.history)))
         return done
     }
 
-    /** Marks the active challenge failed if its time is up (missed alarm, reboot). */
-    fun expireIfDue(): Challenge? =
-        _state.value.active?.takeIf { clock() >= it.endAt }?.let { finish(ChallengeResult.FAILED) }
+    /**
+     * Marks the active challenge failed when its countdown reaches 00:00, recording it in history
+     * as FAILED while keeping it in [ChallengeState.active] so the overtime clock keeps counting up.
+     */
+    @Synchronized
+    fun expireIfDue(): Challenge? {
+        val active = _state.value.active ?: return null
+        val now = clock()
+        if (now < active.endAt) return null
+        if (active.result == ChallengeResult.FAILED) return active
+        val failed = active.copy(finishedAt = now, result = ChallengeResult.FAILED)
+        save(ChallengeState(active = failed, history = upsertHistory(failed, _state.value.history)))
+        return failed
+    }
+
+    /** Stops the overtime timer on an expired challenge and records total time spent in history. */
+    @Synchronized
+    fun stopOvertime(): Challenge? {
+        val active = _state.value.active ?: return null
+        val now = clock()
+        val finalized = active.copy(finishedAt = maxOf(now, active.endAt), result = ChallengeResult.FAILED)
+        save(ChallengeState(active = null, history = upsertHistory(finalized, _state.value.history)))
+        return finalized
+    }
 
     fun clearHistory() = save(_state.value.copy(history = emptyList()))
+
+    private fun upsertHistory(entry: Challenge, current: List<Challenge>): List<Challenge> {
+        val filtered = current.filterNot { it.id == entry.id }
+        return (listOf(entry) + filtered).take(MAX_HISTORY)
+    }
 
     private fun save(state: ChallengeState) {
         _state.value = state

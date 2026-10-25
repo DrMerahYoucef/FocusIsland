@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for Friend Daily Study Challenges (from Leaderboard/Classement with live Pomodoro progress, surrender, winner celebration, and Challenge/Défi history) and automatic Pomodoro pause/resume when leaving the app for another app.",
-  "updatedAt":  "2026-10-24T08:42:50.003182223Z",
+  "summary":  "Implementation plan for adding a cycle-reactive fine dot-grain textured background (following Focus, Short Break, and Long Break colors across the app shell) and an in-app Language selector (System, English, Français) in Settings.",
+  "updatedAt":  "2026-10-25T13:27:22.188228675Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
