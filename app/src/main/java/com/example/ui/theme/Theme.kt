@@ -255,108 +255,173 @@ fun phaseColor(phase: Phase): Color = when (phase) {
 }
 
 /**
- * Draws a subtle fine staggered dot-grain texture paired with a soft radial glow that follows
- * the color of the current Pomodoro cycle ([Phase.FOCUS], [Phase.SHORT_BREAK], [Phase.LONG_BREAK]).
- * Uses [drawWithCache] and batched [drawPoints] so point coordinates are computed only when
- * layout bounds change.
+ * Returns the number of Pomodoro minutes passed in the current phase.
+ */
+fun com.example.service.TimerState.pomodoroMinutesPassed(): Int {
+    val elapsedMs = (phaseDurationMs - remainingMs).coerceAtLeast(0L)
+    return (elapsedMs / 60_000L).toInt().coerceAtLeast(0)
+}
+
+/**
+ * Fractional progress (0f..1f) within the current Pomodoro minute while active, so stars for each
+ * passing minute can softly emerge.
+ */
+fun com.example.service.TimerState.pomodoroCurrentMinuteFraction(): Float {
+    val elapsedMs = (phaseDurationMs - remainingMs).coerceAtLeast(0L)
+    if (elapsedMs <= 0L && !isRunning) return 0f
+    return ((elapsedMs % 60_000L).toFloat() / 60_000f).coerceIn(0.15f, 1f)
+}
+
+private data class DispersedStar(
+    val x: Float,
+    val y: Float,
+    val radiusPx: Float,
+    val alphaWeight: Float,
+    val isSparkle: Boolean,
+    val minuteIndex: Int
+)
+
+/** Low-discrepancy Van der Corput / Halton coordinate in (0f, 1f) for organic star dispersion. */
+private fun haltonCoordinate(index: Int, base: Int): Float {
+    var result = 0f
+    var f = 1f / base
+    var i = index
+    while (i > 0) {
+        result += f * (i % base)
+        i /= base
+        f /= base
+    }
+    return result
+}
+
+private const val STARS_PER_MINUTE = 5
+private const val MAX_STAR_MINUTES = 120
+
+/**
+ * Draws a clean dark or light background ([baseColor]) where faint, organically dispersed stars
+ * appear with every Pomodoro minute passed ([minutesPassed]), colored according to the current
+ * timer phase ([cycleColor]: Focus, Short Break / Courte pause, or Long Break / Longue pause).
  */
 fun Modifier.phaseTextureBackground(
     cycleColor: Color,
     baseColor: Color,
-    isDark: Boolean
+    isDark: Boolean,
+    minutesPassed: Int = 0,
+    currentMinuteFraction: Float = 0f
 ): Modifier = this.drawWithCache {
     val w = size.width
     val h = size.height
-    val stepPx = 16.dp.toPx().coerceAtLeast(10f)
-    val mainDotDiameter = 2.3.dp.toPx()
-    val subDotDiameter = 1.7.dp.toPx()
+    val clampedMinutes = minutesPassed.coerceIn(0, MAX_STAR_MINUTES)
+    val totalMinutesToGenerate = (clampedMinutes + if (currentMinuteFraction > 0f) 1 else 0)
+        .coerceIn(0, MAX_STAR_MINUTES)
 
-    val mainPoints = ArrayList<Offset>()
-    val subPoints = ArrayList<Offset>()
-    if (w > 0f && h > 0f) {
-        var row = 0
-        var y = stepPx * 0.5f
-        val rowStep = stepPx * 0.866f
-        while (y < h) {
-            val isOddRow = (row and 1) == 1
-            val xOffset = if (isOddRow) stepPx * 0.5f else 0f
-            val targetList = if (isOddRow) subPoints else mainPoints
-            var x = stepPx * 0.5f + xOffset
-            while (x < w) {
-                targetList.add(Offset(x, y))
-                x += stepPx
+    val stars = ArrayList<DispersedStar>(totalMinutesToGenerate * STARS_PER_MINUTE)
+    if (w > 0f && h > 0f && totalMinutesToGenerate > 0) {
+        val marginX = w * 0.04f
+        val marginY = h * 0.04f
+        val usableW = (w - marginX * 2f).coerceAtLeast(1f)
+        val usableH = (h - marginY * 2f).coerceAtLeast(1f)
+
+        val sparkleRadius = 2.4.dp.toPx()
+        val mediumRadius = 1.7.dp.toPx()
+        val smallRadius = 1.2.dp.toPx()
+
+        for (minute in 0 until totalMinutesToGenerate) {
+            for (s in 0 until STARS_PER_MINUTE) {
+                // Offset seed by 7 so initial points are well inside the canvas
+                val seqIndex = minute * STARS_PER_MINUTE + s + 7
+                val nx = haltonCoordinate(seqIndex, 2)
+                val ny = haltonCoordinate(seqIndex, 3)
+                val x = marginX + nx * usableW
+                val y = marginY + ny * usableH
+                val isSparkle = (s == 0)
+                val radius = when {
+                    isSparkle -> sparkleRadius
+                    s % 2 == 1 -> mediumRadius
+                    else -> smallRadius
+                }
+                val alphaWeight = when {
+                    isSparkle -> 1.0f
+                    s % 2 == 1 -> 0.78f
+                    else -> 0.58f
+                }
+                stars.add(
+                    DispersedStar(
+                        x = x,
+                        y = y,
+                        radiusPx = radius,
+                        alphaWeight = alphaWeight,
+                        isSparkle = isSparkle,
+                        minuteIndex = minute
+                    )
+                )
             }
-            y += rowStep
-            row++
         }
     }
 
-    val primaryGlowRadius = (maxOf(w, h) * 0.72f).coerceAtLeast(1f)
-    val primaryGlowCenter = Offset(w * 0.5f, h * 0.28f)
-    val primaryGlowBrush = Brush.radialGradient(
-        colors = listOf(
-            cycleColor.copy(alpha = if (isDark) 0.19f else 0.14f),
-            cycleColor.copy(alpha = if (isDark) 0.07f else 0.05f),
-            Color.Transparent
-        ),
-        center = primaryGlowCenter,
-        radius = primaryGlowRadius
-    )
-
-    val secondaryGlowRadius = (maxOf(w, h) * 0.55f).coerceAtLeast(1f)
-    val secondaryGlowCenter = Offset(w * 0.85f, h * 0.82f)
-    val secondaryGlowBrush = Brush.radialGradient(
-        colors = listOf(
-            cycleColor.copy(alpha = if (isDark) 0.11f else 0.08f),
-            Color.Transparent
-        ),
-        center = secondaryGlowCenter,
-        radius = secondaryGlowRadius
-    )
-
-    val washColor = cycleColor.copy(alpha = if (isDark) 0.065f else 0.05f)
-    val mainDotColor = cycleColor.copy(alpha = if (isDark) 0.17f else 0.145f)
-    val subDotColor = cycleColor.copy(alpha = if (isDark) 0.11f else 0.095f)
+    val baseStarAlpha = if (isDark) 0.30f else 0.34f
+    val rayStrokePx = 1.1.dp.toPx()
 
     onDrawBehind {
+        // 1. Clean dark or light screen
         drawRect(color = baseColor)
-        if (w <= 0f || h <= 0f) return@onDrawBehind
+        if (w <= 0f || h <= 0f || stars.isEmpty()) return@onDrawBehind
 
-        drawRect(color = washColor)
-        drawCircle(
-            brush = primaryGlowBrush,
-            radius = primaryGlowRadius,
-            center = primaryGlowCenter
-        )
-        drawCircle(
-            brush = secondaryGlowBrush,
-            radius = secondaryGlowRadius,
-            center = secondaryGlowCenter
-        )
-        if (mainPoints.isNotEmpty()) {
-            drawPoints(
-                points = mainPoints,
-                pointMode = PointMode.Points,
-                color = mainDotColor,
-                strokeWidth = mainDotDiameter,
-                cap = StrokeCap.Round
+        // 2. Faint dispersed stars for each Pomodoro minute passed
+        for (i in 0 until stars.size) {
+            val star = stars[i]
+            val minuteVisibility = when {
+                star.minuteIndex < clampedMinutes -> 1f
+                star.minuteIndex == clampedMinutes -> currentMinuteFraction
+                else -> 0f
+            }
+            if (minuteVisibility <= 0.01f) continue
+
+            val coreAlpha = (baseStarAlpha * star.alphaWeight * minuteVisibility).coerceIn(0f, 1f)
+            val haloAlpha = (coreAlpha * 0.28f).coerceIn(0f, 1f)
+            val center = Offset(star.x, star.y)
+
+            // Soft faint outer star glow
+            drawCircle(
+                color = cycleColor.copy(alpha = haloAlpha),
+                radius = star.radiusPx * 2.8f,
+                center = center
             )
-        }
-        if (subPoints.isNotEmpty()) {
-            drawPoints(
-                points = subPoints,
-                pointMode = PointMode.Points,
-                color = subDotColor,
-                strokeWidth = subDotDiameter,
-                cap = StrokeCap.Round
+
+            // Faint 4-point star rays for the primary star of each minute
+            if (star.isSparkle) {
+                val rayLen = star.radiusPx * 3.4f
+                val rayColor = cycleColor.copy(alpha = (coreAlpha * 0.65f).coerceIn(0f, 1f))
+                drawLine(
+                    color = rayColor,
+                    start = Offset(star.x - rayLen, star.y),
+                    end = Offset(star.x + rayLen, star.y),
+                    strokeWidth = rayStrokePx,
+                    cap = StrokeCap.Round
+                )
+                drawLine(
+                    color = rayColor,
+                    start = Offset(star.x, star.y - rayLen),
+                    end = Offset(star.x, star.y + rayLen),
+                    strokeWidth = rayStrokePx,
+                    cap = StrokeCap.Round
+                )
+            }
+
+            // Star core
+            drawCircle(
+                color = cycleColor.copy(alpha = coreAlpha),
+                radius = star.radiusPx,
+                center = center
             )
         }
     }
 }
 
 /**
- * Full-screen container that automatically observes the current Pomodoro phase
- * (Focus, Short Break, Long Break) and renders the cycle-colored fine dot-grain texture behind [content].
+ * Full-screen container that renders a clean dark or light screen and reveals faint dispersed
+ * stars with every Pomodoro minute passed, colored according to the current phase
+ * (Focus, Short Break / Courte pause, Long Break / Longue pause).
  */
 @Composable
 fun PhaseTexturedBackground(
@@ -372,16 +437,22 @@ fun PhaseTexturedBackground(
         animationSpec = tween(600),
         label = "cycleTextureColor"
     )
+    val minutesPassed = timerState.pomodoroMinutesPassed()
+    val currentMinuteFraction = timerState.pomodoroCurrentMinuteFraction()
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .phaseTextureBackground(
                 cycleColor = animatedCycleColor,
                 baseColor = baseColor,
-                isDark = isDark
+                isDark = isDark,
+                minutesPassed = minutesPassed,
+                currentMinuteFraction = currentMinuteFraction
             ),
         content = content
     )
 }
+
 
 

@@ -120,6 +120,8 @@ import com.example.ui.theme.Spacing
 import com.example.ui.theme.extendedColors
 import com.example.ui.theme.phaseColor
 import com.example.ui.theme.phaseTextureBackground
+import com.example.ui.theme.pomodoroCurrentMinuteFraction
+import com.example.ui.theme.pomodoroMinutesPassed
 import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.time.LocalDate
@@ -269,10 +271,18 @@ fun FocusModeScreen(
         MaterialTheme(colorScheme = LagoonDarkColors.copy(background = FocusModePalette.background, surface = FocusModePalette.background)) {
             var dragY by remember { mutableFloatStateOf(0f) }
             val cycleColor = phaseColor(state.phase)
+            val minutesPassed = state.pomodoroMinutesPassed()
+            val currentMinuteFraction = state.pomodoroCurrentMinuteFraction()
             Box(
                 Modifier
                     .fillMaxSize()
-                    .phaseTextureBackground(cycleColor = cycleColor, baseColor = FocusModePalette.background, isDark = true)
+                    .phaseTextureBackground(
+                        cycleColor = cycleColor,
+                        baseColor = FocusModePalette.background,
+                        isDark = true,
+                        minutesPassed = minutesPassed,
+                        currentMinuteFraction = currentMinuteFraction
+                    )
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onTap = { lastTouch = System.currentTimeMillis() },
