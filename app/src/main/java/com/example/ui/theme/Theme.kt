@@ -205,6 +205,15 @@ fun FocusIslandTheme(
         else -> focusStyle.colors(darkTheme)
     }
     val colors = animateColorScheme(target)
+    val view = androidx.compose.ui.platform.LocalView.current
+    if (!view.isInEditMode) {
+        androidx.compose.runtime.SideEffect {
+            val window = (baseContext as? android.app.Activity)?.window ?: return@SideEffect
+            val controller = androidx.core.view.WindowCompat.getInsetsController(window, view)
+            controller.isAppearanceLightStatusBars = !darkTheme
+            controller.isAppearanceLightNavigationBars = !darkTheme
+        }
+    }
     // Never override LocalContext or LocalDensity here: LocalContext must remain the Activity
     // so ActivityResult launchers, Dialogs, and ModalBottomSheets keep their Activity owner/window.
     CompositionLocalProvider(
@@ -214,7 +223,18 @@ fun FocusIslandTheme(
         LocalExtendedColors provides focusStyle.extended(darkTheme),
         LocalAppThemeColors provides colors.toAppThemeColors()
     ) {
-        MaterialTheme(colorScheme = colors, typography = focusStyle.typography, shapes = focusStyle.shapes, content = content)
+        MaterialTheme(
+            colorScheme = colors,
+            typography = focusStyle.typography,
+            shapes = focusStyle.shapes
+        ) {
+            androidx.compose.material3.Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = colors.background,
+                contentColor = colors.onBackground,
+                content = content
+            )
+        }
     }
 }
 

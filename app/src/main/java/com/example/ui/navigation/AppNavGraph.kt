@@ -394,7 +394,7 @@ private fun MainShell(
         }
         Scaffold(
             modifier = Modifier.weight(1f),
-            containerColor = androidx.compose.ui.graphics.Color.Transparent,
+            containerColor = MaterialTheme.colorScheme.background,
             topBar = {
                 androidx.compose.material3.TopAppBar(
                     title = { Text(stringResource(current.label)) },
