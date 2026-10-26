@@ -6,10 +6,13 @@ import android.text.format.DateFormat
 import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -20,10 +23,12 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -270,7 +275,7 @@ private const val TAB_PERSONAL = 0
 private const val TAB_STUDY_GROUP = 1
 
 /** Stateless layout (previewable) with two tabs: Personal Challenge and Study Group Chat Room. */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun ChallengesContent(
     state: ChallengeState,
@@ -295,6 +300,7 @@ internal fun ChallengesContent(
     onResendStudyGroupInvite: (FriendChallenge, String, String) -> Unit = { _, _, _ -> }
 ) {
     val hasActiveOrInviteGroup = friendState.activeDuel != null || friendState.incomingPending.isNotEmpty()
+    val isImeVisible = WindowInsets.isImeVisible
     var selectedTab by rememberSaveable {
         mutableIntStateOf(
             if (hasActiveOrInviteGroup && state.active == null) TAB_STUDY_GROUP else TAB_PERSONAL
@@ -313,71 +319,79 @@ internal fun ChallengesContent(
         }
     }
 
+    val hideTabsForChatKeyboard = isImeVisible && selectedTab == TAB_STUDY_GROUP && friendState.activeDuel != null
+
     Column(modifier = Modifier.fillMaxSize()) {
-        PrimaryTabRow(
-            selectedTabIndex = selectedTab,
-            modifier = Modifier.fillMaxWidth()
+        AnimatedVisibility(
+            visible = !hideTabsForChatKeyboard,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
         ) {
-            Tab(
-                selected = selectedTab == TAB_PERSONAL,
-                onClick = { selectedTab = TAB_PERSONAL },
-                modifier = Modifier.testTag("challenges_tab_personal"),
-                text = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Flag,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            text = stringResource(R.string.challenges_tab_personal),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (state.active != null) {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primary)
+            PrimaryTabRow(
+                selectedTabIndex = selectedTab,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Tab(
+                    selected = selectedTab == TAB_PERSONAL,
+                    onClick = { selectedTab = TAB_PERSONAL },
+                    modifier = Modifier.testTag("challenges_tab_personal"),
+                    text = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Flag,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
                             )
+                            Text(
+                                text = stringResource(R.string.challenges_tab_personal),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (state.active != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primary)
+                                )
+                            }
                         }
                     }
-                }
-            )
-            Tab(
-                selected = selectedTab == TAB_STUDY_GROUP,
-                onClick = { selectedTab = TAB_STUDY_GROUP },
-                modifier = Modifier.testTag("challenges_tab_study_group"),
-                text = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Groups,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            text = stringResource(R.string.challenges_tab_study_group),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (hasActiveOrInviteGroup) {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.extendedColors.success)
+                )
+                Tab(
+                    selected = selectedTab == TAB_STUDY_GROUP,
+                    onClick = { selectedTab = TAB_STUDY_GROUP },
+                    modifier = Modifier.testTag("challenges_tab_study_group"),
+                    text = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Groups,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
                             )
+                            Text(
+                                text = stringResource(R.string.challenges_tab_study_group),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (hasActiveOrInviteGroup) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.extendedColors.success)
+                                )
+                            }
                         }
                     }
-                }
-            )
+                )
+            }
         }
 
         if (selectedTab == TAB_PERSONAL) {
@@ -510,6 +524,7 @@ private fun PersonalChallengeTabContent(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StudyGroupTabContent(
     friendState: FriendChallengeState,
@@ -526,22 +541,25 @@ private fun StudyGroupTabContent(
     modifier: Modifier = Modifier
 ) {
     val activeStudyGroup = friendState.activeDuel
+    val isImeVisible = WindowInsets.isImeVisible
     if (activeStudyGroup != null) {
-        // Dedicated full-screen chat room layout with collapsible horloge leaderboard header
+        // Dedicated full-screen chat room layout with unified compact header & direct keyboard docking
         Column(
             modifier = modifier
                 .fillMaxSize()
                 .imePadding()
-                .padding(horizontal = Spacing.md, vertical = Spacing.xs),
-            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                .padding(horizontal = Spacing.sm, vertical = Spacing.xxs),
+            verticalArrangement = Arrangement.spacedBy(Spacing.xxs)
         ) {
-            friendState.incomingPending.forEach { incoming ->
-                FriendDuelIncomingCard(
-                    challenge = incoming,
-                    myUid = friendState.myUid,
-                    onAccept = onAcceptFriendDuel,
-                    onDecline = onDeclineFriendDuel
-                )
+            if (!isImeVisible) {
+                friendState.incomingPending.forEach { incoming ->
+                    FriendDuelIncomingCard(
+                        challenge = incoming,
+                        myUid = friendState.myUid,
+                        onAccept = onAcceptFriendDuel,
+                        onDecline = onDeclineFriendDuel
+                    )
+                }
             }
 
             FriendDuelLiveCard(

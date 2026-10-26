@@ -1,90 +1,59 @@
-# Study Group & Challenge Invitation Lifecycle (30-Minute Offer & Expiration)
+# Study Group UX/UI Redesign & Keyboard-Aware Chat Layout Plan
 
-When a user invites one or more friends to a Study Group or Challenge, each invited friend receives an instant Android notification (sound + vibration). Invited friends are only added to the active Study Group leaderboard after they accept. If they decline, the invitation remains available in a compact Pending Invites section for the remainder of the 30-minute window; if they neither accept nor join within 30 minutes, the invitation expires and the sender must re-send the invitation to add them.
+## Overview
+We will redesign the **Study Group (`Groupe d'étude`)** screen in **Challenges (`Défis`)** so that it feels like a clean, modern real-time study messenger rather than a stack of nested cards, and ensure the chat stream remains spacious and readable when the soft keyboard (`IME`) opens.
 
-## User Review & Critical Decisions
+---
 
-> [!IMPORTANT]
-> Confirmed user preferences from Phase 1:
-> - **Declined Invitation Behavior (30-Minute Window)**: When a friend taps **Decline** on an invitation, it stays offered in a compact **Pending Invites** section with a live 30-minute countdown so they can still join before it expires.
-> - **Group Creator View of Pending Invites**: Only **accepted (`ACTIVE`)** members appear in the Study Group horloge leaderboard; invited friends who haven't joined yet appear as compact **Pending Invite status chips** (showing their countdown or an **Expired · Re-invite** action).
+## 1. Decluttering Chrome: Unified Compact Top Bar & Overflow Menu
+Currently, six vertical layers of headers, sub-headers, and permanent bottom destructive buttons compete for screen height. We will consolidate them into a single **Unified Study Group Top Bar**:
 
-## 1. Overview & Core Concept
+- **Compact Group Header Bar**:
+  - Displays the group icon/avatar stack, **Study Group title**, **Creator badge**, and live Horloge leader summary (`🕐 Vous (1h 40m) · youyou (1h 40m)`) in one sleek header surface.
+  - Tapping the header/summary chip (`study_group_leaderboard_toggle`) smoothly expands or collapses the **Horloge Member Leaderboard** drawer (showing full/half/quarter clock icons, exact focus time, and 1-minute cooldown Nudge buttons).
+  - Includes a compact **`+` Add Friends** button (`study_group_add_friends_button`) and a **`⋮` More Actions Menu** button right in the header.
+- **Overflow Menu (`⋮`) for Secondary & Destructive Actions**:
+  - Moves **Clear Chat** (`study_group_clear_chat_button`), **Leave / Abandon Group** (`surrender_friend_duel_button`), and creator-only **Delete Study Group** (`study_group_delete_group_button`) into the `⋮` dropdown menu—removing the permanent bottom button row (`Supprimer le défi` / `Abandonner`) that was stealing vertical space and sitting between the composer and the keyboard.
+- **Remove Redundant Inner Sub-Header**:
+  - Eliminates the duplicate `"Messages et emojis / Messages supprimés à la fin du défi..."` card header inside the chat container so the message list starts immediately below the compact top bar (and optional pending-invite pill bar).
 
-- **What It Does**:
-  1. **Instant Invite Notification**: Inviting a friend to a Study Group or Challenge triggers a high-priority Android notification (sound + vibration) on the invited friend's phone.
-  2. **Accept to Join**: Invited friends start with `INVITED` status instead of `ACTIVE`. They are only added to the Study Group leaderboard and chat room once they tap **Accept**.
-  3. **30-Minute Offer Window on Decline**: Tapping **Decline** marks the member's invite as `DECLINED` without deleting it; for 30 minutes from `invitedAt`, the offer remains accessible in a compact **Pending Invites** card with a live countdown (`Expires in MM:SS`) and an **Accept** button in case they change their mind.
-  4. **30-Minute Expiration & Re-Invite**: If 30 minutes pass (`now >= invitedAt + 30 min`) without the friend accepting, the invitation automatically expires. Expired invites disappear from the friend's incoming offers and become selectable again in the sender's **Add Friends** sheet (plus a one-tap **Re-send** chip in the group header).
+---
 
-## 2. Design & Visual Direction
+## 2. Keyboard-Aware Layout & Direct Composer Docking
+When the user taps the message input and the soft keyboard appears (`WindowInsets.isImeVisible`):
 
-- **Incoming Invitation Banner & Compact Declined Offer Card**:
-  - **Fresh Invite (`INVITED`)**: Prominent `secondaryContainer` card displaying the inviter's name, a live `Expires in MM:SS` badge, **Decline**, and **Accept & Start**.
-  - **Declined but Still Offered (`DECLINED` within 30 min)**: Compact `surfaceContainer` row under a **Pending Invites (30 min offer)** header showing the inviter's name, remaining time (`MM:SS left`), and a tonal **Accept** button.
-- **Creator & Group Header Pending Chips**:
-  - Below the Study Group header, non-accepted invitees are shown as compact status chips (e.g., `⏳ Amine · 24:10` while pending, or `⌛ Amine · Expired (Tap to re-send)` once 30 minutes elapse) while keeping the horloge leaderboard strictly for accepted members.
+- **Eliminate the Dead Space Above the Keyboard**:
+  - Currently, `MainShell`'s `Scaffold` applies ~80dp bottom padding for the `NavigationBar`, and `StudyGroupTabContent` adds `.imePadding()` on top of that—creating an 80dp empty gap above the keyboard and crushing the chat area.
+  - We will hide the bottom `NavigationBar` in `MainShell` while the soft keyboard is visible on the Study Group screen and consume navigation bar insets cleanly so `.imePadding()` docks the message composer flush against the top of the keyboard.
+- **Auto-Collapse Chrome on Keyboard Open**:
+  - When `WindowInsets.isImeVisible` becomes `true`, the screen automatically collapses the expanded **Horloge Member Leaderboard**, hides the top app bar / tab row chrome while typing, and condenses the quick-emoji bar into a compact single-row strip or toggle so the **scrollable chat message stream retains generous vertical space** and auto-scrolls to the latest message.
 
-## 3. System Architecture & Data Flow
+---
 
+## 3. Visual Layout Comparison (Idle vs. Keyboard Open)
+
+```text
++--------------------------------------------------+      +--------------------------------------------------+
+| Défis                                        [P] |      | [👥] Groupe d'étude · 🕐 Vous (1h40m) [▾] [+][⋮] |
+| [ 🏳️ Défi personnel ]   [ 👥 Groupe d'étude ● ]  |      +--------------------------------------------------+
++--------------------------------------------------+      |                                                  |
+| [👥] Défi Groupe d'étude [Créateur]   [+👤] [⋮]  |      |  [Y] youyou                                      |
+| 🕐 Vous (1h 40m) · youyou (1h 40m)   Membres [▾] |      |      On attaque le chapitre 3 !           19:18  |
+| ⏳ En attente: salmi (28m)                       |      |                                                  |
++--------------------------------------------------+      |                           Cc, j'arrive !  19:19  |
+|                                                  |      |                                              [V] |
+|  [Y] youyou                                      |      |     🔔 youyou a relancé salmi · 19:19            |
+|      On attaque le chapitre 3 !           19:18  |      |                                                  |
+|                                                  |      +--------------------------------------------------+
+|                           Cc, j'arrive !  19:19  |      |  🔥   💪   📚   🎯   ☕   👏   ⚡   🏆            |
+|                                              [V] |      | [ Écrire au groupe d'étude...            ] [ ➤ ] |
+|     🔔 youyou a relancé salmi · 19:19            |      +==================================================+
+|                                                  |      |              SOFT KEYBOARD (IME)                 |
++--------------------------------------------------+      |      (Docked flush — zero dead space gap)        |
+|  🔥   💪   📚   🎯   ☕   👏   ⚡   🏆            |      |                                                  |
+| [ Écrire au groupe d'étude...            ] [ ➤ ] |      |                                                  |
++--------------------------------------------------+      +==================================================+
+|  ⏱️ Focus  🎴 Étude  🏳️ Défis  📈 Progrès  👥 Com |
++--------------------------------------------------+
+          1. Standard View (Spacious Chat)                     2. Keyboard Open (Auto-Collapsed & Docked)
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│                   STUDY GROUP 30-MIN INVITATION LIFECYCLE                  │
-└────────────────────────────────────────────────────────────────────────────┘
-  Sender taps "Add Friends" / "Challenge"
-         │
-         ▼
-  StudyGroupMember(uid, roleStatus = INVITED, invitedAt = now)
-         │
-         ├──► Friend's Firestore Listener detects new (challengeId, invitedAt)
-         │          │
-         │          ▼
-         │    Triggers Android Notification (Sound + Vibration + Deep Link)
-         │
-         ├──► Friend taps "Accept" (while now < invitedAt + 30 min)
-         │          │
-         │          ▼
-         │    roleStatus = ACTIVE ──► Added to Horloge Leaderboard & Chat Room
-         │
-         ├──► Friend taps "Decline" (while now < invitedAt + 30 min)
-         │          │
-         │          ▼
-         │    roleStatus = DECLINED ──► Stays offered in Compact Pending Card
-         │                              with live 30m countdown until expiry
-         │
-         └──► 30 Minutes Elapse (now >= invitedAt + 30 min)
-                    │
-                    ▼
-              Invitation Expired:
-              • Removed from Friend's Incoming / Offered list
-              • Sender can re-invite friend (new invitedAt = now)
-```
-
-## 4. Core Functional & Technical Changes
-
-- **Member Invitation State & 30-Minute Expiry (`FriendChallengeRepository`)**:
-  - Add `DECLINED` to `StudyMemberRoleStatus` (`ACTIVE`, `INVITED`, `DECLINED`, `SURRENDERED`).
-  - Add `invitedAt: Long` to `StudyGroupMember` and persist it in JSON/Firestore (`invitedAt` defaults to `updatedAt` or `challenge.createdAt` for backwards compatibility).
-  - Define `INVITE_EXPIRY_MS = 30 * 60_000L` (30 minutes) and helper methods on `StudyGroupMember` and `FriendChallenge`:
-    - `isInviteValid(now: Long)`: returns `true` when `roleStatus` is `INVITED` or `DECLINED` and `now - effectiveInvitedAt < INVITE_EXPIRY_MS`.
-    - `isInviteExpired(now: Long)`: returns `true` when `roleStatus` is `INVITED` or `DECLINED` and `now - effectiveInvitedAt >= INVITE_EXPIRY_MS`.
-    - `acceptedMembers()`: returns only members with `roleStatus == StudyMemberRoleStatus.ACTIVE` (used for the leaderboard and active participant checks).
-  - Update `startOrInviteToStudyGroup`:
-    - Set the creator's `roleStatus = ACTIVE`, and set each invited friend's `roleStatus = INVITED` and `invitedAt = now`.
-    - Allow re-inviting any friend whose previous invite has expired (`isInviteExpired(now)`), resetting their `roleStatus = INVITED` and `invitedAt = now`.
-  - Update `declineChallenge`:
-    - Instead of marking the challenge permanently abandoned, update the current user's `StudyGroupMember` entry to `roleStatus = DECLINED` (preserving `invitedAt`) and sync to Firestore so the invitation remains offered in the compact Pending Invites section until `invitedAt + 30 min`.
-  - Update `mergeChallenges`:
-    - When a friend is re-invited (`m.roleStatus == INVITED && m.invitedAt > prev.invitedAt`), allow the newer `INVITED` state to replace a prior `DECLINED` or expired `INVITED` state; when a friend accepts (`m.roleStatus == ACTIVE && m.updatedAt >= prev.invitedAt`), transition to `ACTIVE`.
-- **Android Notification on Incoming Invitation**:
-  - Track notified invitation keys (`"${challenge.id}_${member.invitedAt}"`) in `SharedPreferences` (`KEY_HANDLED_INVITE_IDS`).
-  - When a real-time Firestore snapshot delivers an active 30-minute invitation (`roleStatus == INVITED`) for `myUid` that hasn't been notified yet, trigger `triggerIncomingInviteNotification(challengerName)` with sound, vibration, and tap action to open the Challenges screen.
-
-## 5. Verification Criteria
-
-- **Unit Tests (`StudyGroupChallengeTest`)**:
-  - Verify that newly invited friends start as `INVITED` (not `ACTIVE`) and only appear in `acceptedMembers()` after accepting.
-  - Verify that declining an invitation keeps it offered (`isInviteValid(now) == true`) for 30 minutes and expires (`isInviteExpired(now) == true`) once 30 minutes pass.
-  - Verify that re-sending an invitation after 30 minutes resets `invitedAt` and makes the invitation active again.
-- **Build Verification**:
-  - Run `compile_applet` and unit tests to confirm zero build or test regressions.

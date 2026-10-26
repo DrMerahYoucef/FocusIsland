@@ -17,12 +17,14 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -44,6 +46,7 @@ import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.LocalFireDepartment
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.PauseCircle
 import androidx.compose.material.icons.rounded.PersonAdd
@@ -56,9 +59,12 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -329,8 +335,17 @@ fun FriendDuelLiveCard(
     var confirmSurrender by rememberSaveable { mutableStateOf(false) }
     var confirmClearChat by rememberSaveable { mutableStateOf(false) }
     var confirmDeleteGroup by rememberSaveable { mutableStateOf(false) }
+    var moreMenuExpanded by remember { mutableStateOf(false) }
     var messageDraft by rememberSaveable(duel.id) { mutableStateOf("") }
-    var leaderboardExpanded by rememberSaveable(duel.id) { mutableStateOf(true) }
+    // Default to collapsed in full-screen chat room so the conversation takes center stage
+    var leaderboardExpanded by rememberSaveable(duel.id) { mutableStateOf(!fullScreenChat) }
+
+    val isImeVisible = WindowInsets.isImeVisible
+    LaunchedEffect(isImeVisible) {
+        if (isImeVisible && fullScreenChat) {
+            leaderboardExpanded = false
+        }
+    }
 
     val isCreator = remember(duel.challengerUid, myUid) {
         myUid.isEmpty() || duel.isChallenger(myUid) || duel.challengerUid == "local_user"
@@ -361,6 +376,14 @@ fun FriendDuelLiveCard(
         members.associateBy { it.uid }
     }
 
+    val youLabel = stringResource(R.string.friend_duel_you)
+    val summaryParts = mutableListOf<String>()
+    for (m in members.take(3)) {
+        val name = if (m.uid == myUid) youLabel else m.name.ifBlank { "?" }.split(" ").first()
+        summaryParts.add("$name (${formatStudyMinutesText(m.minutes)})")
+    }
+    val horlogeSummaryText = summaryParts.joinToString(" · ")
+
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         modifier = modifier
@@ -372,171 +395,261 @@ fun FriendDuelLiveCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(if (fullScreenChat) Modifier.fillMaxHeight() else Modifier)
-                .padding(if (compact) Spacing.sm else Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                .padding(if (compact || fullScreenChat) Spacing.xs else Spacing.md),
+            verticalArrangement = Arrangement.spacedBy(Spacing.xxs)
         ) {
-            // Top bar: Study Group Title + Add Friends + Collapse/Expand Leaderboard toggle
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+            // Unified Compact Top Bar: Avatar cluster + Title/Horloge Summary Toggle + Add Friends + Overflow Menu
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Spacing.xs, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                    modifier = Modifier.weight(1f)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Icon(
-                        Icons.Rounded.Groups,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(Spacing.icon)
-                    )
-                    Column {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
-                        ) {
-                            Text(
-                                text = stringResource(R.string.study_group_title),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold
+                    // Left/Center clickable area toggles the collapsible Horloge member leaderboard
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(enabled = !compact) { leaderboardExpanded = !leaderboardExpanded }
+                            .padding(vertical = 2.dp, horizontal = 4.dp)
+                            .testTag("study_group_leaderboard_toggle")
+                    ) {
+                        if (members.isNotEmpty()) {
+                            Row(horizontalArrangement = Arrangement.spacedBy((-6).dp)) {
+                                members.take(3).forEach { member ->
+                                    MessengerMemberAvatar(
+                                        name = member.name,
+                                        isFocusing = member.isFocusing,
+                                        sizeDp = 28
+                                    )
+                                }
+                            }
+                        } else {
+                            Icon(
+                                Icons.Rounded.Groups,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
                             )
-                            if (isCreator) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                ) {
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.study_group_title),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                if (isCreator) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.study_group_creator_badge),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
+                                if (!isImeVisible) {
                                     Text(
-                                        text = stringResource(R.string.study_group_creator_badge),
+                                        text = "· $timeLeftText",
                                         style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier.padding(horizontal = Spacing.xs, vertical = 2.dp)
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Schedule,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = if (leaderboardExpanded) {
+                                        stringResource(R.string.study_group_leaderboard_toggle_hide)
+                                    } else {
+                                        horlogeSummaryText.ifEmpty {
+                                            stringResource(R.string.study_group_leaderboard_toggle_show, members.size)
+                                        }
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                if (!compact) {
+                                    Icon(
+                                        imageVector = if (leaderboardExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                        contentDescription = if (leaderboardExpanded) {
+                                            stringResource(R.string.study_group_leaderboard_toggle_hide)
+                                        } else {
+                                            stringResource(R.string.study_group_leaderboard_toggle_show, members.size)
+                                        },
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
                                     )
                                 }
                             }
                         }
-                        Text(
-                            text = stringResource(R.string.friend_duel_subtitle_ends_midnight, timeLeftText),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
-                }
-                if (onAddFriends != null && !compact) {
-                    FilledTonalButton(
-                        onClick = onAddFriends,
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                            horizontal = Spacing.sm,
-                            vertical = 6.dp
-                        ),
-                        modifier = Modifier
-                            .heightIn(min = 36.dp)
-                            .testTag("study_group_add_friends_button")
-                    ) {
-                        Icon(
-                            Icons.Rounded.PersonAdd,
-                            contentDescription = null,
-                            modifier = Modifier.size(Spacing.iconSm)
-                        )
-                        Spacer(Modifier.size(Spacing.xxs))
-                        Text(
-                            text = stringResource(R.string.study_group_add_friends),
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                    }
-                }
-            }
 
-            // Collapsible Leaderboard Toggle Header (so user can collapse members and focus on full-screen chat)
-            if (!compact) {
-                Surface(
-                    onClick = { leaderboardExpanded = !leaderboardExpanded },
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("study_group_leaderboard_toggle")
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = Spacing.sm, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Schedule,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            if (leaderboardExpanded) {
-                                Text(
-                                    text = stringResource(R.string.study_group_leaderboard_toggle_hide),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            } else {
-                                // Compact summary of top members when collapsed
-                                val youLabel = stringResource(R.string.friend_duel_you)
-                                val summaryParts = mutableListOf<String>()
-                                for (m in members.take(3)) {
-                                    val name = if (m.uid == myUid) {
-                                        youLabel
-                                    } else {
-                                        m.name.ifBlank { "?" }.split(" ").first()
-                                    }
-                                    summaryParts.add("$name (${formatStudyMinutesText(m.minutes)})")
-                                }
-                                val summaryText = summaryParts.joinToString(" · ")
-                                Text(
-                                    text = summaryText.ifEmpty { stringResource(R.string.study_group_leaderboard_toggle_show, members.size) },
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
+                    // Right compact actions: Add Friends + More Actions Menu (Clear Chat, Leave, Delete)
+                    if (!compact) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            if (!leaderboardExpanded) {
-                                Text(
-                                    text = stringResource(R.string.study_group_leaderboard_toggle_show, members.size),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.SemiBold
-                                )
+                            if (onAddFriends != null) {
+                                FilledTonalIconButton(
+                                    onClick = onAddFriends,
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .testTag("study_group_add_friends_button")
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.PersonAdd,
+                                        contentDescription = stringResource(R.string.study_group_add_friends),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
-                            Icon(
-                                imageVector = if (leaderboardExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                                contentDescription = if (leaderboardExpanded) {
-                                    stringResource(R.string.study_group_leaderboard_toggle_hide)
-                                } else {
-                                    stringResource(R.string.study_group_leaderboard_toggle_show, members.size)
-                                },
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp)
-                            )
+
+                            Box {
+                                IconButton(
+                                    onClick = { moreMenuExpanded = true },
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .testTag("study_group_more_menu_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.MoreVert,
+                                        contentDescription = stringResource(R.string.study_group_title),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+
+                                DropdownMenu(
+                                    expanded = moreMenuExpanded,
+                                    onDismissRequest = { moreMenuExpanded = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                if (leaderboardExpanded) {
+                                                    stringResource(R.string.study_group_leaderboard_toggle_hide)
+                                                } else {
+                                                    stringResource(R.string.study_group_leaderboard_toggle_show, members.size)
+                                                }
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(Icons.Rounded.Schedule, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            moreMenuExpanded = false
+                                            leaderboardExpanded = !leaderboardExpanded
+                                        }
+                                    )
+                                    if (onAddFriends != null) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.study_group_add_friends)) },
+                                            leadingIcon = {
+                                                Icon(Icons.Rounded.PersonAdd, contentDescription = null)
+                                            },
+                                            onClick = {
+                                                moreMenuExpanded = false
+                                                onAddFriends()
+                                            }
+                                        )
+                                    }
+                                    if (isCreator && duel.messages.isNotEmpty()) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.study_group_clear_chat)) },
+                                            leadingIcon = {
+                                                Icon(
+                                                    Icons.Rounded.DeleteSweep,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.error
+                                                )
+                                            },
+                                            onClick = {
+                                                moreMenuExpanded = false
+                                                confirmClearChat = true
+                                            },
+                                            modifier = Modifier.testTag("study_group_clear_chat_button")
+                                        )
+                                    }
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.study_group_leave)) },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Rounded.Flag,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error
+                                            )
+                                        },
+                                        onClick = {
+                                            moreMenuExpanded = false
+                                            confirmSurrender = true
+                                        },
+                                        modifier = Modifier.testTag("surrender_friend_duel_button")
+                                    )
+                                    if (isCreator) {
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = stringResource(R.string.study_group_delete_group),
+                                                    color = MaterialTheme.colorScheme.error
+                                                )
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    Icons.Rounded.DeleteForever,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.error
+                                                )
+                                            },
+                                            onClick = {
+                                                moreMenuExpanded = false
+                                                confirmDeleteGroup = true
+                                            },
+                                            modifier = Modifier.testTag("study_group_delete_group_button")
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            // Pending (30m countdown) & Expired (Resend) status chips for invited friends who haven't accepted yet
-            if (pendingOrExpiredMembers.isNotEmpty() && !compact) {
+            // Pending (30m countdown) & Expired (Resend) status chips for invited friends (auto-hidden when keyboard is open)
+            if (pendingOrExpiredMembers.isNotEmpty() && !compact && !isImeVisible) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -563,7 +676,7 @@ fun FriendDuelLiveCard(
                                 Text(
                                     text = chipLabel,
                                     style = MaterialTheme.typography.labelSmall,
-                                    modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 4.dp)
+                                    modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 3.dp)
                                 )
                             }
                         } else {
@@ -579,7 +692,7 @@ fun FriendDuelLiveCard(
                                     text = stringResource(R.string.study_group_expired_status_chip, invName),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 4.dp)
+                                    modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 3.dp)
                                 )
                             }
                         }
@@ -587,9 +700,9 @@ fun FriendDuelLiveCard(
                 }
             }
 
-            // Collapsible Accepted Members Live Progress List (with Horloge icons instead of progress bars)
+            // Collapsible Accepted Members Live Progress List (auto-collapsed when keyboard opens)
             AnimatedVisibility(
-                visible = compact || leaderboardExpanded,
+                visible = (compact || leaderboardExpanded) && !(fullScreenChat && isImeVisible),
                 enter = expandVertically() + fadeIn(),
                 exit = shrinkVertically() + fadeOut()
             ) {
@@ -598,10 +711,10 @@ fun FriendDuelLiveCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .then(
-                            if (fullScreenChat) Modifier.heightIn(max = 210.dp).verticalScroll(memberScroll)
+                            if (fullScreenChat) Modifier.heightIn(max = 185.dp).verticalScroll(memberScroll)
                             else Modifier
                         ),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xxs)
                 ) {
                     members.forEachIndexed { index, member ->
                         val isMe = member.uid == myUid || (myUid.isEmpty() && member.uid == duel.challengerUid)
@@ -631,59 +744,38 @@ fun FriendDuelLiveCard(
             }
 
             if (!compact) {
-                // Messenger-Style Real-Time Group Chat Section
+                // Messenger-Style Real-Time Group Chat Section (takes 100% of remaining vertical height)
                 MessengerGroupChatSection(
                     duel = duel,
                     myUid = myUid,
-                    isCreator = isCreator,
-                    members = members,
                     membersByUid = membersByUid,
                     messageDraft = messageDraft,
                     onDraftChange = { messageDraft = it },
                     onSendMessage = { text ->
                         onSendMessage(duel, text)
                     },
-                    onRequestClearChat = { confirmClearChat = true },
+                    isImeVisible = isImeVisible,
                     fillSpace = fullScreenChat,
                     modifier = if (fullScreenChat) Modifier.weight(1f) else Modifier
                 )
-            }
-
-            // Actions row (Abandon / Leave or Creator Delete Challenge)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (onOpenDetails != null) {
+            } else if (onOpenDetails != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     TextButton(onClick = onOpenDetails) {
                         Text(stringResource(R.string.challenges_history))
                     }
-                } else if (isCreator && !compact) {
-                    TextButton(
-                        onClick = { confirmDeleteGroup = true },
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                        modifier = Modifier.testTag("study_group_delete_group_button")
+                    OutlinedButton(
+                        onClick = { confirmSurrender = true },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.testTag("surrender_friend_duel_button")
                     ) {
-                        Icon(
-                            Icons.Rounded.DeleteForever,
-                            contentDescription = null,
-                            modifier = Modifier.size(Spacing.iconSm)
-                        )
+                        Icon(Icons.Rounded.Flag, contentDescription = null, modifier = Modifier.size(Spacing.iconSm))
                         Spacer(Modifier.size(Spacing.xxs))
-                        Text(stringResource(R.string.study_group_delete_group))
+                        Text(stringResource(R.string.study_group_leave))
                     }
-                } else {
-                    Spacer(Modifier.size(1.dp))
-                }
-                OutlinedButton(
-                    onClick = { confirmSurrender = true },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                    modifier = Modifier.testTag("surrender_friend_duel_button")
-                ) {
-                    Icon(Icons.Rounded.Flag, contentDescription = null, modifier = Modifier.size(Spacing.iconSm))
-                    Spacer(Modifier.size(Spacing.xxs))
-                    Text(stringResource(R.string.study_group_leave))
                 }
             }
         }
@@ -736,34 +828,33 @@ fun FriendDuelLiveCard(
 }
 
 /**
- * Messenger-style group chat widget with member avatars, active green dots, grouped consecutive
- * chat bubbles, standalone jumbo emojis, and an ephemeral auto-delete notice.
+ * Messenger-style group chat widget with grouped consecutive chat bubbles, standalone jumbo emojis,
+ * and a keyboard-docked quick-emoji + message composer.
  */
 @Composable
 private fun MessengerGroupChatSection(
     duel: FriendChallenge,
     myUid: String,
-    isCreator: Boolean,
-    members: List<StudyGroupMember>,
     membersByUid: Map<String, StudyGroupMember>,
     messageDraft: String,
     onDraftChange: (String) -> Unit,
     onSendMessage: (String) -> Unit,
-    onRequestClearChat: () -> Unit,
+    isImeVisible: Boolean = false,
     fillSpace: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val visibleMessages = remember(duel.messages) { duel.messages.takeLast(50) }
     val chatScrollState = rememberScrollState()
 
-    LaunchedEffect(visibleMessages.size, visibleMessages.lastOrNull()?.id) {
+    // Scroll to the latest message whenever a new message arrives OR when the keyboard opens
+    LaunchedEffect(visibleMessages.size, visibleMessages.lastOrNull()?.id, isImeVisible) {
         if (visibleMessages.isNotEmpty()) {
             chatScrollState.animateScrollTo(chatScrollState.maxValue)
         }
     }
 
     Surface(
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         modifier = modifier
             .fillMaxWidth()
@@ -775,95 +866,41 @@ private fun MessengerGroupChatSection(
                 .fillMaxWidth()
                 .then(if (fillSpace) Modifier.fillMaxHeight() else Modifier)
         ) {
-            // Messenger-style top chat bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.65f))
-                    .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    // Member avatar cluster with green active dots
-                    Row(horizontalArrangement = Arrangement.spacedBy((-6).dp)) {
-                        members.take(5).forEach { member ->
-                            MessengerMemberAvatar(
-                                name = member.name,
-                                isFocusing = member.isFocusing,
-                                sizeDp = 28
-                            )
-                        }
-                    }
-                    Column(modifier = Modifier.padding(start = 4.dp)) {
-                        Text(
-                            text = stringResource(R.string.study_group_chat_header),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = stringResource(R.string.study_group_chat_ephemeral_notice),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
-                if (isCreator && visibleMessages.isNotEmpty()) {
-                    IconButton(
-                        onClick = onRequestClearChat,
-                        modifier = Modifier
-                            .size(36.dp)
-                            .testTag("study_group_clear_chat_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.DeleteSweep,
-                            contentDescription = stringResource(R.string.study_group_clear_chat),
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-            }
-
-            // Messages Stream
+            // Messages Stream (occupies all available height above the composer)
             if (visibleMessages.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .then(if (fillSpace) Modifier.weight(1f) else Modifier.padding(vertical = Spacing.md)),
+                        .then(if (fillSpace) Modifier.weight(1f) else Modifier.padding(vertical = Spacing.sm)),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                            .padding(horizontal = Spacing.md, vertical = Spacing.xs),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(Spacing.xxs)
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        Text(
-                            text = "💬",
-                            fontSize = 28.sp
-                        )
+                        if (!isImeVisible) {
+                            Text(
+                                text = "💬",
+                                fontSize = 22.sp
+                            )
+                        }
                         Text(
                             text = stringResource(R.string.study_group_chat_empty),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
                         )
-                        Text(
-                            text = stringResource(R.string.study_group_chat_ephemeral_notice),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                            textAlign = TextAlign.Center
-                        )
+                        if (!isImeVisible) {
+                            Text(
+                                text = stringResource(R.string.study_group_chat_ephemeral_notice),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 }
             } else {
@@ -897,20 +934,20 @@ private fun MessengerGroupChatSection(
                 }
             }
 
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
-            // Quick emoji reactions bar + Messenger pill composer
+            // Quick emoji reactions bar + Messenger pill composer (docked directly to bottom / keyboard)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
-                verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                    .padding(horizontal = Spacing.xs, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     QUICK_STUDY_EMOJIS.forEach { emoji ->
@@ -922,8 +959,8 @@ private fun MessengerGroupChatSection(
                         ) {
                             Text(
                                 text = emoji,
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 4.dp)
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp)
                             )
                         }
                     }
@@ -933,7 +970,7 @@ private fun MessengerGroupChatSection(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     OutlinedTextField(
                         value = messageDraft,
@@ -994,7 +1031,7 @@ private fun MessengerGroupChatSection(
                         } else {
                             Text(
                                 text = "🔥",
-                                fontSize = 20.sp
+                                fontSize = 18.sp
                             )
                         }
                     }

@@ -9,10 +9,14 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
@@ -344,7 +348,7 @@ fun AppNavGraph(
 }
 
 /** Top-level shell: app bar + adaptive navigation (bar on phones, rail on wide screens) + tab pager. */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun MainShell(
     navController: NavHostController,
@@ -364,6 +368,7 @@ private fun MainShell(
     var progressTab by rememberSaveable { mutableIntStateOf(0) }
     val current = tabs[pagerState.currentPage]
     val wide = LocalConfiguration.current.screenWidthDp >= 600
+    val isImeVisible = WindowInsets.isImeVisible
 
     LaunchedEffect(navRequest) {
         val req = navRequest ?: return@LaunchedEffect
@@ -396,21 +401,23 @@ private fun MainShell(
             modifier = Modifier.weight(1f),
             containerColor = MaterialTheme.colorScheme.background,
             topBar = {
-                androidx.compose.material3.TopAppBar(
-                    title = { Text(stringResource(current.label)) },
-                    colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
-                        containerColor = androidx.compose.ui.graphics.Color.Transparent,
-                        scrolledContainerColor = androidx.compose.ui.graphics.Color.Transparent
-                    ),
-                    actions = {
-                        IconButton(onClick = { navController.navigate(Routes.SETTINGS) }) {
-                            Icon(Icons.Rounded.Settings, contentDescription = stringResource(R.string.nav_settings))
+                if (!(isImeVisible && current == TopLevel.CHALLENGES)) {
+                    androidx.compose.material3.TopAppBar(
+                        title = { Text(stringResource(current.label)) },
+                        colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                            containerColor = androidx.compose.ui.graphics.Color.Transparent,
+                            scrolledContainerColor = androidx.compose.ui.graphics.Color.Transparent
+                        ),
+                        actions = {
+                            IconButton(onClick = { navController.navigate(Routes.SETTINGS) }) {
+                                Icon(Icons.Rounded.Settings, contentDescription = stringResource(R.string.nav_settings))
+                            }
                         }
-                    }
-                )
+                    )
+                }
             },
             bottomBar = {
-                if (!wide) {
+                if (!wide && !isImeVisible) {
                     NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
                         tabs.forEach { tab ->
                             NavigationBarItem(
@@ -424,13 +431,15 @@ private fun MainShell(
                 }
             }
         ) { padding ->
+            val bottomPadding = if (isImeVisible) 0.dp else padding.calculateBottomPadding()
+            val topPadding = if (isImeVisible && current == TopLevel.CHALLENGES) 0.dp else padding.calculateTopPadding()
             HorizontalPager(
                 state = pagerState,
-                userScrollEnabled = settings.swipeToNavigate,
+                userScrollEnabled = settings.swipeToNavigate && !isImeVisible,
                 beyondViewportPageCount = 0,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = padding.calculateBottomPadding())
+                    .padding(bottom = bottomPadding)
             ) { page ->
                 if (tabs[page] == TopLevel.FOCUS) {
                     TimerScreen(
@@ -451,7 +460,7 @@ private fun MainShell(
                     Box(
                         Modifier
                             .fillMaxSize()
-                            .padding(top = padding.calculateTopPadding()),
+                            .padding(top = topPadding),
                         contentAlignment = Alignment.TopCenter
                     ) {
                         Box(Modifier.widthIn(max = Spacing.contentMaxWidth).fillMaxSize()) {

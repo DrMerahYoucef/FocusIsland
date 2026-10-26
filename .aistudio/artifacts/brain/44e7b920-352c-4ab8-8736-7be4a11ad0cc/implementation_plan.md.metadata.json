@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for Study Group & Challenge invitations with instant Android notifications, accept-to-join flow, 30-minute offer window even after declining, and 30-minute expiration requiring re-invitation.",
-  "updatedAt":  "2026-10-26T19:09:52.635943387Z",
+  "summary":  "Implementation plan to redesign the Study Group screen with a unified compact top bar, collapsible Horloge leaderboard, overflow action menu, and keyboard-aware layout that docks the chat composer directly to the soft keyboard without collapsing the message list.",
+  "updatedAt":  "2026-10-26T23:07:31.494235818Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
