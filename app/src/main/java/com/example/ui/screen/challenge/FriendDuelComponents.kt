@@ -1,7 +1,11 @@
 package com.example.ui.screen.challenge
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,9 +13,12 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -32,6 +39,8 @@ import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.EmojiEvents
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.LocalFireDepartment
@@ -39,6 +48,7 @@ import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.PauseCircle
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.PlayCircle
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.SportsScore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -74,7 +84,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -85,6 +99,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
@@ -92,6 +107,7 @@ import com.example.data.challenge.FriendChallenge
 import com.example.data.challenge.StudyFriendOption
 import com.example.data.challenge.StudyGroupMember
 import com.example.data.challenge.StudyGroupMessage
+import com.example.data.challenge.StudyMemberRoleStatus
 import com.example.data.challenge.StudyMemberTimerState
 import com.example.ui.designsystem.Celebration
 import com.example.ui.designsystem.ConfirmDialog
@@ -103,21 +119,112 @@ import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlin.math.cos
+import kotlin.math.sin
 
 private val QUICK_STUDY_EMOJIS = listOf("🔥", "💪", "📚", "🎯", "☕", "👏", "⚡", "🚀")
 
 /**
  * Incoming friend / study group challenge card shown in Community and Challenges screens.
- * Accepting joins the study group and starts the Pomodoro timer automatically.
+ * - Fresh invitations (`INVITED`) show a prominent banner with a live 30-minute countdown, Decline, and Accept & Start.
+ * - Declined invitations (`DECLINED`) stay offered for the remaining 30-minute window in a compact Pending Invites row.
+ * - Expired invitations (`>= 30m`) hide automatically.
  */
 @Composable
 fun FriendDuelIncomingCard(
     challenge: FriendChallenge,
     onAccept: (FriendChallenge) -> Unit,
     onDecline: (FriendChallenge) -> Unit,
+    myUid: String = "",
     modifier: Modifier = Modifier
 ) {
+    val now by produceState(System.currentTimeMillis(), challenge.id) {
+        while (true) {
+            value = System.currentTimeMillis()
+            delay(1_000L - value % 1_000L)
+        }
+    }
+
+    val inviteMember = remember(challenge.members, myUid, challenge.challengerUid, challenge.opponentUid) {
+        val all = challenge.allMembers()
+        if (myUid.isNotEmpty()) {
+            all.firstOrNull { it.uid == myUid }
+        } else {
+            all.firstOrNull { it.uid != challenge.challengerUid }
+        }
+    }
+
+    val remainingMs = inviteMember?.inviteRemainingMs(now, challenge.createdAt) ?: 0L
+    if (remainingMs <= 0L) return
+
+    val countdownText = ChallengeTime.clock(remainingMs)
     val challenger = challenge.challengerName.ifBlank { stringResource(R.string.community_unnamed) }
+    val isDeclinedOffer = inviteMember?.roleStatus == StudyMemberRoleStatus.DECLINED
+
+    if (isDeclinedOffer) {
+        // Compact Pending Invite row with live 30m countdown so the user can still accept after declining
+        Surface(
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = modifier
+                .fillMaxWidth()
+                .testTag("pending_declined_invite_card")
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Schedule,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Column {
+                        Text(
+                            text = stringResource(R.string.study_group_pending_invite_from, challenger),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = stringResource(R.string.study_group_invite_expires_in, countdownText),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                Spacer(Modifier.width(Spacing.xs))
+                FilledTonalButton(
+                    onClick = { onAccept(challenge) },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        horizontal = Spacing.sm,
+                        vertical = 6.dp
+                    ),
+                    modifier = Modifier
+                        .heightIn(min = 36.dp)
+                        .testTag("accept_friend_duel_button")
+                ) {
+                    Text(
+                        text = stringResource(R.string.community_accept),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+            }
+        }
+        return
+    }
+
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
         modifier = modifier.fillMaxWidth().testTag("incoming_friend_duel_card")
@@ -126,7 +233,10 @@ fun FriendDuelIncomingCard(
             modifier = Modifier.padding(Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.xs)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+            ) {
                 Icon(
                     Icons.Rounded.LocalFireDepartment,
                     contentDescription = null,
@@ -140,6 +250,29 @@ fun FriendDuelIncomingCard(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = Spacing.xs, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Schedule,
+                            contentDescription = null,
+                            modifier = Modifier.size(12.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = stringResource(R.string.study_group_invite_expires_in, countdownText),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
             }
             Text(
                 text = stringResource(R.string.friend_duel_incoming_body),
@@ -168,12 +301,14 @@ fun FriendDuelIncomingCard(
 }
 
 /**
- * Live Multi-Friend Study Group Challenge card shown on the Challenges screen:
- * - Displays all members' focus progress and live timer status (Focusing vs Paused)
+ * Live Multi-Friend Study Group Challenge card / chat room shown on the Challenges screen:
+ * - Features a collapsible member leaderboard header with horloge (clock) icons for accepted members
+ * - Displays pending (30m countdown) and expired (one-tap Resend) status chips for invited friends
  * - Lets members invite more friends to the group anytime
  * - Provides a Nudge button next to paused/idle friends to trigger a notification sound & vibration on their phone
- * - Includes a Messenger-style real-time group chat whose messages are automatically deleted when the challenge ends or is deleted by its creator
+ * - Includes a Messenger-style real-time group chat room that fills available space in the Study Group tab
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun FriendDuelLiveCard(
     duel: FriendChallenge,
@@ -181,18 +316,21 @@ fun FriendDuelLiveCard(
     onSurrender: (FriendChallenge) -> Unit,
     onSendMessage: (FriendChallenge, String) -> Unit = { _, _ -> },
     onNudgeFriend: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
+    onResendInvite: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
     onClearMessages: (FriendChallenge) -> Unit = {},
     onDeleteGroup: (FriendChallenge) -> Unit = {},
     onAddFriends: (() -> Unit)? = null,
     nudgeCooldownUntil: Map<String, Long> = emptyMap(),
     onOpenDetails: (() -> Unit)? = null,
     compact: Boolean = false,
+    fullScreenChat: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var confirmSurrender by rememberSaveable { mutableStateOf(false) }
     var confirmClearChat by rememberSaveable { mutableStateOf(false) }
     var confirmDeleteGroup by rememberSaveable { mutableStateOf(false) }
     var messageDraft by rememberSaveable(duel.id) { mutableStateOf("") }
+    var leaderboardExpanded by rememberSaveable(duel.id) { mutableStateOf(true) }
 
     val isCreator = remember(duel.challengerUid, myUid) {
         myUid.isEmpty() || duel.isChallenger(myUid) || duel.challengerUid == "local_user"
@@ -207,29 +345,37 @@ fun FriendDuelLiveCard(
     val remainingMs = (duel.endAt - now).coerceAtLeast(0L)
     val timeLeftText = ChallengeTime.clock(remainingMs)
 
+    // Only show accepted (ACTIVE) members in the horloge leaderboard
     val members = remember(duel.members, duel.challengerMinutes, duel.opponentMinutes, myUid) {
-        duel.activeAndInvitedMembers().sortedWith(
+        duel.acceptedMembers().sortedWith(
             compareByDescending<StudyGroupMember> { it.minutes }
                 .thenByDescending { it.uid == myUid }
                 .thenBy { it.name.lowercase() }
         )
     }
+    // Invited friends who haven't accepted yet (shown as pending 30m or expired/resend status chips)
+    val pendingOrExpiredMembers = remember(duel.members) {
+        duel.pendingOrExpiredInviteMembers()
+    }
     val membersByUid = remember(members) {
         members.associateBy { it.uid }
-    }
-    val maxMemberMins = remember(members) {
-        (members.maxOfOrNull { it.minutes } ?: 0).coerceAtLeast(30)
     }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        modifier = modifier.fillMaxWidth().testTag("active_friend_duel_card")
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (fullScreenChat) Modifier.fillMaxHeight() else Modifier)
+            .testTag("active_friend_duel_card")
     ) {
         Column(
-            modifier = Modifier.padding(if (compact) Spacing.sm else Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (fullScreenChat) Modifier.fillMaxHeight() else Modifier)
+                .padding(if (compact) Spacing.sm else Spacing.md),
+            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
         ) {
-            // Header: Study Group Title + Add Friends button
+            // Top bar: Study Group Title + Add Friends + Collapse/Expand Leaderboard toggle
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -283,7 +429,13 @@ fun FriendDuelLiveCard(
                 if (onAddFriends != null && !compact) {
                     FilledTonalButton(
                         onClick = onAddFriends,
-                        modifier = Modifier.testTag("study_group_add_friends_button")
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            horizontal = Spacing.sm,
+                            vertical = 6.dp
+                        ),
+                        modifier = Modifier
+                            .heightIn(min = 36.dp)
+                            .testTag("study_group_add_friends_button")
                     ) {
                         Icon(
                             Icons.Rounded.PersonAdd,
@@ -291,43 +443,194 @@ fun FriendDuelLiveCard(
                             modifier = Modifier.size(Spacing.iconSm)
                         )
                         Spacer(Modifier.size(Spacing.xxs))
-                        Text(stringResource(R.string.study_group_add_friends))
+                        Text(
+                            text = stringResource(R.string.study_group_add_friends),
+                            style = MaterialTheme.typography.labelMedium
+                        )
                     }
                 }
             }
 
-            // Members Live Progress List
-            Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                members.forEachIndexed { index, member ->
-                    val isMe = member.uid == myUid || (myUid.isEmpty() && member.uid == duel.challengerUid)
-                    val displayName = if (isMe) {
-                        stringResource(R.string.friend_duel_you)
-                    } else {
-                        member.name.ifBlank { stringResource(R.string.community_unnamed) }
-                    }
-                    val cooldownEnd = nudgeCooldownUntil[member.uid] ?: 0L
-                    val onCooldown = now < cooldownEnd
-                    val cooldownRemainingSec = if (onCooldown) {
-                        (((cooldownEnd - now).coerceAtLeast(0L) + 999L) / 1000L).toInt()
-                    } else 0
-                    StudyGroupMemberRow(
-                        rank = index + 1,
-                        member = member,
-                        displayName = displayName,
-                        isMe = isMe,
-                        maxMinutes = maxMemberMins,
-                        onCooldown = onCooldown,
-                        cooldownRemainingSec = cooldownRemainingSec,
-                        onNudge = {
-                            onNudgeFriend(duel, member.uid, displayName)
+            // Collapsible Leaderboard Toggle Header (so user can collapse members and focus on full-screen chat)
+            if (!compact) {
+                Surface(
+                    onClick = { leaderboardExpanded = !leaderboardExpanded },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("study_group_leaderboard_toggle")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.sm, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Schedule,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            if (leaderboardExpanded) {
+                                Text(
+                                    text = stringResource(R.string.study_group_leaderboard_toggle_hide),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            } else {
+                                // Compact summary of top members when collapsed
+                                val youLabel = stringResource(R.string.friend_duel_you)
+                                val summaryParts = mutableListOf<String>()
+                                for (m in members.take(3)) {
+                                    val name = if (m.uid == myUid) {
+                                        youLabel
+                                    } else {
+                                        m.name.ifBlank { "?" }.split(" ").first()
+                                    }
+                                    summaryParts.add("$name (${formatStudyMinutesText(m.minutes)})")
+                                }
+                                val summaryText = summaryParts.joinToString(" · ")
+                                Text(
+                                    text = summaryText.ifEmpty { stringResource(R.string.study_group_leaderboard_toggle_show, members.size) },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
-                    )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            if (!leaderboardExpanded) {
+                                Text(
+                                    text = stringResource(R.string.study_group_leaderboard_toggle_show, members.size),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            Icon(
+                                imageVector = if (leaderboardExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                contentDescription = if (leaderboardExpanded) {
+                                    stringResource(R.string.study_group_leaderboard_toggle_hide)
+                                } else {
+                                    stringResource(R.string.study_group_leaderboard_toggle_show, members.size)
+                                },
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Pending (30m countdown) & Expired (Resend) status chips for invited friends who haven't accepted yet
+            if (pendingOrExpiredMembers.isNotEmpty() && !compact) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("study_group_pending_invites_row")
+                ) {
+                    pendingOrExpiredMembers.forEach { invMember ->
+                        val invName = invMember.name.ifBlank { stringResource(R.string.community_unnamed) }
+                        val isValid = invMember.isInviteValid(now, duel.createdAt)
+                        if (isValid) {
+                            val remClock = ChallengeTime.clock(invMember.inviteRemainingMs(now, duel.createdAt))
+                            val chipLabel = if (invMember.roleStatus == StudyMemberRoleStatus.DECLINED) {
+                                stringResource(R.string.study_group_declined_status_chip, invName, remClock)
+                            } else {
+                                stringResource(R.string.study_group_pending_status_chip, invName, remClock)
+                            }
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.testTag("pending_invite_chip_${invMember.uid}")
+                            ) {
+                                Text(
+                                    text = chipLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 4.dp)
+                                )
+                            }
+                        } else {
+                            // 30-minute invite expired -> one-tap Resend chip
+                            Surface(
+                                onClick = { onResendInvite(duel, invMember.uid, invName) },
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
+                                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.testTag("expired_invite_chip_${invMember.uid}")
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.study_group_expired_status_chip, invName),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Collapsible Accepted Members Live Progress List (with Horloge icons instead of progress bars)
+            AnimatedVisibility(
+                visible = compact || leaderboardExpanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                val memberScroll = rememberScrollState()
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (fullScreenChat) Modifier.heightIn(max = 210.dp).verticalScroll(memberScroll)
+                            else Modifier
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                ) {
+                    members.forEachIndexed { index, member ->
+                        val isMe = member.uid == myUid || (myUid.isEmpty() && member.uid == duel.challengerUid)
+                        val displayName = if (isMe) {
+                            stringResource(R.string.friend_duel_you)
+                        } else {
+                            member.name.ifBlank { stringResource(R.string.community_unnamed) }
+                        }
+                        val cooldownEnd = nudgeCooldownUntil[member.uid] ?: 0L
+                        val onCooldown = now < cooldownEnd
+                        val cooldownRemainingSec = if (onCooldown) {
+                            (((cooldownEnd - now).coerceAtLeast(0L) + 999L) / 1000L).toInt()
+                        } else 0
+                        StudyGroupMemberRow(
+                            rank = index + 1,
+                            member = member,
+                            displayName = displayName,
+                            isMe = isMe,
+                            onCooldown = onCooldown,
+                            cooldownRemainingSec = cooldownRemainingSec,
+                            onNudge = {
+                                onNudgeFriend(duel, member.uid, displayName)
+                            }
+                        )
+                    }
                 }
             }
 
             if (!compact) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
                 // Messenger-Style Real-Time Group Chat Section
                 MessengerGroupChatSection(
                     duel = duel,
@@ -340,7 +643,9 @@ fun FriendDuelLiveCard(
                     onSendMessage = { text ->
                         onSendMessage(duel, text)
                     },
-                    onRequestClearChat = { confirmClearChat = true }
+                    onRequestClearChat = { confirmClearChat = true },
+                    fillSpace = fullScreenChat,
+                    modifier = if (fullScreenChat) Modifier.weight(1f) else Modifier
                 )
             }
 
@@ -444,9 +749,11 @@ private fun MessengerGroupChatSection(
     messageDraft: String,
     onDraftChange: (String) -> Unit,
     onSendMessage: (String) -> Unit,
-    onRequestClearChat: () -> Unit
+    onRequestClearChat: () -> Unit,
+    fillSpace: Boolean = false,
+    modifier: Modifier = Modifier
 ) {
-    val visibleMessages = remember(duel.messages) { duel.messages.takeLast(30) }
+    val visibleMessages = remember(duel.messages) { duel.messages.takeLast(50) }
     val chatScrollState = rememberScrollState()
 
     LaunchedEffect(visibleMessages.size, visibleMessages.lastOrNull()?.id) {
@@ -458,12 +765,15 @@ private fun MessengerGroupChatSection(
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
+            .then(if (fillSpace) Modifier.fillMaxHeight() else Modifier)
             .testTag("study_group_messenger_container")
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (fillSpace) Modifier.fillMaxHeight() else Modifier)
         ) {
             // Messenger-style top chat bar
             Row(
@@ -481,7 +791,7 @@ private fun MessengerGroupChatSection(
                 ) {
                     // Member avatar cluster with green active dots
                     Row(horizontalArrangement = Arrangement.spacedBy((-6).dp)) {
-                        members.take(4).forEach { member ->
+                        members.take(5).forEach { member ->
                             MessengerMemberAvatar(
                                 name = member.name,
                                 isFocusing = member.isFocusing,
@@ -525,35 +835,45 @@ private fun MessengerGroupChatSection(
 
             // Messages Stream
             if (visibleMessages.isEmpty()) {
-                Column(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = Spacing.md, vertical = Spacing.lg),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(Spacing.xxs)
+                        .then(if (fillSpace) Modifier.weight(1f) else Modifier.padding(vertical = Spacing.md)),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "💬",
-                        fontSize = 26.sp
-                    )
-                    Text(
-                        text = stringResource(R.string.study_group_chat_empty),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
-                    Text(
-                        text = stringResource(R.string.study_group_chat_ephemeral_notice),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                        textAlign = TextAlign.Center
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xxs)
+                    ) {
+                        Text(
+                            text = "💬",
+                            fontSize = 28.sp
+                        )
+                        Text(
+                            text = stringResource(R.string.study_group_chat_empty),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = stringResource(R.string.study_group_chat_ephemeral_notice),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             } else {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 120.dp, max = 240.dp)
+                        .then(
+                            if (fillSpace) Modifier.weight(1f)
+                            else Modifier.heightIn(min = 140.dp, max = 260.dp)
+                        )
                         .verticalScroll(chatScrollState)
                         .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
                     verticalArrangement = Arrangement.spacedBy(3.dp)
@@ -866,22 +1186,31 @@ private fun MessengerChatBubbleRow(
 }
 
 @Composable
+private fun formatStudyMinutesText(minutes: Int): String {
+    val hrs = minutes / 60
+    val rem = minutes % 60
+    return if (hrs > 0) {
+        stringResource(R.string.study_group_hours_mins_fmt, hrs, rem)
+    } else {
+        stringResource(R.string.friend_duel_minutes_fmt, minutes)
+    }
+}
+
+/**
+ * Member row in the Study Group leaderboard.
+ * Uses horloge (clock) icons to represent hours and quarter-hours focused (1 icon = 1h, ¾ = 45m, ½ = 30m, ¼ = 15m)
+ * plus exact time text instead of a relative progress bar.
+ */
+@Composable
 private fun StudyGroupMemberRow(
     rank: Int,
     member: StudyGroupMember,
     displayName: String,
     isMe: Boolean,
-    maxMinutes: Int,
     onCooldown: Boolean,
     cooldownRemainingSec: Int = 0,
     onNudge: () -> Unit
 ) {
-    val fraction = (member.minutes.toFloat() / maxMinutes.coerceAtLeast(1)).coerceIn(0.06f, 1f)
-    val animatedFraction by animateFloatAsState(
-        targetValue = if (member.minutes == 0) 0.04f else fraction,
-        animationSpec = tween(durationMillis = 400),
-        label = "memberProgress"
-    )
     val isFocusing = member.timerState == StudyMemberTimerState.FOCUSING
 
     Surface(
@@ -891,11 +1220,13 @@ private fun StudyGroupMemberRow(
         } else {
             MaterialTheme.colorScheme.surfaceContainer
         },
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("study_group_member_row_${member.uid}")
     ) {
         Column(
             modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xs),
-            verticalArrangement = Arrangement.spacedBy(Spacing.xxs)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -972,68 +1303,251 @@ private fun StudyGroupMemberRow(
                     }
                 }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
-                ) {
-                    Text(
-                        text = stringResource(R.string.friend_duel_minutes_fmt, member.minutes),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                    )
-
-                    // If this friend's progress is paused or idle, allow sending a sound + vibration Nudge!
-                    if (!isMe && member.isPausedOrIdle) {
-                        FilledTonalButton(
-                            onClick = onNudge,
-                            enabled = !onCooldown,
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                                horizontal = Spacing.sm,
-                                vertical = 4.dp
-                            ),
-                            modifier = Modifier
-                                .heightIn(min = 36.dp)
-                                .testTag("nudge_friend_${member.uid}")
-                        ) {
-                            Icon(
-                                Icons.Rounded.NotificationsActive,
-                                contentDescription = stringResource(R.string.study_group_nudge_a11y, displayName),
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            val nudgeLabel = if (onCooldown) {
-                                "${stringResource(R.string.study_group_nudge_sent)} (${cooldownRemainingSec}s)"
-                            } else {
-                                stringResource(R.string.study_group_nudge_button)
-                            }
-                            Text(
-                                text = nudgeLabel,
-                                style = MaterialTheme.typography.labelMedium
-                            )
+                // If this friend's progress is paused or idle, allow sending a sound + vibration Nudge!
+                if (!isMe && member.isPausedOrIdle) {
+                    FilledTonalButton(
+                        onClick = onNudge,
+                        enabled = !onCooldown,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            horizontal = Spacing.sm,
+                            vertical = 4.dp
+                        ),
+                        modifier = Modifier
+                            .heightIn(min = 34.dp)
+                            .testTag("nudge_friend_${member.uid}")
+                    ) {
+                        Icon(
+                            Icons.Rounded.NotificationsActive,
+                            contentDescription = stringResource(R.string.study_group_nudge_a11y, displayName),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        val nudgeLabel = if (onCooldown) {
+                            "${stringResource(R.string.study_group_nudge_sent)} (${cooldownRemainingSec}s)"
+                        } else {
+                            stringResource(R.string.study_group_nudge_button)
                         }
+                        Text(
+                            text = nudgeLabel,
+                            style = MaterialTheme.typography.labelSmall
+                        )
                     }
                 }
             }
 
-            // Individual progress bar
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(animatedFraction)
-                        .background(
-                            if (isMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
-                        )
+            // Horloge (clock) icons row: 1 full clock per hour, ¾ for 45m, ½ for 30m, ¼ for 15m + exact time text
+            FocusHorlogeIconsRow(
+                minutes = member.minutes,
+                isMe = isMe
+            )
+        }
+    }
+}
+
+/**
+ * Displays horloge (clock) icons representing hours and quarter-hour fractions focused:
+ * - 1 full horloge icon per full hour (60 min)
+ * - ¾ horloge icon for 45–59 min remainder
+ * - ½ horloge icon for 30–44 min remainder
+ * - ¼ horloge icon for 15–29 min remainder
+ * - Starter slice horloge icon for 1–14 min when < 1 hour
+ * - Empty outline horloge icon for 0 min
+ * Followed by the exact time text (e.g., "1h 36m" or "44 min").
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun FocusHorlogeIconsRow(
+    minutes: Int,
+    isMe: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val safeMinutes = minutes.coerceAtLeast(0)
+    val fullHours = safeMinutes / 60
+    val remainderMins = safeMinutes % 60
+    val quarterFraction = when {
+        remainderMins >= 45 -> 0.75f
+        remainderMins >= 30 -> 0.50f
+        remainderMins >= 15 -> 0.25f
+        remainderMins > 0 && fullHours == 0 -> (remainderMins / 60f).coerceAtLeast(0.12f)
+        else -> 0f
+    }
+
+    val activeColor = if (isMe) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.tertiary
+    }
+    val trackColor = MaterialTheme.colorScheme.outlineVariant
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("horloge_progress_row"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.weight(1f)
+        ) {
+            if (safeMinutes == 0) {
+                HorlogeFractionIcon(
+                    fraction = 0f,
+                    activeColor = trackColor,
+                    trackColor = trackColor.copy(alpha = 0.5f),
+                    size = 18.dp
                 )
+            } else {
+                val visibleFullHours = fullHours.coerceAtMost(8)
+                repeat(visibleFullHours) {
+                    HorlogeFractionIcon(
+                        fraction = 1f,
+                        activeColor = activeColor,
+                        trackColor = trackColor,
+                        size = 18.dp
+                    )
+                }
+                if (fullHours > 8) {
+                    Surface(
+                        shape = CircleShape,
+                        color = activeColor.copy(alpha = 0.18f),
+                        contentColor = activeColor
+                    ) {
+                        Text(
+                            text = "+${fullHours - 8}h",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                        )
+                    }
+                }
+                if (quarterFraction > 0f) {
+                    HorlogeFractionIcon(
+                        fraction = quarterFraction,
+                        activeColor = activeColor,
+                        trackColor = trackColor,
+                        size = 18.dp
+                    )
+                }
             }
         }
+
+        Spacer(Modifier.width(Spacing.xs))
+
+        Text(
+            text = formatStudyMinutesText(safeMinutes),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = if (isMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+/**
+ * Custom Canvas-drawn Horloge (clock) icon showing a full hour (`1.0f`),
+ * three-quarter hour (`0.75f`), half hour (`0.50f`), quarter hour (`0.25f`), or empty (`0.0f`).
+ */
+@Composable
+fun HorlogeFractionIcon(
+    fraction: Float,
+    activeColor: Color,
+    trackColor: Color,
+    size: Dp = 18.dp,
+    modifier: Modifier = Modifier
+) {
+    val clamped = fraction.coerceIn(0f, 1f)
+    Canvas(modifier = modifier.size(size)) {
+        val strokePx = 1.6.dp.toPx()
+        val radius = (this.size.minDimension - strokePx) / 2f
+        val center = Offset(this.size.width / 2f, this.size.height / 2f)
+
+        // Subtle clock face background
+        drawCircle(
+            color = if (clamped >= 1f) activeColor.copy(alpha = 0.22f) else trackColor.copy(alpha = 0.16f),
+            radius = radius,
+            center = center
+        )
+
+        // Filled pie sector for the focused fraction (12 o'clock = -90 degrees)
+        if (clamped > 0f) {
+            val pieInset = strokePx * 0.9f
+            val pieDiameter = (radius - pieInset) * 2f
+            drawArc(
+                color = if (clamped >= 1f) activeColor.copy(alpha = 0.82f) else activeColor.copy(alpha = 0.72f),
+                startAngle = -90f,
+                sweepAngle = 360f * clamped,
+                useCenter = true,
+                topLeft = Offset(center.x - pieDiameter / 2f, center.y - pieDiameter / 2f),
+                size = Size(pieDiameter, pieDiameter)
+            )
+        }
+
+        // Outer clock bezel ring
+        drawCircle(
+            color = if (clamped > 0f) activeColor else trackColor,
+            radius = radius,
+            center = center,
+            style = Stroke(width = strokePx)
+        )
+
+        // 12, 3, 6, 9 o'clock cardinal ticks
+        val tickLength = radius * 0.2f
+        for (angleDeg in listOf(-90.0, 0.0, 90.0, 180.0)) {
+            val rad = Math.toRadians(angleDeg)
+            val startR = radius - strokePx * 0.5f
+            val endR = radius - tickLength
+            drawLine(
+                color = if (clamped > 0f) activeColor else trackColor,
+                start = Offset(
+                    x = center.x + (startR * cos(rad)).toFloat(),
+                    y = center.y + (startR * sin(rad)).toFloat()
+                ),
+                end = Offset(
+                    x = center.x + (endR * cos(rad)).toFloat(),
+                    y = center.y + (endR * sin(rad)).toFloat()
+                ),
+                strokeWidth = strokePx * 0.7f,
+                cap = StrokeCap.Round
+            )
+        }
+
+        // Clock hands: 12 o'clock reference hand + minute hand pointing to the fraction angle
+        val handColor = if (clamped >= 0.75f) Color.White else activeColor
+        val minuteAngleDeg = if (clamped > 0f && clamped < 1f) {
+            -90.0 + 360.0 * clamped
+        } else {
+            0.0 // 3 o'clock hand for full hour icon so it looks like a classic clock
+        }
+        val minuteRad = Math.toRadians(minuteAngleDeg)
+
+        // Vertical 12 o'clock hand
+        drawLine(
+            color = handColor,
+            start = center,
+            end = Offset(center.x, center.y - radius * 0.55f),
+            strokeWidth = strokePx * 0.85f,
+            cap = StrokeCap.Round
+        )
+
+        // Sweep / hour hand
+        drawLine(
+            color = handColor,
+            start = center,
+            end = Offset(
+                x = center.x + (radius * 0.5f * cos(minuteRad)).toFloat(),
+                y = center.y + (radius * 0.5f * sin(minuteRad)).toFloat()
+            ),
+            strokeWidth = strokePx * 0.85f,
+            cap = StrokeCap.Round
+        )
+
+        // Center pin
+        drawCircle(
+            color = handColor,
+            radius = strokePx * 0.7f,
+            center = center
+        )
     }
 }
 

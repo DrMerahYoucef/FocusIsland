@@ -1139,5 +1139,24 @@
     <string name="study_group_delete_group_title">Supprimer ce groupe d\'étude ?</string>
     <string name="study_group_delete_group_body">Supprimer ce défi y met fin pour tout le monde et efface définitivement tous les messages du groupe.</string>
     <string name="study_group_creator_badge">Créateur</string>
+    <string name="challenges_tab_personal">Défi personnel</string>
+    <string name="challenges_tab_study_group">Groupe d\'étude</string>
+    <string name="study_group_leaderboard_toggle_show">Voir les membres (%1$d)</string>
+    <string name="study_group_leaderboard_toggle_hide">Masquer les membres</string>
+    <string name="study_group_empty_room_title">Aucun groupe d\'étude actif</string>
+    <string name="study_group_empty_room_body">Lancez un salon Groupe d\'étude avec un ou plusieurs amis pour suivre les heures de focus avec des icônes d\'horloge, discuter et relancer les amis en pause.</string>
+    <string name="study_group_hours_mins_fmt">%1$dh %2$02dmin</string>
+    <string name="study_group_invite_notif_channel">Invitations aux groupes d\'étude et défis</string>
+    <string name="study_group_invite_notif_channel_desc">Alertes lorsqu\'un ami vous invite à un groupe d\'étude ou à un défi</string>
+    <string name="study_group_invite_notif_title">%1$s vous a invité à un groupe d\'étude !</string>
+    <string name="study_group_invite_notif_body">Acceptez dans les 30 minutes pour rejoindre le classement et le salon de discussion.</string>
+    <string name="study_group_invite_expires_in">Expire dans %1$s</string>
+    <string name="study_group_pending_invites_header">Invitations en attente (offre 30 min)</string>
+    <string name="study_group_pending_invite_from">Invité par %1$s</string>
+    <string name="study_group_pending_status_chip">⏳ %1$s · %2$s</string>
+    <string name="study_group_declined_status_chip">⏳ %1$s (Proposé · %2$s)</string>
+    <string name="study_group_expired_status_chip">⌛ %1$s · Expirée · Renvoyer</string>
+    <string name="study_group_resend_invite">Renvoyer l\'invitation</string>
+    <string name="study_group_waiting_friends_accept">En attente de l\'acceptation des amis invités…</string>
 </resources>
 

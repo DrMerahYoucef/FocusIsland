@@ -204,5 +204,104 @@ class StudyGroupChallengeTest {
         assertEquals(FriendChallengeStatus.COMPLETED, mergedWithEnded.status)
         assertTrue(mergedWithEnded.messages.isEmpty())
         assertTrue(mergedWithEnded.nudges.isEmpty())
+
+        // When creator deletes the Study Group (CANCELLED), it overrides any cached ACTIVE copy on friends' phones
+        val cancelledByCreator = activeWithOldMessages.copy(
+            status = FriendChallengeStatus.CANCELLED,
+            finishedAt = 3000L,
+            messages = emptyList(),
+            nudges = emptyList(),
+            messagesClearedAt = 3000L
+        )
+        val mergedWithCancelled = mergeChallenges(activeWithOldMessages, cancelledByCreator)
+        assertEquals(FriendChallengeStatus.CANCELLED, mergedWithCancelled.status)
+        assertTrue(mergedWithCancelled.messages.isEmpty())
+        assertTrue(mergedWithCancelled.nudges.isEmpty())
+    }
+
+    @Test
+    fun `invited member is only added to accepted leaderboard after accepting and stays offered for 30 min when declined`() {
+        val t0 = 1_000_000L
+        val creator = StudyGroupMember(
+            uid = "creator",
+            name = "Youcef",
+            minutes = 45,
+            timerState = StudyMemberTimerState.FOCUSING,
+            roleStatus = StudyMemberRoleStatus.ACTIVE,
+            invitedAt = t0,
+            updatedAt = t0
+        )
+        val invitedFriend = StudyGroupMember(
+            uid = "friend1",
+            name = "Salmi",
+            minutes = 0,
+            timerState = StudyMemberTimerState.IDLE,
+            roleStatus = StudyMemberRoleStatus.INVITED,
+            invitedAt = t0,
+            updatedAt = t0
+        )
+
+        val group = FriendChallenge(
+            id = "2026-10-26_creator_$t0",
+            challengerUid = "creator",
+            challengerName = "Youcef",
+            challengerMinutes = 45,
+            opponentUid = "friend1",
+            opponentName = "Salmi",
+            opponentMinutes = 0,
+            dayKey = "2026-10-26",
+            createdAt = t0,
+            acceptedAt = t0,
+            endAt = t0 + 86_400_000L,
+            status = FriendChallengeStatus.ACTIVE,
+            members = listOf(creator, invitedFriend)
+        )
+
+        // 1. Before accepting: only creator is in acceptedMembers(); friend1 is in pendingOrExpiredInviteMembers()
+        assertEquals(1, group.acceptedMembers().size)
+        assertEquals("creator", group.acceptedMembers().first().uid)
+        assertFalse(group.hasActiveParticipant("friend1"))
+        assertTrue(group.hasValidInvite("friend1", t0 + 5 * 60_000L))
+        assertTrue(group.isFreshInviteFor("friend1", t0 + 5 * 60_000L))
+        assertFalse(group.isDeclinedOfferFor("friend1", t0 + 5 * 60_000L))
+
+        // 2. Friend declines at +5 min: status becomes DECLINED, still offered for remaining 25 minutes
+        val declinedMember = invitedFriend.copy(
+            roleStatus = StudyMemberRoleStatus.DECLINED,
+            updatedAt = t0 + 5 * 60_000L
+        )
+        val groupAfterDecline = group.copy(members = listOf(creator, declinedMember))
+        assertTrue(groupAfterDecline.hasValidInvite("friend1", t0 + 10 * 60_000L))
+        assertTrue(groupAfterDecline.isDeclinedOfferFor("friend1", t0 + 10 * 60_000L))
+        assertEquals(20 * 60_000L, groupAfterDecline.inviteRemainingMsFor("friend1", t0 + 10 * 60_000L))
+
+        // 3. At +30 minutes + 1ms: invitation expires and is no longer valid
+        val expiredTime = t0 + FriendChallengeRepository.INVITE_EXPIRY_MS + 1L
+        assertFalse(groupAfterDecline.hasValidInvite("friend1", expiredTime))
+        assertFalse(groupAfterDecline.isDeclinedOfferFor("friend1", expiredTime))
+        assertEquals(0L, groupAfterDecline.inviteRemainingMsFor("friend1", expiredTime))
+
+        // 4. Creator re-sends invitation at expiredTime + 10_000L: friend gets a fresh 30m window
+        val resentTime = expiredTime + 10_000L
+        val resentMember = declinedMember.copy(
+            roleStatus = StudyMemberRoleStatus.INVITED,
+            invitedAt = resentTime,
+            updatedAt = resentTime
+        )
+        val groupAfterResend = mergeChallenges(groupAfterDecline, groupAfterDecline.copy(members = listOf(creator, resentMember)))
+        assertTrue(groupAfterResend.hasValidInvite("friend1", resentTime + 1_000L))
+        assertTrue(groupAfterResend.isFreshInviteFor("friend1", resentTime + 1_000L))
+        assertFalse(groupAfterResend.isDeclinedOfferFor("friend1", resentTime + 1_000L))
+
+        // 5. Friend accepts within the new 30m window: joins acceptedMembers()
+        val acceptedMember = resentMember.copy(
+            roleStatus = StudyMemberRoleStatus.ACTIVE,
+            updatedAt = resentTime + 30_000L
+        )
+        val groupAfterAccept = mergeChallenges(groupAfterResend, groupAfterResend.copy(members = listOf(creator, acceptedMember)))
+        assertEquals(2, groupAfterAccept.acceptedMembers().size)
+        assertTrue(groupAfterAccept.hasActiveParticipant("friend1"))
+        assertTrue(groupAfterAccept.pendingOrExpiredInviteMembers().isEmpty())
     }
 }
+

@@ -49,7 +49,8 @@ enum class FriendChallengeStatus {
     ACTIVE,
     COMPLETED,
     SURRENDERED,
-    DECLINED;
+    DECLINED,
+    CANCELLED;
 
     companion object {
         fun from(raw: String?): FriendChallengeStatus = when (raw?.lowercase()) {
@@ -57,6 +58,7 @@ enum class FriendChallengeStatus {
             "completed" -> COMPLETED
             "surrendered" -> SURRENDERED
             "declined" -> DECLINED
+            "cancelled", "deleted" -> CANCELLED
             else -> PENDING
         }
     }
@@ -79,11 +81,13 @@ enum class StudyMemberTimerState {
 enum class StudyMemberRoleStatus {
     ACTIVE,
     INVITED,
+    DECLINED,
     SURRENDERED;
 
     companion object {
         fun from(raw: String?): StudyMemberRoleStatus = when (raw?.lowercase()) {
             "invited", "pending" -> INVITED
+            "declined" -> DECLINED
             "surrendered", "left" -> SURRENDERED
             else -> ACTIVE
         }
@@ -96,10 +100,28 @@ data class StudyGroupMember(
     val minutes: Int = 0,
     val timerState: StudyMemberTimerState = StudyMemberTimerState.IDLE,
     val roleStatus: StudyMemberRoleStatus = StudyMemberRoleStatus.ACTIVE,
+    val invitedAt: Long = 0L,
     val updatedAt: Long = 0L
 ) {
     val isFocusing: Boolean get() = timerState == StudyMemberTimerState.FOCUSING
     val isPausedOrIdle: Boolean get() = timerState != StudyMemberTimerState.FOCUSING
+
+    fun effectiveInvitedAt(challengeCreatedAt: Long = 0L): Long = when {
+        invitedAt > 0L -> invitedAt
+        updatedAt > 0L -> updatedAt
+        else -> challengeCreatedAt
+    }
+
+    fun isInviteValid(now: Long, challengeCreatedAt: Long = 0L): Boolean =
+        (roleStatus == StudyMemberRoleStatus.INVITED || roleStatus == StudyMemberRoleStatus.DECLINED) &&
+            (now - effectiveInvitedAt(challengeCreatedAt)) < FriendChallengeRepository.INVITE_EXPIRY_MS
+
+    fun isInviteExpired(now: Long, challengeCreatedAt: Long = 0L): Boolean =
+        (roleStatus == StudyMemberRoleStatus.INVITED || roleStatus == StudyMemberRoleStatus.DECLINED) &&
+            (now - effectiveInvitedAt(challengeCreatedAt)) >= FriendChallengeRepository.INVITE_EXPIRY_MS
+
+    fun inviteRemainingMs(now: Long, challengeCreatedAt: Long = 0L): Long =
+        (effectiveInvitedAt(challengeCreatedAt) + FriendChallengeRepository.INVITE_EXPIRY_MS - now).coerceAtLeast(0L)
 }
 
 data class StudyGroupMessage(
@@ -176,13 +198,23 @@ data class FriendChallenge(
                         roleStatus = when {
                             surrenderedByUid == opponentUid -> StudyMemberRoleStatus.SURRENDERED
                             status == FriendChallengeStatus.PENDING -> StudyMemberRoleStatus.INVITED
+                            status == FriendChallengeStatus.DECLINED -> StudyMemberRoleStatus.DECLINED
                             else -> StudyMemberRoleStatus.ACTIVE
-                        }
+                        },
+                        invitedAt = createdAt
                     )
                 )
             }
         }
     }
+
+    fun acceptedMembers(): List<StudyGroupMember> =
+        allMembers().filter { it.roleStatus == StudyMemberRoleStatus.ACTIVE }
+
+    fun pendingOrExpiredInviteMembers(): List<StudyGroupMember> =
+        allMembers().filter {
+            it.roleStatus == StudyMemberRoleStatus.INVITED || it.roleStatus == StudyMemberRoleStatus.DECLINED
+        }
 
     fun activeAndInvitedMembers(): List<StudyGroupMember> =
         allMembers().filter { it.roleStatus != StudyMemberRoleStatus.SURRENDERED }
@@ -193,10 +225,28 @@ data class FriendChallenge(
             .distinct()
 
     fun hasActiveParticipant(uid: String): Boolean =
-        allMembers().any { it.uid == uid && it.roleStatus != StudyMemberRoleStatus.SURRENDERED }
+        allMembers().any { it.uid == uid && it.roleStatus == StudyMemberRoleStatus.ACTIVE }
+
+    fun hasValidInvite(uid: String, now: Long): Boolean =
+        allMembers().any { it.uid == uid && it.isInviteValid(now, createdAt) }
+
+    fun isFreshInviteFor(uid: String, now: Long): Boolean =
+        allMembers().any {
+            it.uid == uid && it.roleStatus == StudyMemberRoleStatus.INVITED && it.isInviteValid(now, createdAt)
+        }
+
+    fun isDeclinedOfferFor(uid: String, now: Long): Boolean =
+        allMembers().any {
+            it.uid == uid && it.roleStatus == StudyMemberRoleStatus.DECLINED && it.isInviteValid(now, createdAt)
+        }
+
+    fun inviteRemainingMsFor(uid: String, now: Long): Long =
+        allMembers().firstOrNull { it.uid == uid }?.inviteRemainingMs(now, createdAt) ?: 0L
 
     fun isInvited(uid: String): Boolean =
-        allMembers().any { it.uid == uid && it.roleStatus == StudyMemberRoleStatus.INVITED }
+        allMembers().any {
+            it.uid == uid && (it.roleStatus == StudyMemberRoleStatus.INVITED || it.roleStatus == StudyMemberRoleStatus.DECLINED)
+        }
 
     fun isChallenger(uid: String): Boolean = challengerUid == uid
 
@@ -288,9 +338,13 @@ class FriendChallengeRepository(
     private val handledNudgeIds: MutableSet<String> = java.util.Collections.synchronizedSet(
         (prefs.getStringSet(KEY_HANDLED_NUDGE_IDS, emptySet()) ?: emptySet()).toMutableSet()
     )
+    private val handledInviteIds: MutableSet<String> = java.util.Collections.synchronizedSet(
+        (prefs.getStringSet(KEY_HANDLED_INVITE_IDS, emptySet()) ?: emptySet()).toMutableSet()
+    )
 
     init {
         createNudgeNotificationChannel()
+        createInviteNotificationChannel()
         val cached = loadCachedChallenges()
         if (cached.isNotEmpty()) {
             rebuildState(cached, currentUid(), _state.value.myLiveMinutesToday)
@@ -350,12 +404,7 @@ class FriendChallengeRepository(
                     @Suppress("UNCHECKED_CAST")
                     val friendIds = (snapshot.get("friends") as? List<*>)?.mapNotNull { it as? String }.orEmpty()
                     ensureFriendProfileListeners(uid, friendIds)
-                    val ch = snapshot.toUserDuelChallenge()
-                    if (ch != null && ch.id !in abandonedIds) {
-                        remoteUserDuels[snapshot.id] = ch
-                    } else {
-                        remoteUserDuels.remove(snapshot.id)
-                    }
+                    handleIncomingUserDuelSnapshot(snapshot)
                     onRemoteUpdated(uid)
                 }
 
@@ -366,8 +415,7 @@ class FriendChallengeRepository(
                     if (error != null) return@addSnapshotListener
                     snapshot?.documents?.forEach { doc ->
                         doc.checkIncomingUserNudge(uid)
-                        val ch = doc.toUserDuelChallenge()
-                        if (ch != null && ch.id !in abandonedIds) remoteUserDuels[doc.id] = ch else remoteUserDuels.remove(doc.id)
+                        handleIncomingUserDuelSnapshot(doc)
                     }
                     onRemoteUpdated(uid)
                 }
@@ -379,8 +427,7 @@ class FriendChallengeRepository(
                     if (error != null) return@addSnapshotListener
                     snapshot?.documents?.forEach { doc ->
                         doc.checkIncomingUserNudge(uid)
-                        val ch = doc.toUserDuelChallenge()
-                        if (ch != null && ch.id !in abandonedIds) remoteUserDuels[doc.id] = ch
+                        handleIncomingUserDuelSnapshot(doc)
                     }
                     onRemoteUpdated(uid)
                 }
@@ -392,8 +439,7 @@ class FriendChallengeRepository(
                     if (error != null) return@addSnapshotListener
                     snapshot?.documents?.forEach { doc ->
                         doc.checkIncomingUserNudge(uid)
-                        val ch = doc.toUserDuelChallenge()
-                        if (ch != null && ch.id !in abandonedIds) remoteUserDuels[doc.id] = ch else remoteUserDuels.remove(doc.id)
+                        handleIncomingUserDuelSnapshot(doc)
                     }
                     onRemoteUpdated(uid)
                 }
@@ -403,16 +449,68 @@ class FriendChallengeRepository(
                 .whereArrayContains("participants", uid)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) return@addSnapshotListener
+                    snapshot?.documentChanges?.forEach { change ->
+                        if (change.type == com.google.firebase.firestore.DocumentChange.Type.REMOVED) {
+                            val removedId = change.document.id
+                            markAbandoned(removedId)
+                            remoteCollectionDuels.remove(removedId)
+                        }
+                    }
                     snapshot?.documents?.forEach { doc ->
                         val ch = doc.toFriendChallenge()
-                        if (ch != null && ch.id !in abandonedIds) {
-                            remoteCollectionDuels[ch.id] = ch
+                        if (ch != null) {
+                            if (ch.status == FriendChallengeStatus.CANCELLED) {
+                                markAbandoned(ch.id)
+                                remoteCollectionDuels[ch.id] = ch
+                            } else if (ch.id !in abandonedIds) {
+                                remoteCollectionDuels[ch.id] = ch
+                            }
                         }
                     }
                     onRemoteUpdated(uid)
                 }
         }.onFailure {
             Log.w(TAG, "Failed to attach Firestore listener: ${it.message}")
+        }
+    }
+
+    private fun handleIncomingUserDuelSnapshot(doc: DocumentSnapshot) {
+        val docUid = doc.id
+        val rawStatus = doc.getString("duelStatus")?.lowercase().orEmpty()
+        val currentDuelId = doc.getString("duelId").orEmpty()
+
+        // If this user is the creator of a challenge we previously knew about, and they cancelled or cleared it:
+        val prev = remoteUserDuels[docUid]
+        if (prev != null && prev.challengerUid == docUid) {
+            if (rawStatus == "cancelled" || rawStatus == "deleted" || currentDuelId.isBlank() || currentDuelId != prev.id) {
+                markAbandoned(prev.id)
+                remoteCollectionDuels.remove(prev.id)
+                remoteUserDuels.remove(docUid)
+            }
+        }
+        // Also check local cache in case the creator deleted the challenge while we were offline or before prev was populated
+        loadCachedChallenges()
+            .filter { it.challengerUid == docUid && (it.status == FriendChallengeStatus.ACTIVE || it.status == FriendChallengeStatus.PENDING) }
+            .forEach { cachedByCreator ->
+                if (rawStatus == "cancelled" || rawStatus == "deleted" || currentDuelId.isBlank() || currentDuelId != cachedByCreator.id) {
+                    markAbandoned(cachedByCreator.id)
+                    remoteCollectionDuels.remove(cachedByCreator.id)
+                }
+            }
+
+        val ch = doc.toUserDuelChallenge()
+        if (ch != null) {
+            if (ch.status == FriendChallengeStatus.CANCELLED) {
+                markAbandoned(ch.id)
+                remoteCollectionDuels.remove(ch.id)
+                remoteUserDuels[docUid] = ch
+            } else if (ch.id !in abandonedIds) {
+                remoteUserDuels[docUid] = ch
+            } else {
+                remoteUserDuels.remove(docUid)
+            }
+        } else {
+            remoteUserDuels.remove(docUid)
         }
     }
 
@@ -440,10 +538,7 @@ class FriendChallengeRepository(
                                 todayMinutes = todayMins,
                                 timerState = timerSt
                             )
-                            val ch = snapshot.toUserDuelChallenge()
-                            if (ch != null && ch.hasActiveParticipant(myUid) && ch.id !in abandonedIds) {
-                                remoteUserDuels[snapshot.id] = ch
-                            }
+                            handleIncomingUserDuelSnapshot(snapshot)
                             onRemoteUpdated(myUid)
                         }
                     friendDocListeners[friendUid] = reg
@@ -474,15 +569,59 @@ class FriendChallengeRepository(
             byId[ch.id] = byId[ch.id]?.let { mergeChallenges(it, ch) } ?: ch
         }
 
-        // Overlay live friend profile minutes & timer states onto active challenges
-        val enrichedList = byId.values.map { ch ->
-            enrichChallengeWithLiveProfiles(ch, uid)
+        // Propagate any cancelled/deleted challenge to abandonedIds and clean up our own user doc if needed
+        byId.values.filter { it.status == FriendChallengeStatus.CANCELLED }.forEach { cancelled ->
+            markAbandoned(cancelled.id)
+            remoteCollectionDuels.remove(cancelled.id)
+            if (uid.isNotEmpty()) {
+                val myRemote = remoteUserDuels[uid]
+                if (myRemote != null && myRemote.id == cancelled.id && myRemote.status != FriendChallengeStatus.CANCELLED) {
+                    remoteUserDuels.remove(uid)
+                    appScope.launch {
+                        runCatching {
+                            Firebase.firestore.collection(USERS_COLLECTION)
+                                .document(uid)
+                                .set(
+                                    mapOf(
+                                        "duelId" to cancelled.id,
+                                        "duelStatus" to "cancelled",
+                                        "studyMessagesJson" to "[]",
+                                        "studyNudgesJson" to "[]"
+                                    ),
+                                    SetOptions.merge()
+                                )
+                                .await()
+                        }
+                    }
+                }
+            }
         }
 
-        // Check for any new nudges targeting me inside the challenges
+        // Overlay live friend profile minutes & timer states onto non-cancelled challenges
+        val enrichedList = byId.values
+            .filterNot { it.status == FriendChallengeStatus.CANCELLED }
+            .map { ch -> enrichChallengeWithLiveProfiles(ch, uid) }
+
+        // Check for new incoming invitations and nudges targeting me inside the challenges
         if (uid.isNotEmpty()) {
             val now = clock()
             enrichedList.forEach { ch ->
+                if (ch.challengerUid != uid && now < ch.endAt &&
+                    (ch.status == FriendChallengeStatus.PENDING || ch.status == FriendChallengeStatus.ACTIVE)
+                ) {
+                    val myMember = ch.allMembers().firstOrNull { it.uid == uid }
+                    if (myMember != null &&
+                        myMember.roleStatus == StudyMemberRoleStatus.INVITED &&
+                        myMember.isInviteValid(now, ch.createdAt)
+                    ) {
+                        val inviteKey = "${ch.id}_${myMember.effectiveInvitedAt(ch.createdAt)}"
+                        if (inviteKey !in handledInviteIds) {
+                            markInviteHandled(inviteKey)
+                            triggerIncomingInviteNotification(ch.challengerName.ifBlank { "Friend" })
+                        }
+                    }
+                }
+
                 ch.nudges.forEach { nudge ->
                     if (nudge.toUid == uid && nudge.fromUid != uid &&
                         now - nudge.createdAt < NUDGE_FRESH_WINDOW_MS &&
@@ -603,7 +742,12 @@ class FriendChallengeRepository(
                 if (active != null && now >= active.endAt) {
                     completeExpiredChallenge(active)
                 }
-                delay(5_000L)
+                val uid = _state.value.myUid.ifEmpty { currentUid() }
+                val hasExpiredIncoming = _state.value.incomingPending.any { !it.hasValidInvite(uid, now) }
+                if (hasExpiredIncoming) {
+                    rebuildState(loadCachedChallenges(), uid, _state.value.myLiveMinutesToday)
+                }
+                delay(2_000L)
             }
         }
     }
@@ -618,22 +762,28 @@ class FriendChallengeRepository(
             appScope.launch { completeExpiredChallenge(expired) }
         }
 
-        // Challenges where I was invited and haven't joined/abandoned yet
+        // Challenges where I was invited within the last 30 minutes (including declined offers still within 30m)
         val incoming = all.filter { ch ->
             ch.id !in abandonedIds &&
                 now < ch.endAt &&
-                ((ch.status == FriendChallengeStatus.PENDING && ch.opponentUid == effectiveUid) ||
-                    (ch.status == FriendChallengeStatus.ACTIVE && ch.isInvited(effectiveUid) && ch.challengerUid != effectiveUid))
-        }.sortedByDescending { it.createdAt }
+                ch.challengerUid != effectiveUid &&
+                (ch.status == FriendChallengeStatus.PENDING || ch.status == FriendChallengeStatus.ACTIVE) &&
+                ch.hasValidInvite(effectiveUid, now)
+        }.sortedWith(
+            compareBy<FriendChallenge> { ch ->
+                if (ch.isDeclinedOfferFor(effectiveUid, now)) 1 else 0
+            }.thenByDescending { it.createdAt }
+        )
 
         val outgoing = all.filter { ch ->
             ch.id !in abandonedIds &&
                 ch.status == FriendChallengeStatus.PENDING &&
                 ch.challengerUid == effectiveUid &&
-                now < ch.endAt
+                now < ch.endAt &&
+                ch.allMembers().any { it.uid != effectiveUid && it.isInviteValid(now, ch.createdAt) }
         }.sortedByDescending { it.createdAt }
 
-        // Active Study Group / Duel where I am a non-surrendered participant
+        // Active Study Group / Duel where I am an accepted (ACTIVE) participant
         val activeRaw = all.filter { ch ->
             ch.id !in abandonedIds &&
                 !ch.didISurrender(effectiveUid) &&
@@ -686,9 +836,9 @@ class FriendChallengeRepository(
         }
 
         val history = all.filter {
-            it.status == FriendChallengeStatus.COMPLETED ||
-                it.status == FriendChallengeStatus.SURRENDERED ||
-                it.id in abandonedIds
+            it.status != FriendChallengeStatus.CANCELLED &&
+                (it.status == FriendChallengeStatus.COMPLETED ||
+                    it.status == FriendChallengeStatus.SURRENDERED)
         }.sortedByDescending { it.finishedAt ?: it.createdAt }
 
         val uncelebrated = history.firstOrNull { ch ->
@@ -748,6 +898,14 @@ class FriendChallengeRepository(
         prefs.edit().putStringSet(KEY_HANDLED_NUDGE_IDS, snapshot).apply()
     }
 
+    private fun markInviteHandled(inviteKey: String) {
+        val snapshot = synchronized(handledInviteIds) {
+            handledInviteIds.add(inviteKey)
+            handledInviteIds.toSet()
+        }
+        prefs.edit().putStringSet(KEY_HANDLED_INVITE_IDS, snapshot).apply()
+    }
+
     fun acknowledgeCelebration(challengeId: String) {
         val snapshot = synchronized(celebratedIds) {
             celebratedIds.add(challengeId)
@@ -785,9 +943,10 @@ class FriendChallengeRepository(
     }
 
     /**
-     * Launches a new Study Group challenge with one or multiple friends, or adds those friends
+     * Launches a new Study Group challenge with one or multiple friends, or invites those friends
      * to the currently active Study Group if one is already running.
-     * Starts immediately as an ACTIVE shared live room so everyone's progress is displayed right away.
+     * Invited friends start with [StudyMemberRoleStatus.INVITED] and a 30-minute expiration window
+     * (`invitedAt = now`). They only join the active leaderboard and chat room once they accept.
      */
     suspend fun startOrInviteToStudyGroup(
         challengerName: String,
@@ -802,17 +961,24 @@ class FriendChallengeRepository(
 
         val existingActive = _state.value.activeDuel
         if (existingActive != null && existingActive.id !in abandonedIds && now < existingActive.endAt) {
-            // Add any newly selected friends into the existing active Study Group
+            // Invite newly selected or expired/declined friends into the existing active Study Group
             val currentMembers = existingActive.allMembers().toMutableList()
             friendsToInvite.forEach { friend ->
                 val idx = currentMembers.indexOfFirst { it.uid == friend.uid }
+                val existingMember = if (idx >= 0) currentMembers[idx] else null
                 val liveFriend = liveFriendProfiles[friend.uid]
+                val roleStatus = if (existingMember?.roleStatus == StudyMemberRoleStatus.ACTIVE) {
+                    StudyMemberRoleStatus.ACTIVE
+                } else {
+                    StudyMemberRoleStatus.INVITED
+                }
                 val newMember = StudyGroupMember(
                     uid = friend.uid,
-                    name = friend.username.ifBlank { liveFriend?.username ?: "Friend" },
-                    minutes = maxOf(friend.todayMinutes, liveFriend?.todayMinutes ?: 0),
+                    name = friend.username.ifBlank { liveFriend?.username ?: existingMember?.name ?: "Friend" },
+                    minutes = maxOf(friend.todayMinutes, liveFriend?.todayMinutes ?: existingMember?.minutes ?: 0),
                     timerState = liveFriend?.timerState ?: friend.timerState,
-                    roleStatus = StudyMemberRoleStatus.ACTIVE,
+                    roleStatus = roleStatus,
+                    invitedAt = if (roleStatus == StudyMemberRoleStatus.INVITED) now else existingMember?.invitedAt ?: now,
                     updatedAt = now
                 )
                 if (idx >= 0) {
@@ -846,6 +1012,7 @@ class FriendChallengeRepository(
                     minutes = myMins,
                     timerState = myTimerSt,
                     roleStatus = StudyMemberRoleStatus.ACTIVE,
+                    invitedAt = now,
                     updatedAt = now
                 )
             )
@@ -857,7 +1024,8 @@ class FriendChallengeRepository(
                         name = f.username.ifBlank { liveFriend?.username ?: "Friend" },
                         minutes = maxOf(f.todayMinutes, liveFriend?.todayMinutes ?: 0),
                         timerState = liveFriend?.timerState ?: f.timerState,
-                        roleStatus = StudyMemberRoleStatus.ACTIVE,
+                        roleStatus = StudyMemberRoleStatus.INVITED,
+                        invitedAt = now,
                         updatedAt = now
                     )
                 )
@@ -889,6 +1057,39 @@ class FriendChallengeRepository(
     }
 
     /**
+     * Re-sends an expired or declined invitation for [friendUid] inside [challenge], resetting their 30-minute timer.
+     */
+    suspend fun resendInvite(
+        challenge: FriendChallenge,
+        friendUid: String,
+        friendName: String
+    ): Result<FriendChallenge> = runCatching {
+        val now = clock()
+        val liveFriend = liveFriendProfiles[friendUid]
+        val currentMembers = challenge.allMembers().toMutableList()
+        val idx = currentMembers.indexOfFirst { it.uid == friendUid }
+        val existing = if (idx >= 0) currentMembers[idx] else null
+        val refreshedMember = StudyGroupMember(
+            uid = friendUid,
+            name = friendName.ifBlank { existing?.name ?: liveFriend?.username ?: "Friend" },
+            minutes = maxOf(existing?.minutes ?: 0, liveFriend?.todayMinutes ?: 0),
+            timerState = liveFriend?.timerState ?: existing?.timerState ?: StudyMemberTimerState.IDLE,
+            roleStatus = StudyMemberRoleStatus.INVITED,
+            invitedAt = now,
+            updatedAt = now
+        )
+        if (idx >= 0) {
+            currentMembers[idx] = refreshedMember
+        } else {
+            currentMembers.add(refreshedMember)
+        }
+        val updated = challenge.copy(members = currentMembers)
+        upsertLocalCache(updated)
+        syncChallengeToFirestoreAsync(updated)
+        updated
+    }
+
+    /**
      * Sends a study challenge to [opponentUid] (or adds them to the current Study Group if active).
      */
     suspend fun sendChallenge(
@@ -912,11 +1113,16 @@ class FriendChallengeRepository(
     }
 
     /**
-     * Accepts an incoming challenge or joins a Study Group room, transitions it to ACTIVE, and starts the Pomodoro timer.
+     * Accepts an incoming challenge or joins a Study Group room, transitions the member to ACTIVE, and starts the Pomodoro timer.
      */
     suspend fun acceptChallenge(challenge: FriendChallenge): Result<FriendChallenge> = runCatching {
-        val myUid = currentUid().ifEmpty { _state.value.myUid }
+        val myUid = currentUid().ifEmpty { _state.value.myUid.ifEmpty { challenge.opponentUid } }
         val now = clock()
+        synchronized(abandonedIds) {
+            if (abandonedIds.remove(challenge.id)) {
+                prefs.edit().putStringSet(KEY_ABANDONED_IDS, abandonedIds.toSet()).apply()
+            }
+        }
         val myMins = _state.value.myLiveMinutesToday
         val myTimerSt = _state.value.myTimerState
         val updatedMembers = challenge.allMembers().map { m ->
@@ -940,47 +1146,29 @@ class FriendChallengeRepository(
         updated
     }
 
+    /**
+     * Marks the user's invitation as DECLINED while keeping the invitation offered for the remaining
+     * 30-minute window (`invitedAt + 30 min`) so the user can still accept before it expires.
+     */
     suspend fun declineChallenge(challenge: FriendChallenge): Result<Unit> = runCatching {
-        markAbandoned(challenge.id)
-        val updated = challenge.copy(status = FriendChallengeStatus.DECLINED, finishedAt = clock())
+        val myUid = currentUid().ifEmpty { _state.value.myUid.ifEmpty { challenge.opponentUid } }
+        val now = clock()
+        val updatedMembers = challenge.allMembers().map { m ->
+            if (m.uid == myUid) {
+                m.copy(
+                    roleStatus = StudyMemberRoleStatus.DECLINED,
+                    invitedAt = m.effectiveInvitedAt(challenge.createdAt),
+                    updatedAt = now
+                )
+            } else m
+        }
+        val updated = challenge.copy(members = updatedMembers)
         upsertLocalCache(updated)
         syncChallengeToFirestoreAsync(updated)
     }
 
-    suspend fun cancelOutgoingChallenge(challenge: FriendChallenge): Result<Unit> = runCatching {
-        val myUid = currentUid()
-        markAbandoned(challenge.id)
-        remoteUserDuels.remove(myUid)
-        remoteCollectionDuels.remove(challenge.id)
-        val current = loadCachedChallenges().filterNot { it.id == challenge.id }
-        saveCachedChallenges(current)
-        rebuildState(current, _state.value.myUid, _state.value.myLiveMinutesToday)
-        if (myUid.isNotEmpty()) {
-            appScope.launch {
-                runCatching {
-                    Firebase.firestore.collection(USERS_COLLECTION)
-                        .document(myUid)
-                        .set(
-                            mapOf(
-                                "duelId" to "",
-                                "duelOpponentUid" to "",
-                                "duelChallengerUid" to "",
-                                "studyGroupParticipantUids" to emptyList<String>(),
-                                "duelStatus" to "cancelled"
-                            ),
-                            SetOptions.merge()
-                        )
-                        .await()
-                }
-                runCatching {
-                    Firebase.firestore.collection(COLLECTION)
-                        .document(challenge.id)
-                        .delete()
-                        .await()
-                }
-            }
-        }
-    }
+    suspend fun cancelOutgoingChallenge(challenge: FriendChallenge): Result<Unit> =
+        deleteStudyGroupByCreator(challenge)
 
     /**
      * Surrenders / abandons the active challenge so the user can immediately launch a new one!
@@ -1076,6 +1264,8 @@ class FriendChallengeRepository(
 
     /**
      * Allows the creator of the Study Group challenge to delete the challenge and wipe all its messages.
+     * Broadcasts a CANCELLED tombstone with participants intact so every invited friend's phone
+     * immediately receives the update and closes the group in real time.
      */
     suspend fun deleteStudyGroupByCreator(challenge: FriendChallenge): Result<Unit> = runCatching {
         val myUid = _state.value.myUid.ifEmpty { currentUid().ifEmpty { challenge.challengerUid } }
@@ -1083,6 +1273,14 @@ class FriendChallengeRepository(
         markAbandoned(challenge.id)
         remoteUserDuels.remove(myUid)
         remoteCollectionDuels.remove(challenge.id)
+
+        val cancelledTombstone = challenge.copy(
+            status = FriendChallengeStatus.CANCELLED,
+            finishedAt = now,
+            messages = emptyList(),
+            nudges = emptyList(),
+            messagesClearedAt = now
+        )
 
         val current = loadCachedChallenges().filterNot { it.id == challenge.id }
         saveCachedChallenges(current)
@@ -1094,16 +1292,7 @@ class FriendChallengeRepository(
                     Firebase.firestore.collection(USERS_COLLECTION)
                         .document(myUid)
                         .set(
-                            mapOf(
-                                "duelId" to "",
-                                "duelStatus" to "cancelled",
-                                "duelOpponentUid" to "",
-                                "duelChallengerUid" to "",
-                                "studyGroupParticipantUids" to emptyList<String>(),
-                                "studyMessagesJson" to "[]",
-                                "studyNudgesJson" to "[]",
-                                "studyMessagesClearedAt" to now
-                            ),
+                            cancelledTombstone.toUserDuelFields(myUid),
                             SetOptions.merge()
                         )
                         .await()
@@ -1111,7 +1300,10 @@ class FriendChallengeRepository(
                 runCatching {
                     Firebase.firestore.collection(COLLECTION)
                         .document(challenge.id)
-                        .delete()
+                        .set(
+                            cancelledTombstone.toFirestoreMap(),
+                            SetOptions.merge()
+                        )
                         .await()
                 }
             }
@@ -1332,6 +1524,86 @@ class FriendChallengeRepository(
         }
     }
 
+    /**
+     * Plays notification sound + vibrates the device + displays a high-priority notification
+     * when a friend invites the user to a Study Group or Challenge.
+     */
+    internal fun triggerIncomingInviteNotification(fromFriendName: String) {
+        runCatching {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                context.getSystemService(VibratorManager::class.java)?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            }
+            if (vibrator?.hasVibrator() == true) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 220, 100, 260), -1))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(longArrayOf(0, 220, 100, 260), -1)
+                }
+            }
+
+            val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            RingtoneManager.getRingtone(context, soundUri)?.play()
+
+            createInviteNotificationChannel()
+            val openIntent = Intent(context, MainActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                data = Uri.parse("focusisland://app/challenges")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val openPending = PendingIntent.getActivity(
+                context,
+                INVITE_NOTIFICATION_ID,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val title = context.getString(R.string.study_group_invite_notif_title, fromFriendName)
+            val body = context.getString(R.string.study_group_invite_notif_body)
+
+            val notification = NotificationCompat.Builder(context, INVITE_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_widget_flame)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_SOCIAL)
+                .setSound(soundUri)
+                .setVibrate(longArrayOf(0, 220, 100, 260))
+                .setAutoCancel(true)
+                .setContentIntent(openPending)
+                .build()
+
+            context.getSystemService(NotificationManager::class.java)
+                ?.notify(INVITE_NOTIFICATION_ID, notification)
+        }.onFailure {
+            Log.w(TAG, "Failed to trigger invite notification: ${it.message}")
+        }
+    }
+
+    private fun createInviteNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching {
+                val nm = context.getSystemService(NotificationManager::class.java) ?: return
+                val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                val channel = NotificationChannel(
+                    INVITE_CHANNEL_ID,
+                    context.getString(R.string.study_group_invite_notif_channel),
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = context.getString(R.string.study_group_invite_notif_channel_desc)
+                    enableVibration(true)
+                    vibrationPattern = longArrayOf(0, 220, 100, 260)
+                    setSound(soundUri, null)
+                }
+                nm.createNotificationChannel(channel)
+            }
+        }
+    }
+
     private suspend fun pushMyStateToActiveChallenge(
         challenge: FriendChallenge,
         myUid: String,
@@ -1418,10 +1690,14 @@ class FriendChallengeRepository(
         private const val KEY_AUTO_STARTED_IDS = "auto_started_ids"
         private const val KEY_ABANDONED_IDS = "abandoned_ids"
         private const val KEY_HANDLED_NUDGE_IDS = "handled_nudge_ids"
+        private const val KEY_HANDLED_INVITE_IDS = "handled_invite_ids"
         private const val NUDGE_CHANNEL_ID = "study_group_nudge_channel"
         private const val NUDGE_NOTIFICATION_ID = 4409
+        private const val INVITE_CHANNEL_ID = "study_group_invite_channel"
+        private const val INVITE_NOTIFICATION_ID = 4412
         private const val NUDGE_FRESH_WINDOW_MS = 5 * 60_000L
         internal const val NUDGE_COOLDOWN_MS = 60_000L
+        internal const val INVITE_EXPIRY_MS = 30 * 60_000L
         private const val MAX_CACHE = 100
         private const val MAX_MESSAGES = 60
 
@@ -1431,6 +1707,7 @@ class FriendChallengeRepository(
             FriendChallengeStatus.DECLINED -> 3
             FriendChallengeStatus.COMPLETED -> 4
             FriendChallengeStatus.SURRENDERED -> 5
+            FriendChallengeStatus.CANCELLED -> 6
         }
 
         internal fun mergeChallenges(a: FriendChallenge, b: FriendChallenge): FriendChallenge {
@@ -1441,8 +1718,13 @@ class FriendChallengeRepository(
                 if (prev == null) {
                     mergedMembersByUid[m.uid] = m
                 } else {
+                    val prevInvitedAt = prev.invitedAt
+                    val mInvitedAt = m.invitedAt
+                    val maxInvitedAt = maxOf(prevInvitedAt, mInvitedAt)
                     val newer = if (m.updatedAt >= prev.updatedAt) m else prev
                     val role = when {
+                        mInvitedAt > prevInvitedAt && m.updatedAt >= prev.updatedAt -> m.roleStatus
+                        prevInvitedAt > mInvitedAt && prev.updatedAt >= m.updatedAt -> prev.roleStatus
                         prev.roleStatus == StudyMemberRoleStatus.SURRENDERED || m.roleStatus == StudyMemberRoleStatus.SURRENDERED ->
                             StudyMemberRoleStatus.SURRENDERED
                         prev.roleStatus == StudyMemberRoleStatus.ACTIVE || m.roleStatus == StudyMemberRoleStatus.ACTIVE ->
@@ -1453,6 +1735,7 @@ class FriendChallengeRepository(
                         name = m.name.ifBlank { prev.name },
                         minutes = maxOf(prev.minutes, m.minutes),
                         roleStatus = role,
+                        invitedAt = maxInvitedAt,
                         updatedAt = maxOf(prev.updatedAt, m.updatedAt)
                     )
                 }
@@ -1503,6 +1786,7 @@ class FriendChallengeRepository(
                         .put("minutes", m.minutes)
                         .put("timerState", m.timerState.name.lowercase())
                         .put("roleStatus", m.roleStatus.name.lowercase())
+                        .put("invitedAt", m.invitedAt)
                         .put("updatedAt", m.updatedAt)
                 }
             )
@@ -1519,6 +1803,7 @@ class FriendChallengeRepository(
                     minutes = o.optInt("minutes", 0),
                     timerState = StudyMemberTimerState.from(o.optString("timerState")),
                     roleStatus = StudyMemberRoleStatus.from(o.optString("roleStatus")),
+                    invitedAt = o.optLong("invitedAt", 0L),
                     updatedAt = o.optLong("updatedAt", 0L)
                 )
             }
@@ -1590,9 +1875,12 @@ class FriendChallengeRepository(
         private fun DocumentSnapshot.toUserDuelChallenge(): FriendChallenge? = runCatching {
             val duelId = getString("duelId")?.takeIf { it.isNotBlank() } ?: return null
             val rawStatus = getString("duelStatus")?.lowercase() ?: return null
-            if (rawStatus == "cancelled") return null
-            val challengerUid = getString("duelChallengerUid")?.takeIf { it.isNotBlank() } ?: return null
-            val opponentUid = getString("duelOpponentUid")?.takeIf { it.isNotBlank() } ?: return null
+            val parsedStatus = FriendChallengeStatus.from(rawStatus)
+            val challengerUid = getString("duelChallengerUid").orEmpty()
+            val opponentUid = getString("duelOpponentUid").orEmpty()
+            if (parsedStatus != FriendChallengeStatus.CANCELLED && (challengerUid.isBlank() || opponentUid.isBlank())) {
+                return null
+            }
             FriendChallenge(
                 id = duelId,
                 challengerUid = challengerUid,
@@ -1606,7 +1894,7 @@ class FriendChallengeRepository(
                 acceptedAt = getLong("duelAcceptedAt"),
                 endAt = getLong("duelEndAt") ?: 0L,
                 finishedAt = getLong("duelFinishedAt"),
-                status = FriendChallengeStatus.from(rawStatus),
+                status = parsedStatus,
                 surrenderedByUid = getString("duelSurrenderedByUid")?.takeIf { it.isNotBlank() },
                 winnerUid = getString("duelWinnerUid")?.takeIf { it.isNotBlank() },
                 members = parseMembersJson(getString("studyMembersJson")),

@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,10 +27,12 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -53,10 +56,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
@@ -75,6 +80,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -85,10 +91,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.challenge.Challenge
@@ -131,9 +139,9 @@ private val PendingSaver = listSaver<PendingChallenge?, Any>(
 private const val COUNTDOWN_FROM = 5
 
 /**
- * Challenges: set a goal and a time limit, a 5-second countdown with sound, then beat the clock.
- * Also hosts the multi-friend Study Group Challenge with live focus progress, group chat & emojis,
- * and sound+vibration focus nudges when a friend is paused.
+ * Challenges screen split into two dedicated tabs:
+ * - Tab 0 (Personal): Set a personal goal and deadline, 5-second countdown with sound, beat the clock, and view personal history.
+ * - Tab 1 (Study Group): Full-screen Messenger-style group study chat room with collapsible horloge leaderboard, emoji reactions, and focus nudges.
  */
 @Composable
 fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifier) {
@@ -185,7 +193,8 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
             onSendStudyGroupMessage = viewModel::sendStudyGroupMessage,
             onNudgeStudyGroupFriend = viewModel::nudgeStudyGroupFriend,
             onClearStudyGroupMessages = viewModel::clearStudyGroupMessages,
-            onDeleteStudyGroupChallenge = viewModel::deleteStudyGroupChallenge
+            onDeleteStudyGroupChallenge = viewModel::deleteStudyGroupChallenge,
+            onResendStudyGroupInvite = viewModel::resendStudyGroupInvite
         )
         Celebration(trigger = celebrated?.id)
         FriendDuelVictoryCelebration(
@@ -212,8 +221,14 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
         )
     }
     if (showStudyGroupSheet) {
-        val existingUids = friendState.activeDuel
+        val currentNowMs = System.currentTimeMillis()
+        val activeDuel = friendState.activeDuel
+        val existingUids = activeDuel
             ?.activeAndInvitedMembers()
+            ?.filter {
+                it.roleStatus == com.example.data.challenge.StudyMemberRoleStatus.ACTIVE ||
+                    it.isInviteValid(currentNowMs, activeDuel.createdAt)
+            }
             ?.mapTo(HashSet()) { it.uid }
             .orEmpty()
         StudyGroupFriendsSheet(
@@ -251,7 +266,11 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
     }
 }
 
-/** Stateless layout (previewable). */
+private const val TAB_PERSONAL = 0
+private const val TAB_STUDY_GROUP = 1
+
+/** Stateless layout (previewable) with two tabs: Personal Challenge and Study Group Chat Room. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ChallengesContent(
     state: ChallengeState,
@@ -272,7 +291,148 @@ internal fun ChallengesContent(
     onSendStudyGroupMessage: (FriendChallenge, String) -> Unit = { _, _ -> },
     onNudgeStudyGroupFriend: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
     onClearStudyGroupMessages: (FriendChallenge) -> Unit = {},
-    onDeleteStudyGroupChallenge: (FriendChallenge) -> Unit = {}
+    onDeleteStudyGroupChallenge: (FriendChallenge) -> Unit = {},
+    onResendStudyGroupInvite: (FriendChallenge, String, String) -> Unit = { _, _, _ -> }
+) {
+    val hasActiveOrInviteGroup = friendState.activeDuel != null || friendState.incomingPending.isNotEmpty()
+    var selectedTab by rememberSaveable {
+        mutableIntStateOf(
+            if (hasActiveOrInviteGroup && state.active == null) TAB_STUDY_GROUP else TAB_PERSONAL
+        )
+    }
+    var lastAutoSwitchedDuelId by rememberSaveable { mutableStateOf("") }
+
+    // Automatically switch to the Study Group tab when a new Study Group becomes active
+    LaunchedEffect(friendState.activeDuel?.id) {
+        val activeId = friendState.activeDuel?.id.orEmpty()
+        if (activeId.isNotEmpty() && activeId != lastAutoSwitchedDuelId) {
+            lastAutoSwitchedDuelId = activeId
+            selectedTab = TAB_STUDY_GROUP
+        } else if (activeId.isEmpty()) {
+            lastAutoSwitchedDuelId = ""
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        PrimaryTabRow(
+            selectedTabIndex = selectedTab,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Tab(
+                selected = selectedTab == TAB_PERSONAL,
+                onClick = { selectedTab = TAB_PERSONAL },
+                modifier = Modifier.testTag("challenges_tab_personal"),
+                text = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Flag,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = stringResource(R.string.challenges_tab_personal),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (state.active != null) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary)
+                            )
+                        }
+                    }
+                }
+            )
+            Tab(
+                selected = selectedTab == TAB_STUDY_GROUP,
+                onClick = { selectedTab = TAB_STUDY_GROUP },
+                modifier = Modifier.testTag("challenges_tab_study_group"),
+                text = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Groups,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = stringResource(R.string.challenges_tab_study_group),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (hasActiveOrInviteGroup) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.extendedColors.success)
+                            )
+                        }
+                    }
+                }
+            )
+        }
+
+        if (selectedTab == TAB_PERSONAL) {
+            PersonalChallengeTabContent(
+                state = state,
+                friendState = friendState,
+                nowMs = nowMs,
+                celebrated = celebrated,
+                onNew = onNew,
+                onGoalReached = onGoalReached,
+                onGiveUp = onGiveUp,
+                onStopOvertime = onStopOvertime,
+                onDismissCelebration = onDismissCelebration,
+                onClearHistory = onClearHistory,
+                onAcceptFriendDuel = { duel ->
+                    onAcceptFriendDuel(duel)
+                    selectedTab = TAB_STUDY_GROUP
+                },
+                onDeclineFriendDuel = onDeclineFriendDuel,
+                modifier = Modifier.weight(1f)
+            )
+        } else {
+            StudyGroupTabContent(
+                friendState = friendState,
+                onOpenStudyGroupFriends = onOpenStudyGroupFriends,
+                onAcceptFriendDuel = onAcceptFriendDuel,
+                onDeclineFriendDuel = onDeclineFriendDuel,
+                onCancelFriendDuel = onCancelFriendDuel,
+                onSurrenderFriendDuel = onSurrenderFriendDuel,
+                onSendStudyGroupMessage = onSendStudyGroupMessage,
+                onNudgeStudyGroupFriend = onNudgeStudyGroupFriend,
+                onClearStudyGroupMessages = onClearStudyGroupMessages,
+                onDeleteStudyGroupChallenge = onDeleteStudyGroupChallenge,
+                onResendStudyGroupInvite = onResendStudyGroupInvite,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun PersonalChallengeTabContent(
+    state: ChallengeState,
+    friendState: FriendChallengeState,
+    nowMs: Long,
+    celebrated: Challenge?,
+    onNew: () -> Unit,
+    onGoalReached: () -> Unit,
+    onGiveUp: () -> Unit,
+    onStopOvertime: () -> Unit,
+    onDismissCelebration: () -> Unit,
+    onClearHistory: () -> Unit,
+    onAcceptFriendDuel: (FriendChallenge) -> Unit,
+    onDeclineFriendDuel: (FriendChallenge) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val lastFailed = state.history.firstOrNull()?.takeIf {
         it.result == ChallengeResult.FAILED && it.finishedAt != null && nowMs - it.finishedAt < RECENT_MS && state.active == null
@@ -280,64 +440,16 @@ internal fun ChallengesContent(
     LazyColumn(
         contentPadding = PaddingValues(start = Spacing.md, end = Spacing.md, top = Spacing.sm, bottom = Spacing.xxl),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-        modifier = Modifier.fillMaxSize()
+        modifier = modifier.fillMaxSize()
     ) {
-        // Incoming friend duel / study group invitations
-        items(friendState.incomingPending, key = { "in_duel_" + it.id }) { incoming ->
+        // Show incoming Study Group invitations at the top so the user never misses an invite
+        items(friendState.incomingPending, key = { "in_duel_personal_" + it.id }) { incoming ->
             FriendDuelIncomingCard(
                 challenge = incoming,
+                myUid = friendState.myUid,
                 onAccept = onAcceptFriendDuel,
                 onDecline = onDeclineFriendDuel
             )
-        }
-
-        // Outgoing pending friend duel invitations
-        items(friendState.outgoingPending, key = { "out_duel_" + it.id }) { outgoing ->
-            val opponent = outgoing.opponentName.ifBlank { stringResource(R.string.community_unnamed) }
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-                ListItem(
-                    headlineContent = { Text(stringResource(R.string.study_group_title)) },
-                    supportingContent = { Text(stringResource(R.string.friend_duel_waiting_accept, opponent)) },
-                    trailingContent = {
-                        TextButton(onClick = { onCancelFriendDuel(outgoing) }) {
-                            Text(stringResource(R.string.cancel))
-                        }
-                    }
-                )
-            }
-        }
-
-        // Active Multi-Friend Study Group / Duel
-        val activeStudyGroup = friendState.activeDuel
-        if (activeStudyGroup != null) {
-            item(key = "active_duel_" + activeStudyGroup.id) {
-                FriendDuelLiveCard(
-                    duel = activeStudyGroup,
-                    myUid = friendState.myUid,
-                    onSurrender = onSurrenderFriendDuel,
-                    onSendMessage = onSendStudyGroupMessage,
-                    onNudgeFriend = onNudgeStudyGroupFriend,
-                    onClearMessages = onClearStudyGroupMessages,
-                    onDeleteGroup = onDeleteStudyGroupChallenge,
-                    onAddFriends = onOpenStudyGroupFriends,
-                    nudgeCooldownUntil = friendState.nudgeCooldownUntil
-                )
-            }
-        } else {
-            // Button to launch a new Study Group with one or multiple friends anytime
-            item(key = "launch_study_group_button") {
-                FilledTonalButton(
-                    onClick = onOpenStudyGroupFriends,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = Spacing.buttonHeight)
-                        .testTag("launch_study_group_button")
-                ) {
-                    Icon(Icons.Rounded.Groups, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-                    Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                    Text(stringResource(R.string.study_group_new_button))
-                }
-            }
         }
 
         item {
@@ -352,7 +464,13 @@ internal fun ChallengesContent(
                 )
                 celebrated != null -> ResultCard(celebrated, success = true, onDismiss = onDismissCelebration, onNew = onNew)
                 lastFailed != null -> ResultCard(lastFailed, success = false, onDismiss = null, onNew = onNew)
-                else -> Button(onClick = onNew, modifier = Modifier.fillMaxWidth().heightIn(min = Spacing.buttonHeight)) {
+                else -> Button(
+                    onClick = onNew,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = Spacing.buttonHeight)
+                        .testTag("personal_challenge_new_button")
+                ) {
                     Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
                     Spacer(Modifier.size(ButtonDefaults.IconSpacing))
                     Text(stringResource(R.string.challenge_new))
@@ -360,25 +478,17 @@ internal fun ChallengesContent(
             }
         }
 
-        // Friend Duels History section
-        if (friendState.history.isNotEmpty()) {
-            item {
-                SectionHeader(stringResource(R.string.friend_duel_history_header))
+        if (state.history.isEmpty()) {
+            if (state.active == null) {
+                item {
+                    EmptyState(
+                        icon = Icons.Rounded.Flag,
+                        title = stringResource(R.string.challenges_empty_title),
+                        body = stringResource(R.string.challenges_empty_body)
+                    )
+                }
             }
-            items(friendState.history, key = { "duel_hist_" + it.id }) { duel ->
-                FriendDuelHistoryRow(duel = duel, myUid = friendState.myUid)
-            }
-        }
-
-        if (state.history.isEmpty() && friendState.history.isEmpty() && friendState.activeDuel == null) {
-            if (state.active == null) item {
-                EmptyState(
-                    icon = Icons.Rounded.Flag,
-                    title = stringResource(R.string.challenges_empty_title),
-                    body = stringResource(R.string.challenges_empty_body)
-                )
-            }
-        } else if (state.history.isNotEmpty()) {
+        } else {
             item {
                 SectionHeader(stringResource(R.string.challenges_history)) {
                     TextButton(onClick = onClearHistory) { Text(stringResource(R.string.challenges_clear)) }
@@ -393,7 +503,143 @@ internal fun ChallengesContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            items(state.history, key = { it.id }) { HistoryRow(it, activeChallenge = state.active, nowMs = nowMs) }
+            items(state.history, key = { it.id }) {
+                HistoryRow(it, activeChallenge = state.active, nowMs = nowMs)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StudyGroupTabContent(
+    friendState: FriendChallengeState,
+    onOpenStudyGroupFriends: () -> Unit,
+    onAcceptFriendDuel: (FriendChallenge) -> Unit,
+    onDeclineFriendDuel: (FriendChallenge) -> Unit,
+    onCancelFriendDuel: (FriendChallenge) -> Unit,
+    onSurrenderFriendDuel: (FriendChallenge) -> Unit,
+    onSendStudyGroupMessage: (FriendChallenge, String) -> Unit,
+    onNudgeStudyGroupFriend: (FriendChallenge, String, String) -> Unit,
+    onClearStudyGroupMessages: (FriendChallenge) -> Unit,
+    onDeleteStudyGroupChallenge: (FriendChallenge) -> Unit,
+    onResendStudyGroupInvite: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
+    modifier: Modifier = Modifier
+) {
+    val activeStudyGroup = friendState.activeDuel
+    if (activeStudyGroup != null) {
+        // Dedicated full-screen chat room layout with collapsible horloge leaderboard header
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .imePadding()
+                .padding(horizontal = Spacing.md, vertical = Spacing.xs),
+            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+        ) {
+            friendState.incomingPending.forEach { incoming ->
+                FriendDuelIncomingCard(
+                    challenge = incoming,
+                    myUid = friendState.myUid,
+                    onAccept = onAcceptFriendDuel,
+                    onDecline = onDeclineFriendDuel
+                )
+            }
+
+            FriendDuelLiveCard(
+                duel = activeStudyGroup,
+                myUid = friendState.myUid,
+                onSurrender = onSurrenderFriendDuel,
+                onSendMessage = onSendStudyGroupMessage,
+                onNudgeFriend = onNudgeStudyGroupFriend,
+                onResendInvite = onResendStudyGroupInvite,
+                onClearMessages = onClearStudyGroupMessages,
+                onDeleteGroup = onDeleteStudyGroupChallenge,
+                onAddFriends = onOpenStudyGroupFriends,
+                nudgeCooldownUntil = friendState.nudgeCooldownUntil,
+                fullScreenChat = true,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    } else {
+        val currentNowMs = System.currentTimeMillis()
+        val freshInvites = friendState.incomingPending.filter { !it.isDeclinedOfferFor(friendState.myUid, currentNowMs) }
+        val declinedOffers = friendState.incomingPending.filter { it.isDeclinedOfferFor(friendState.myUid, currentNowMs) }
+        LazyColumn(
+            contentPadding = PaddingValues(start = Spacing.md, end = Spacing.md, top = Spacing.sm, bottom = Spacing.xxl),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            modifier = modifier.fillMaxSize()
+        ) {
+            // Fresh incoming Study Group invitations
+            items(freshInvites, key = { "in_duel_" + it.id }) { incoming ->
+                FriendDuelIncomingCard(
+                    challenge = incoming,
+                    myUid = friendState.myUid,
+                    onAccept = onAcceptFriendDuel,
+                    onDecline = onDeclineFriendDuel
+                )
+            }
+
+            // Declined invitations that remain offered for 30 minutes
+            if (declinedOffers.isNotEmpty()) {
+                item(key = "pending_declined_invites_header") {
+                    SectionHeader(stringResource(R.string.study_group_pending_invites_header))
+                }
+                items(declinedOffers, key = { "in_duel_declined_" + it.id }) { incoming ->
+                    FriendDuelIncomingCard(
+                        challenge = incoming,
+                        myUid = friendState.myUid,
+                        onAccept = onAcceptFriendDuel,
+                        onDecline = onDeclineFriendDuel
+                    )
+                }
+            }
+
+            // Outgoing pending friend duel invitations
+            items(friendState.outgoingPending, key = { "out_duel_" + it.id }) { outgoing ->
+                val opponent = outgoing.opponentName.ifBlank { stringResource(R.string.community_unnamed) }
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+                    ListItem(
+                        headlineContent = { Text(stringResource(R.string.study_group_title)) },
+                        supportingContent = { Text(stringResource(R.string.friend_duel_waiting_accept, opponent)) },
+                        trailingContent = {
+                            TextButton(onClick = { onCancelFriendDuel(outgoing) }) {
+                                Text(stringResource(R.string.cancel))
+                            }
+                        }
+                    )
+                }
+            }
+
+            // Launch a new Study Group button
+            item(key = "launch_study_group_button") {
+                Button(
+                    onClick = onOpenStudyGroupFriends,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = Spacing.buttonHeight)
+                        .testTag("launch_study_group_button")
+                ) {
+                    Icon(Icons.Rounded.Groups, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                    Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                    Text(stringResource(R.string.study_group_new_button))
+                }
+            }
+
+            if (friendState.history.isEmpty() && friendState.incomingPending.isEmpty() && friendState.outgoingPending.isEmpty()) {
+                item {
+                    EmptyState(
+                        icon = Icons.Rounded.Groups,
+                        title = stringResource(R.string.study_group_empty_room_title),
+                        body = stringResource(R.string.study_group_empty_room_body)
+                    )
+                }
+            } else if (friendState.history.isNotEmpty()) {
+                item {
+                    SectionHeader(stringResource(R.string.friend_duel_history_header))
+                }
+                items(friendState.history, key = { "duel_hist_" + it.id }) { duel ->
+                    FriendDuelHistoryRow(duel = duel, myUid = friendState.myUid)
+                }
+            }
         }
     }
 }

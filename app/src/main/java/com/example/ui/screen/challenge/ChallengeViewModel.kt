@@ -68,6 +68,13 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun resendStudyGroupInvite(challenge: FriendChallenge, friendUid: String, friendName: String) {
+        if (friendUid.isBlank()) return
+        viewModelScope.launch {
+            friendRepo.resendInvite(challenge, friendUid, friendName)
+        }
+    }
+
     fun sendStudyGroupMessage(challenge: FriendChallenge, text: String) {
         if (text.isBlank()) return
         viewModelScope.launch {

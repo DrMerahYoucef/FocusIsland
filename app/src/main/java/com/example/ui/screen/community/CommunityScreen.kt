@@ -293,9 +293,12 @@ fun CommunityScreen(
     selectedProfile?.let { friend ->
         val isFriend = relations.of(friend.uid) == Relation.FRIEND
         val activeDuel = friendChallengeState.activeDuel
+        val currentNowMs = System.currentTimeMillis()
         val isAlreadyInGroup = activeDuel?.hasActiveParticipant(friend.uid) == true
-        val canAddToExistingGroup = activeDuel != null && !isAlreadyInGroup
-        val isPendingChallenge = friendChallengeState.outgoingPending.any { it.hasActiveParticipant(friend.uid) }
+        val hasValidPendingInviteInGroup = activeDuel?.hasValidInvite(friend.uid, currentNowMs) == true
+        val canAddToExistingGroup = activeDuel != null && !isAlreadyInGroup && !hasValidPendingInviteInGroup
+        val isPendingChallenge = hasValidPendingInviteInGroup ||
+            friendChallengeState.outgoingPending.any { it.hasValidInvite(friend.uid, currentNowMs) }
         FriendSheet(
             friend = friend,
             isFriend = isFriend,
@@ -344,6 +347,7 @@ private fun LeaderboardPane(
             items(incomingDuels, key = { "lb_duel_" + it.id }) { incoming ->
                 FriendDuelIncomingCard(
                     challenge = incoming,
+                    myUid = relations.me,
                     onAccept = onAcceptDuel,
                     onDecline = onDeclineDuel,
                     modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.xs)
@@ -582,6 +586,7 @@ private fun FriendsPane(
             items(incomingDuels, key = { "fr_duel_" + it.id }) { incoming ->
                 FriendDuelIncomingCard(
                     challenge = incoming,
+                    myUid = relations.me,
                     onAccept = onAcceptDuel,
                     onDecline = onDeclineDuel
                 )

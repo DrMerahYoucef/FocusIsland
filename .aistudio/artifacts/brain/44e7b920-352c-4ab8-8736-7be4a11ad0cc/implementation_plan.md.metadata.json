@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for fixing the cut-off friend profile bottom sheet on 3-button navigation devices, allowing challenge re-launches after surrendering/abandoning, removing challenge progress cards from the Focus screen so the Pomodoro circle stays full size, and upgrading Friend Challenges into a multi-friend Study Group with live focus progress, group chat (custom messages + quick emojis), and sound + vibration focus nudges when a friend is paused or idle.",
-  "updatedAt":  "2026-10-26T16:05:18.284181288Z",
+  "summary":  "Implementation plan for Study Group & Challenge invitations with instant Android notifications, accept-to-join flow, 30-minute offer window even after declining, and 30-minute expiration requiring re-invitation.",
+  "updatedAt":  "2026-10-26T19:09:52.635943387Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

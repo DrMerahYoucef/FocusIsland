@@ -1155,5 +1155,24 @@
     <string name="study_group_delete_group_title">Delete this Study Group?</string>
     <string name="study_group_delete_group_body">Deleting this challenge ends it for everyone and permanently deletes all group chat messages.</string>
     <string name="study_group_creator_badge">Creator</string>
+    <string name="challenges_tab_personal">Personal</string>
+    <string name="challenges_tab_study_group">Study Group</string>
+    <string name="study_group_leaderboard_toggle_show">Show members (%1$d)</string>
+    <string name="study_group_leaderboard_toggle_hide">Hide members</string>
+    <string name="study_group_empty_room_title">No active Study Group</string>
+    <string name="study_group_empty_room_body">Start a Study Group chat room with one or multiple friends to track focus hours with horloge icons, send messages &amp; emojis, and nudge paused friends.</string>
+    <string name="study_group_hours_mins_fmt">%1$dh %2$02dm</string>
+    <string name="study_group_invite_notif_channel">Study Group &amp; Challenge Invites</string>
+    <string name="study_group_invite_notif_channel_desc">Alerts when a friend invites you to join a Study Group or challenge</string>
+    <string name="study_group_invite_notif_title">%1$s invited you to a Study Group!</string>
+    <string name="study_group_invite_notif_body">Accept within 30 minutes to join the leaderboard and chat room.</string>
+    <string name="study_group_invite_expires_in">Expires in %1$s</string>
+    <string name="study_group_pending_invites_header">Pending invites (30m offer)</string>
+    <string name="study_group_pending_invite_from">Invited by %1$s</string>
+    <string name="study_group_pending_status_chip">⏳ %1$s · %2$s</string>
+    <string name="study_group_declined_status_chip">⏳ %1$s (Offered · %2$s)</string>
+    <string name="study_group_expired_status_chip">⌛ %1$s · Expired · Resend</string>
+    <string name="study_group_resend_invite">Resend invite</string>
+    <string name="study_group_waiting_friends_accept">Waiting for invited friends to accept…</string>
 </resources>
 
