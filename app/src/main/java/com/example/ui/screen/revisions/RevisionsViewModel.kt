@@ -14,8 +14,8 @@ import com.example.data.repository.ImportMode
 import com.example.data.repository.OcrEngineChoice
 import com.example.data.repository.OcrEngineProvider
 import com.example.data.repository.toSingleNote
+import com.example.data.srs.FsrsScheduler
 import com.example.data.srs.ReviewGrade
-import com.example.data.srs.Sm2Scheduler
 import com.example.data.srs.SrsSettings
 import com.example.service.RevisionReminderWorker
 import com.example.service.RevisionSyncWorker
@@ -132,7 +132,7 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val latest = repository.getNoteById(card.id) ?: card // include edits made during the session
             _reviewSession.update { s -> if (s.lastGraded?.id == latest.id) s.copy(lastGraded = latest) else s }
-            repository.upsertNote(Sm2Scheduler.schedule(latest, grade))
+            repository.upsertNote(FsrsScheduler.schedule(latest, grade))
             RevisionSyncWorker.scheduleSyncWork(getApplication())
         }
     }
@@ -355,7 +355,7 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun submitReviewGrade(note: RevisionNoteEntity, grade: ReviewGrade) {
         viewModelScope.launch {
-            val updatedNote = Sm2Scheduler.schedule(note, grade)
+            val updatedNote = FsrsScheduler.schedule(note, grade)
             repository.upsertNote(updatedNote)
             RevisionSyncWorker.scheduleSyncWork(getApplication())
         }
@@ -375,7 +375,7 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
             engineChoice = engineChoice,
             onResult = { noteResult, error ->
                 if (noteResult != null) {
-                    val singleNote = noteResult.toSingleNote(_uiState.value.selectedDeckId, _uiState.value.srsSettings.startingEaseFactor)
+                    val singleNote = noteResult.toSingleNote(_uiState.value.selectedDeckId)
                     viewModelScope.launch {
                         repository.upsertNote(singleNote)
                         RevisionSyncWorker.scheduleSyncWork(getApplication())
@@ -429,7 +429,7 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
                     temporaryPromptAddendum = temporaryPromptAddendum
                 )
 
-                val singleNote = result.toSingleNote(targetDeckId, _uiState.value.srsSettings.startingEaseFactor)
+                val singleNote = result.toSingleNote(targetDeckId)
                 repository.upsertNote(singleNote)
                 RevisionSyncWorker.scheduleSyncWork(getApplication())
 
@@ -509,8 +509,7 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
                     plainTextPreview = "Photo Card",
                     contentMarkdown = "",
                     mediaType = "IMAGE",
-                    mediaFilePath = savedPath,
-                    easeFactor = _uiState.value.srsSettings.startingEaseFactor
+                    mediaFilePath = savedPath
                 )
                 repository.upsertNote(note)
                 _uiState.update { state ->
@@ -592,8 +591,7 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
                 title = title.ifBlank { "Manual Card" },
                 contentBlocksJson = blocksJson,
                 plainTextPreview = answerText,
-                contentMarkdown = answerText,
-                easeFactor = _uiState.value.srsSettings.startingEaseFactor
+                contentMarkdown = answerText
             )
             repository.upsertNote(note)
             RevisionSyncWorker.scheduleSyncWork(getApplication())
@@ -640,8 +638,7 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
                     plainTextPreview = "Photo Card",
                     contentMarkdown = "",
                     mediaType = "IMAGE",
-                    mediaFilePath = savedPath,
-                    easeFactor = _uiState.value.srsSettings.startingEaseFactor
+                    mediaFilePath = savedPath
                 )
                 repository.upsertNote(note)
                 _uiState.update { it.copy(isProcessingOcr = false) }
@@ -688,8 +685,7 @@ class RevisionsViewModel(application: Application) : AndroidViewModel(applicatio
                     plainTextPreview = "Voice Note Card",
                     contentMarkdown = "",
                     mediaType = "AUDIO",
-                    mediaFilePath = savedPath,
-                    easeFactor = _uiState.value.srsSettings.startingEaseFactor
+                    mediaFilePath = savedPath
                 )
                 repository.upsertNote(note)
                 _uiState.update { it.copy(isProcessingOcr = false) }

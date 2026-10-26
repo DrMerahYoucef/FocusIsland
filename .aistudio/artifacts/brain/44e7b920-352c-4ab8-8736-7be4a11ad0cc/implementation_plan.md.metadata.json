@@ -1,6 +1,6 @@
 {
-  "summary":  "Plan for fixing the Battery Saver (Focus Mode) exit button bug after unlocking the phone and replacing the background stars with four style-specific progressive Pomodoro minute artworks (Night Arcade motherboard traces, Blossom top-hanging flowers, Lagoon water ripples & bubbles, and Little Explorer treasure-map compass trail & islands).",
-  "updatedAt":  "2026-10-25T20:23:50.930577542Z",
+  "summary":  "Implementation plan to replace the SM-2 flashcard scheduling algorithm with FSRS-5 (90% target retention and short intra-day learning/relearning steps), update the flashcard data model with Stability, Difficulty, Retrievability, and State, and migrate existing SM-2 cards without losing study progress.",
+  "updatedAt":  "2026-10-26T00:39:44.862934575Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

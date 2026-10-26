@@ -382,6 +382,7 @@ fun Modifier.phaseTextureBackground(
                 center = circleCenter,
                 innerRadius = circleRadius,
                 color = cycleColor,
+                baseColor = baseColor,
                 baseAlpha = baseAlpha,
                 completedCount = effectiveCompleted,
                 activeFraction = activeFraction
@@ -415,53 +416,92 @@ fun Modifier.phaseTextureBackground(
 }
 
 /**
- * 1. NIGHT ARCADE: Motherboard-like PCB lines going out of the exact Pomodoro timer circle
- * perimeter that line up gradually with each Pomodoro minute passed.
+ * 1. NIGHT ARCADE: Authentic electronic motherboard PCB layout anchored to the exact Pomodoro
+ * timer circle perimeter. Uses strict octilinear (0° / 45° / 90°) multi-lane ribbon buses,
+ * mitered 45° chamfered corners, rectangular SMD gold-finger launch pads, plated through-hole
+ * (PTH) annular vias, and inline SMD microchip/capacitor footprints that line up minute by minute.
  */
 private fun DrawScope.drawArcadeMotherboard(
     center: Offset,
     innerRadius: Float,
     color: Color,
+    baseColor: Color,
     baseAlpha: Float,
     completedCount: Int,
     activeFraction: Float
 ) {
-    val socketRadius = innerRadius + 4.dp.toPx()
+    val socketRadius = innerRadius + 3.5.dp.toPx()
+    val outerBusRingRadius = socketRadius + 8.dp.toPx()
     val maxReach = hypot(size.width, size.height) * 0.44f
-    val traceStroke = 1.6.dp.toPx()
-    val busStroke = 1.0.dp.toPx()
-    val padRadius = 2.8.dp.toPx()
-    val viaOuterRadius = 4.2.dp.toPx()
-    val viaInnerRadius = 1.8.dp.toPx()
 
-    // Subtle IC socket perimeter ring and microprocessor pin ticks around the exact timer circle
-    val ringAlpha = (baseAlpha * 0.42f).coerceIn(0f, 1f)
+    val primaryTraceWidth = 1.55.dp.toPx()
+    val fineTraceWidth = 0.95.dp.toPx()
+    val lanePitch = 6.2.dp.toPx()
+    val viaOuterRadius = 3.8.dp.toPx()
+    val viaDrillRadius = 1.65.dp.toPx()
+
+    val silkAlpha = (baseAlpha * 0.44f).coerceIn(0f, 1f)
+    val silkColor = color.copy(alpha = silkAlpha)
+
+    // 1. CPU / BGA Socket Silkscreen Bezel around the timer circle
     drawCircle(
-        color = color.copy(alpha = ringAlpha),
+        color = silkColor,
         radius = socketRadius,
         center = center,
         style = Stroke(width = 1.1.dp.toPx())
     )
+    drawCircle(
+        color = color.copy(alpha = silkAlpha * 0.55f),
+        radius = outerBusRingRadius,
+        center = center,
+        style = Stroke(
+            width = 0.85.dp.toPx(),
+            pathEffect = PathEffect.dashPathEffect(floatArrayOf(14.dp.toPx(), 6.dp.toPx()), 0f)
+        )
+    )
 
-    val totalSlots = 32
-    val pinLen = 5.dp.toPx()
-    for (slot in 0 until totalSlots) {
-        val angleRad = (slot * (360f / totalSlots) - 90f) * (PI.toFloat() / 180f)
-        val cosA = cos(angleRad)
-        val sinA = sin(angleRad)
-        val pStart = Offset(center.x + cosA * socketRadius, center.y + sinA * socketRadius)
-        val pEnd = Offset(center.x + cosA * (socketRadius + pinLen), center.y + sinA * (socketRadius + pinLen))
+    // 64 fine QFP microprocessor pin ticks around the socket perimeter
+    val pinCount = 64
+    val pinTickLen = 4.2.dp.toPx()
+    for (i in 0 until pinCount) {
+        val a = (i * (360f / pinCount) - 90f) * (PI.toFloat() / 180f)
+        val c = cos(a)
+        val s = sin(a)
+        val isBusCenter = (i % 8 == 0)
+        val tickLen = if (isBusCenter) pinTickLen * 1.35f else pinTickLen
         drawLine(
-            color = color.copy(alpha = ringAlpha * 0.85f),
-            start = pStart,
-            end = pEnd,
-            strokeWidth = busStroke,
-            cap = StrokeCap.Square
+            color = color.copy(alpha = if (isBusCenter) silkAlpha * 0.95f else silkAlpha * 0.55f),
+            start = Offset(center.x + c * socketRadius, center.y + s * socketRadius),
+            end = Offset(center.x + c * (socketRadius + tickLen), center.y + s * (socketRadius + tickLen)),
+            strokeWidth = if (isBusCenter) 1.2.dp.toPx() else 0.75.dp.toPx(),
+            cap = StrokeCap.Butt
         )
     }
 
-    // Order slots so traces line up sequentially around the circle in balanced PCB bus banks
+    // 4 PCB Corner Fiducial Registration L-Brackets around the socket housing
+    val fiducialDist = outerBusRingRadius + 10.dp.toPx()
+    val fiducialArm = 7.dp.toPx()
+    val cornerSigns = arrayOf(-1f to -1f, 1f to -1f, 1f to 1f, -1f to 1f)
+    for ((sx, sy) in cornerSigns) {
+        val corner = Offset(center.x + sx * fiducialDist * 0.76f, center.y + sy * fiducialDist * 0.76f)
+        val fidPath = Path().apply {
+            moveTo(corner.x - sx * fiducialArm, corner.y)
+            lineTo(corner.x, corner.y)
+            lineTo(corner.x, corner.y - sy * fiducialArm)
+        }
+        drawPath(
+            path = fidPath,
+            color = color.copy(alpha = silkAlpha * 0.75f),
+            style = Stroke(width = 1.1.dp.toPx(), cap = StrokeCap.Square, join = StrokeJoin.Miter)
+        )
+    }
+
+    // 2. 8 Octilinear PCB Bus Banks (0°, 45°, 90°, 135°, 180°, 225°, 270°, 315°)
+    // Each bank carries 4 parallel ribbon lanes + 1 auxiliary clock trace (up to 40 total slots).
+    val totalSlots = 36
     val totalTracesToDraw = (completedCount + 1).coerceAtMost(totalSlots)
+    val invSqrt2 = 0.70710677f
+
     for (minuteIdx in 0 until totalTracesToDraw) {
         val progress = when {
             minuteIdx < completedCount -> 1f
@@ -470,100 +510,335 @@ private fun DrawScope.drawArcadeMotherboard(
         }
         if (progress <= 0.02f) continue
 
-        // Line up traces around the circle in clock order with grouped bus alignment
-        val bank = minuteIdx / 4
-        val inBank = minuteIdx % 4
-        val baseAngleDeg = -90f + (bank * 45f) + (inBank - 1.5f) * 7.5f
-        val angleRad = baseAngleDeg * (PI.toFloat() / 180f)
-        val cosA = cos(angleRad)
-        val sinA = sin(angleRad)
+        // Group into 8 banks of 4 parallel bus lanes first (minutes 0..31), then outer bus lanes (32..35)
+        val bank: Int
+        val lane: Int // 0..3 within the 4-lane parallel ribbon bus
+        val isOuterLayer: Boolean
+        if (minuteIdx < 32) {
+            bank = minuteIdx / 4
+            lane = minuteIdx % 4
+            isOuterLayer = false
+        } else {
+            bank = (minuteIdx - 32) * 2
+            lane = 4
+            isOuterLayer = true
+        }
 
-        // Segment 1: Radial launch out of the circle IC pad
-        val seg1Len = socketRadius * (0.14f + (inBank % 2) * 0.05f)
-        val p0 = Offset(center.x + cosA * (socketRadius + pinLen), center.y + sinA * (socketRadius + pinLen))
-        val p1 = Offset(p0.x + cosA * seg1Len, p0.y + sinA * seg1Len)
+        // Bank primary unit vector u = (ux, uy) snapped strictly to 45° multiples (-90° + bank * 45°)
+        val (ux, uy) = when (bank % 8) {
+            0 -> 0f to -1f                  // Top (North, 270°)
+            1 -> invSqrt2 to -invSqrt2      // Top-Right (NE, 315°)
+            2 -> 1f to 0f                   // Right (East, 0°)
+            3 -> invSqrt2 to invSqrt2       // Bottom-Right (SE, 45°)
+            4 -> 0f to 1f                   // Bottom (South, 90°)
+            5 -> -invSqrt2 to invSqrt2      // Bottom-Left (SW, 135°)
+            6 -> -1f to 0f                  // Left (West, 180°)
+            else -> -invSqrt2 to -invSqrt2  // Top-Left (NW, 225°)
+        }
+        // Perpendicular right-hand unit vector v = (-uy, ux)
+        val vx = -uy
+        val vy = ux
 
-        // Segment 2: 45-degree PCB bend
-        val bendSign = if (bank % 2 == 0) 1f else -1f
-        val bendAngleRad = (baseAngleDeg + bendSign * 45f) * (PI.toFloat() / 180f)
-        val seg2Len = socketRadius * (0.18f + (inBank * 0.04f))
-        val p2 = Offset(p1.x + cos(bendAngleRad) * seg2Len, p1.y + sin(bendAngleRad) * seg2Len)
+        // Lateral offset d of this lane within the parallel ribbon bus
+        val centeredLane = if (isOuterLayer) 2.5f else (lane - 1.5f)
+        val d = centeredLane * lanePitch
 
-        // Segment 3: Cardinal / orthogonal motherboard bus line outward
-        val cardinalAngleDeg = kotlin.math.round(baseAngleDeg / 90f) * 90f
-        val cardRad = cardinalAngleDeg * (PI.toFloat() / 180f)
-        val seg3Len = (maxReach * (0.20f + ((minuteIdx % 5) * 0.07f))).coerceAtLeast(22.dp.toPx())
-        val p3 = Offset(p2.x + cos(cardRad) * seg3Len, p2.y + sin(cardRad) * seg3Len)
-
-        val traceAlpha = (baseAlpha * (0.68f + 0.32f * progress)).coerceIn(0f, 1f)
-        val traceColor = color.copy(alpha = traceAlpha)
-        val glowColor = color.copy(alpha = (traceAlpha * 0.26f).coerceIn(0f, 1f))
-
-        // IC solder pad at the circle edge
-        drawCircle(
-            color = traceColor,
-            radius = padRadius,
-            center = p0
+        // Exact contact point on the outer socket ring so all 4 lanes emerge strictly parallel along u
+        val rLaunch = outerBusRingRadius
+        val u0 = kotlin.math.sqrt((rLaunch * rLaunch - d * d).coerceAtLeast(rLaunch * rLaunch * 0.5f))
+        val p0 = Offset(
+            x = center.x + ux * u0 + vx * d,
+            y = center.y + uy * u0 + vy * d
         )
 
-        // Progressive 3-segment line drawing based on `progress`
-        val s1Prog = (progress / 0.35f).coerceIn(0f, 1f)
-        val s2Prog = ((progress - 0.35f) / 0.30f).coerceIn(0f, 1f)
-        val s3Prog = ((progress - 0.65f) / 0.35f).coerceIn(0f, 1f)
+        // Direction of the 45° dogleg shift (+1 or -1 along v)
+        val doglegSign = if (bank % 2 == 0) 1f else -1f
+        // Stagger turn points by lane offset so parallel 45° bends nest with constant PCB clearance!
+        val turnStagger = -doglegSign * d * 0.52f
 
-        val curP1 = Offset(p0.x + (p1.x - p0.x) * s1Prog, p0.y + (p1.y - p0.y) * s1Prog)
-        drawLine(color = glowColor, start = p0, end = curP1, strokeWidth = traceStroke * 2.6f, cap = StrokeCap.Round)
-        drawLine(color = traceColor, start = p0, end = curP1, strokeWidth = traceStroke, cap = StrokeCap.Round)
+        // Segment 1: Straight parallel launch along u (strictly 0°/90° for cardinal banks, 45° for diagonal banks)
+        val baseSeg1 = innerRadius * (if (bank % 2 == 0) 0.19f else 0.15f)
+        val seg1Len = (baseSeg1 + turnStagger).coerceAtLeast(8.dp.toPx())
+        val p1 = Offset(
+            x = p0.x + ux * seg1Len,
+            y = p0.y + uy * seg1Len
+        )
 
-        if (s2Prog > 0f) {
-            val curP2 = Offset(p1.x + (p2.x - p1.x) * s2Prog, p1.y + (p2.y - p1.y) * s2Prog)
-            drawLine(color = glowColor, start = p1, end = curP2, strokeWidth = traceStroke * 2.6f, cap = StrokeCap.Round)
-            drawLine(color = traceColor, start = p1, end = curP2, strokeWidth = traceStroke, cap = StrokeCap.Round)
-            drawCircle(color = traceColor, radius = padRadius * 0.7f, center = p1)
+        // Segment 2: 45° PCB ribbon dogleg turn (rotates u by ±45° so every segment stays strictly octilinear)
+        val diagUx = (ux + doglegSign * vx) * invSqrt2
+        val diagUy = (uy + doglegSign * vy) * invSqrt2
+        val seg2Len = innerRadius * (0.21f + (bank % 3) * 0.04f)
+        val p2 = Offset(
+            x = p1.x + diagUx * seg2Len,
+            y = p1.y + diagUy * seg2Len
+        )
+
+        // Segment 3: Parallel bus continuation back along u
+        val seg3Base = maxReach * (0.20f + ((bank + lane) % 4) * 0.055f)
+        val seg3Len = (seg3Base - turnStagger * 0.5f).coerceAtLeast(16.dp.toPx())
+        val p3 = Offset(
+            x = p2.x + ux * seg3Len,
+            y = p2.y + uy * seg3Len
+        )
+
+        // Segment 4: Terminal 45° fan-out jog so the vias form a staggered motherboard pin header array
+        val fanOutSign = if (lane < 2) -1f else 1f
+        val fanUx = (ux + fanOutSign * vx) * invSqrt2
+        val fanUy = (uy + fanOutSign * vy) * invSqrt2
+        val seg4Len = (10.dp.toPx() + kotlin.math.abs(centeredLane) * 5.dp.toPx())
+        val p4 = Offset(
+            x = p3.x + fanUx * seg4Len,
+            y = p3.y + fanUy * seg4Len
+        )
+
+        // Segment 5: Short straight landing stub into the Plated Through-Hole (PTH) Via
+        val seg5Len = (7.dp.toPx() + (lane % 2) * 5.dp.toPx())
+        val p5 = Offset(
+            x = p4.x + ux * seg5Len,
+            y = p4.y + uy * seg5Len
+        )
+
+        val traceAlpha = (baseAlpha * (0.72f + 0.28f * progress)).coerceIn(0f, 1f)
+        val traceColor = color.copy(alpha = traceAlpha)
+        val glowColor = color.copy(alpha = (traceAlpha * 0.24f).coerceIn(0f, 1f))
+        val strokeW = if (lane == 1 || lane == 2) primaryTraceWidth else fineTraceWidth
+
+        // Draw rectangular SMD gold-finger solder pad on the socket edge at p0
+        val padHalfLen = 3.2.dp.toPx()
+        val padHalfWid = 1.35.dp.toPx()
+        val smdPadPath = Path().apply {
+            moveTo(p0.x - ux * padHalfLen - vx * padHalfWid, p0.y - uy * padHalfLen - vy * padHalfWid)
+            lineTo(p0.x + ux * padHalfLen - vx * padHalfWid, p0.y + uy * padHalfLen - vy * padHalfWid)
+            lineTo(p0.x + ux * padHalfLen + vx * padHalfWid, p0.y + uy * padHalfLen + vy * padHalfWid)
+            lineTo(p0.x - ux * padHalfLen + vx * padHalfWid, p0.y - uy * padHalfLen + vy * padHalfWid)
+            close()
+        }
+        drawPath(path = smdPadPath, color = traceColor)
+
+        // Build progressive continuous polyline path across [p0 -> p1 -> p2 -> p3 -> p4 -> p5]
+        val points = arrayOf(p0, p1, p2, p3, p4, p5)
+        val segLengths = FloatArray(points.size - 1)
+        var totalLen = 0f
+        for (sIdx in 0 until points.size - 1) {
+            val len = hypot(points[sIdx + 1].x - points[sIdx].x, points[sIdx + 1].y - points[sIdx].y)
+            segLengths[sIdx] = len
+            totalLen += len
         }
 
-        if (s3Prog > 0f) {
-            val curP3 = Offset(p2.x + (p3.x - p2.x) * s3Prog, p2.y + (p3.y - p2.y) * s3Prog)
-            drawLine(color = glowColor, start = p2, end = curP3, strokeWidth = traceStroke * 2.6f, cap = StrokeCap.Round)
-            drawLine(color = traceColor, start = p2, end = curP3, strokeWidth = traceStroke, cap = StrokeCap.Round)
-            drawCircle(color = traceColor, radius = padRadius * 0.7f, center = p2)
+        val targetLen = totalLen * progress.coerceIn(0f, 1f)
+        val tracePath = Path().apply { moveTo(p0.x, p0.y) }
+        var accumulated = 0f
+        var tipPoint = p0
 
-            // Secondary parallel companion micro-trace on every second trace
-            if (inBank % 2 == 0) {
-                val perpX = -sin(cardRad) * 4.5.dp.toPx()
-                val perpY = cos(cardRad) * 4.5.dp.toPx()
-                val subStart = Offset(p2.x + perpX, p2.y + perpY)
-                val subEnd = Offset(curP3.x + perpX, curP3.y + perpY)
-                drawLine(
-                    color = color.copy(alpha = traceAlpha * 0.55f),
-                    start = subStart,
-                    end = subEnd,
-                    strokeWidth = busStroke,
-                    cap = StrokeCap.Round
+        for (sIdx in 0 until points.size - 1) {
+            val segLen = segLengths[sIdx]
+            if (accumulated + segLen <= targetLen) {
+                val nextPt = points[sIdx + 1]
+                tracePath.lineTo(nextPt.x, nextPt.y)
+                tipPoint = nextPt
+                accumulated += segLen
+            } else {
+                val remain = (targetLen - accumulated).coerceAtLeast(0f)
+                val frac = if (segLen > 0f) (remain / segLen).coerceIn(0f, 1f) else 0f
+                val startPt = points[sIdx]
+                val endPt = points[sIdx + 1]
+                tipPoint = Offset(
+                    x = startPt.x + (endPt.x - startPt.x) * frac,
+                    y = startPt.y + (endPt.y - startPt.y) * frac
                 )
+                tracePath.lineTo(tipPoint.x, tipPoint.y)
+                break
             }
+        }
 
-            // Motherboard solder via (outer ring + inner node) at the trace tip
-            if (s3Prog > 0.85f) {
-                drawCircle(
-                    color = glowColor,
-                    radius = viaOuterRadius * 1.6f,
-                    center = curP3
-                )
-                drawCircle(
-                    color = traceColor,
-                    radius = viaOuterRadius,
-                    center = curP3,
-                    style = Stroke(width = 1.4.dp.toPx())
-                )
-                drawCircle(
-                    color = traceColor,
-                    radius = viaInnerRadius,
-                    center = curP3
-                )
-            }
+        // Subtle outer copper glow + crisp mitered PCB trace (no blobs on bends)
+        drawPath(
+            path = tracePath,
+            color = glowColor,
+            style = Stroke(width = strokeW * 2.8f, cap = StrokeCap.Butt, join = StrokeJoin.Miter)
+        )
+        drawPath(
+            path = tracePath,
+            color = traceColor,
+            style = Stroke(width = strokeW, cap = StrokeCap.Square, join = StrokeJoin.Miter)
+        )
+
+        // Intermediate SMD 0402 resistor/capacitor component on lane 0 of each bank once segment 2 completes
+        if (lane == 0 && progress > 0.55f) {
+            val midS3 = Offset((p2.x + p3.x) * 0.5f, (p2.y + p3.y) * 0.5f)
+            drawSmdComponent(
+                center = midS3,
+                ux = ux,
+                uy = uy,
+                vx = vx,
+                vy = vy,
+                traceColor = traceColor,
+                baseColor = baseColor
+            )
+        }
+
+        // Inline SOIC microchip silhouette straddling lanes 1 & 2 once lane 2 reaches segment 3
+        if (lane == 2 && progress > 0.72f) {
+            val chipCenter = Offset(
+                x = (p2.x + p3.x) * 0.46f - vx * (lanePitch * 0.5f),
+                y = (p2.y + p3.y) * 0.46f - vy * (lanePitch * 0.5f)
+            )
+            drawMotherboardMicrochip(
+                center = chipCenter,
+                ux = ux,
+                uy = uy,
+                vx = vx,
+                vy = vy,
+                traceColor = traceColor,
+                baseColor = baseColor
+            )
+        }
+
+        // Plated Through-Hole (PTH) Annular Via at the trace tip (or moving signal head while growing)
+        if (progress >= 0.96f) {
+            drawPcbVia(
+                center = p5,
+                outerRadius = viaOuterRadius,
+                drillRadius = viaDrillRadius,
+                traceColor = traceColor,
+                glowColor = glowColor,
+                baseColor = baseColor
+            )
+        } else {
+            // Active signal head on the currently growing trace
+            drawCircle(
+                color = glowColor,
+                radius = viaOuterRadius * 1.4f,
+                center = tipPoint
+            )
+            drawCircle(
+                color = traceColor,
+                radius = viaDrillRadius * 1.15f,
+                center = tipPoint
+            )
         }
     }
+}
+
+/**
+ * Draws a true PCB Plated Through-Hole (PTH) via: outer copper annular ring + substrate drill hole.
+ */
+private fun DrawScope.drawPcbVia(
+    center: Offset,
+    outerRadius: Float,
+    drillRadius: Float,
+    traceColor: Color,
+    glowColor: Color,
+    baseColor: Color
+) {
+    drawCircle(
+        color = glowColor,
+        radius = outerRadius * 1.55f,
+        center = center
+    )
+    drawCircle(
+        color = traceColor,
+        radius = outerRadius,
+        center = center
+    )
+    drawCircle(
+        color = baseColor,
+        radius = drillRadius,
+        center = center
+    )
+    drawCircle(
+        color = traceColor.copy(alpha = (traceColor.alpha * 0.9f).coerceIn(0f, 1f)),
+        radius = drillRadius,
+        center = center,
+        style = Stroke(width = 0.7.dp.toPx())
+    )
+}
+
+/**
+ * Draws a miniature 2-terminal SMD resistor/capacitor footprint inline on a PCB trace.
+ */
+private fun DrawScope.drawSmdComponent(
+    center: Offset,
+    ux: Float,
+    uy: Float,
+    vx: Float,
+    vy: Float,
+    traceColor: Color,
+    baseColor: Color
+) {
+    val halfL = 3.6.dp.toPx()
+    val halfW = 1.7.dp.toPx()
+    val bodyPath = Path().apply {
+        moveTo(center.x - ux * halfL - vx * halfW, center.y - uy * halfL - vy * halfW)
+        lineTo(center.x + ux * halfL - vx * halfW, center.y + uy * halfL - vy * halfW)
+        lineTo(center.x + ux * halfL + vx * halfW, center.y + uy * halfL + vy * halfW)
+        lineTo(center.x - ux * halfL + vx * halfW, center.y - uy * halfL + vy * halfW)
+        close()
+    }
+    drawPath(path = bodyPath, color = baseColor)
+    drawPath(
+        path = bodyPath,
+        color = traceColor,
+        style = Stroke(width = 1.0.dp.toPx(), join = StrokeJoin.Miter)
+    )
+}
+
+/**
+ * Draws a miniature 8-pin SOIC motherboard IC package with gull-wing pin leads and a pin-1 dot.
+ */
+private fun DrawScope.drawMotherboardMicrochip(
+    center: Offset,
+    ux: Float,
+    uy: Float,
+    vx: Float,
+    vy: Float,
+    traceColor: Color,
+    baseColor: Color
+) {
+    val halfL = 6.8.dp.toPx()
+    val halfW = 4.2.dp.toPx()
+    val pinLen = 2.2.dp.toPx()
+
+    // 4 Gull-wing IC pins on each side
+    for (p in 0 until 4) {
+        val uOffset = (p - 1.5f) * 3.2.dp.toPx()
+        val pinBaseX = center.x + ux * uOffset
+        val pinBaseY = center.y + uy * uOffset
+
+        drawLine(
+            color = traceColor,
+            start = Offset(pinBaseX - vx * (halfW + pinLen), pinBaseY - vy * (halfW + pinLen)),
+            end = Offset(pinBaseX + vx * (halfW + pinLen), pinBaseY + vy * (halfW + pinLen)),
+            strokeWidth = 1.0.dp.toPx(),
+            cap = StrokeCap.Butt
+        )
+    }
+
+    // Dark IC epoxy body + copper silkscreen outline
+    val chipPath = Path().apply {
+        moveTo(center.x - ux * halfL - vx * halfW, center.y - uy * halfL - vy * halfW)
+        lineTo(center.x + ux * halfL - vx * halfW, center.y + uy * halfL - vy * halfW)
+        lineTo(center.x + ux * halfL + vx * halfW, center.y + uy * halfL + vy * halfW)
+        lineTo(center.x - ux * halfL + vx * halfW, center.y - uy * halfL + vy * halfW)
+        close()
+    }
+    drawPath(path = chipPath, color = baseColor)
+    drawPath(
+        path = chipPath,
+        color = traceColor,
+        style = Stroke(width = 1.15.dp.toPx(), join = StrokeJoin.Miter)
+    )
+
+    // Pin-1 orientation marker dot inside top-left corner of the IC package
+    val pin1Pos = Offset(
+        x = center.x - ux * (halfL * 0.55f) - vx * (halfW * 0.45f),
+        y = center.y - uy * (halfL * 0.55f) - vy * (halfW * 0.45f)
+    )
+    drawCircle(
+        color = traceColor,
+        radius = 1.0.dp.toPx(),
+        center = pin1Pos
+    )
 }
 
 /**

@@ -278,7 +278,10 @@ object CardBackupEngine {
                         put("contentMarkdown", n.contentMarkdown)
                         put("mediaType", n.mediaType ?: JSONObject.NULL)
                         put("mediaFileName", n.mediaFilePath?.let(::File)?.takeIf { it.isFile }?.name ?: JSONObject.NULL)
-                        put("easeFactor", n.easeFactor.toDouble())
+                        put("stability", n.stability.toDouble())
+                        put("difficulty", n.difficulty.toDouble())
+                        put("retrievability", n.retrievability.toDouble())
+                        put("state", n.state)
                         put("intervalDays", n.intervalDays)
                         put("repetitions", n.repetitions)
                         put("dueDate", n.dueDate)
@@ -302,11 +305,35 @@ object CardBackupEngine {
             )
         }
 
-    private fun parseNotes(array: JSONArray, mediaDir: File): List<RevisionNoteEntity> =
-        (0 until array.length()).mapNotNull { i ->
+    private fun parseNotes(array: JSONArray, mediaDir: File): List<RevisionNoteEntity> {
+        val nowMs = System.currentTimeMillis()
+        return (0 until array.length()).mapNotNull { i ->
             val n = array.optJSONObject(i) ?: return@mapNotNull null
             val id = n.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
             val mediaFileName = if (n.isNull("mediaFileName")) null else File(n.optString("mediaFileName")).name
+            val intervalDays = n.optInt("intervalDays", 0)
+            val repetitions = n.optInt("repetitions", 0)
+            val lastReviewedAt = if (n.isNull("lastReviewedAt")) null else n.optLong("lastReviewedAt")
+
+            val fsrsState = if (n.has("stability") && n.has("difficulty")) {
+                com.example.data.srs.FsrsMemoryState(
+                    stability = n.optDouble("stability", 0.0).toFloat(),
+                    difficulty = n.optDouble("difficulty", 0.0).toFloat(),
+                    retrievability = n.optDouble("retrievability", 1.0).toFloat(),
+                    state = n.optString("state", "NEW").ifBlank { "NEW" },
+                    intervalDays = intervalDays,
+                    repetitions = repetitions
+                )
+            } else {
+                com.example.data.srs.FsrsScheduler.migrateSm2ToFsrs(
+                    easeFactor = n.optDouble("easeFactor", 2.5).toFloat(),
+                    intervalDays = intervalDays,
+                    repetitions = repetitions,
+                    lastReviewedAt = lastReviewedAt,
+                    nowMs = nowMs
+                )
+            }
+
             RevisionNoteEntity(
                 id = id,
                 deckId = n.optString("deckId").ifBlank { DatabaseSeeder.DEFAULT_DECK_ID },
@@ -316,14 +343,18 @@ object CardBackupEngine {
                 contentMarkdown = n.optString("contentMarkdown", ""),
                 mediaType = if (n.isNull("mediaType")) null else n.optString("mediaType"),
                 mediaFilePath = mediaFileName?.takeIf { it.isNotBlank() }?.let { File(mediaDir, it).absolutePath },
-                easeFactor = n.optDouble("easeFactor", 2.5).toFloat(),
-                intervalDays = n.optInt("intervalDays", 0),
-                repetitions = n.optInt("repetitions", 0),
-                dueDate = n.optLong("dueDate", System.currentTimeMillis()),
-                lastReviewedAt = if (n.isNull("lastReviewedAt")) null else n.optLong("lastReviewedAt"),
+                stability = fsrsState.stability,
+                difficulty = fsrsState.difficulty,
+                retrievability = fsrsState.retrievability,
+                state = fsrsState.state,
+                intervalDays = fsrsState.intervalDays,
+                repetitions = fsrsState.repetitions,
+                dueDate = n.optLong("dueDate", nowMs),
+                lastReviewedAt = lastReviewedAt,
                 syncStatus = runCatching { SyncStatus.valueOf(n.optString("syncStatus")) }.getOrDefault(SyncStatus.PENDING_UPLOAD)
             )
         }
+    }
 
     private fun summary(context: Context, cards: Int, decks: Int, media: Int): String {
         val res = context.resources

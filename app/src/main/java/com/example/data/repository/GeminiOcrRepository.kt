@@ -47,7 +47,7 @@ data class GeminiNoteResult(
 // a | b |"-text-then-reparse step anymore, which is what caused every row/column bug this file
 // went through. Highlights are attached to the specific TextBlock they belong to instead of
 // being embedded as "==color:x==term==" markup inside a string.
-fun GeminiNoteResult.toSingleNote(deckId: String, easeFactorDefault: Float = 2.5f): RevisionNoteEntity {
+fun GeminiNoteResult.toSingleNote(deckId: String): RevisionNoteEntity {
     val safeBlocks = blocks.ifEmpty {
         listOf(GeminiBlock(type = "text", content = com.example.FocusFlowApplication.instance.getString(com.example.R.string.ocr_no_text)))
     }
@@ -85,7 +85,10 @@ fun GeminiNoteResult.toSingleNote(deckId: String, easeFactorDefault: Float = 2.5
         plainTextPreview = plainTextPreview.ifBlank { "No text recognized" },
         createdAt = nowMs,
         updatedAt = nowMs,
-        easeFactor = easeFactorDefault,
+        stability = 0f,
+        difficulty = 0f,
+        retrievability = 1f,
+        state = "NEW",
         intervalDays = 0,
         repetitions = 0,
         dueDate = nowMs

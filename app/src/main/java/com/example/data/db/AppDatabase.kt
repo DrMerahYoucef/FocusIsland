@@ -24,6 +24,7 @@ import com.example.data.db.entity.SessionEntity
 import com.example.data.db.entity.StationEntity
 import com.example.data.repository.NoteBlock
 import com.example.data.repository.NoteBlocksSerializer
+import com.example.data.srs.FsrsScheduler
 import org.json.JSONArray
 
 @Database(
@@ -37,7 +38,7 @@ import org.json.JSONArray
         RevisionDeckEntity::class,
         RevisionNoteEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -185,9 +186,105 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v9: replace SM-2 easeFactor with FSRS-5 parameters (stability, difficulty, retrievability, state) and migrate existing cards. */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `revision_notes_new` (
+                        `id` TEXT NOT NULL,
+                        `deckId` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `contentBlocksJson` TEXT NOT NULL,
+                        `plainTextPreview` TEXT NOT NULL,
+                        `contentMarkdown` TEXT NOT NULL,
+                        `mediaType` TEXT,
+                        `mediaFilePath` TEXT,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `stability` REAL NOT NULL,
+                        `difficulty` REAL NOT NULL,
+                        `retrievability` REAL NOT NULL,
+                        `state` TEXT NOT NULL,
+                        `intervalDays` INTEGER NOT NULL,
+                        `repetitions` INTEGER NOT NULL,
+                        `dueDate` INTEGER NOT NULL,
+                        `lastReviewedAt` INTEGER,
+                        `firestoreId` TEXT,
+                        `syncStatus` TEXT NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+
+                val nowMs = System.currentTimeMillis()
+                db.query(
+                    """
+                    SELECT id, deckId, title, contentBlocksJson, plainTextPreview, contentMarkdown,
+                           mediaType, mediaFilePath, createdAt, updatedAt,
+                           easeFactor, intervalDays, repetitions, dueDate, lastReviewedAt,
+                           firestoreId, syncStatus
+                    FROM revision_notes
+                    """.trimIndent()
+                ).use { c ->
+                    while (c.moveToNext()) {
+                        val id = c.getString(0)
+                        val deckId = c.getString(1)
+                        val title = c.getString(2)
+                        val contentBlocksJson = c.getString(3)
+                        val plainTextPreview = c.getString(4)
+                        val contentMarkdown = c.getString(5)
+                        val mediaType = if (c.isNull(6)) null else c.getString(6)
+                        val mediaFilePath = if (c.isNull(7)) null else c.getString(7)
+                        val createdAt = c.getLong(8)
+                        val updatedAt = c.getLong(9)
+                        val easeFactor = c.getFloat(10)
+                        val intervalDays = c.getInt(11)
+                        val repetitions = c.getInt(12)
+                        val dueDate = c.getLong(13)
+                        val lastReviewedAt = if (c.isNull(14)) null else c.getLong(14)
+                        val firestoreId = if (c.isNull(15)) null else c.getString(15)
+                        val syncStatus = c.getString(16)
+
+                        val fsrs = FsrsScheduler.migrateSm2ToFsrs(
+                            easeFactor = easeFactor,
+                            intervalDays = intervalDays,
+                            repetitions = repetitions,
+                            lastReviewedAt = lastReviewedAt,
+                            nowMs = nowMs
+                        )
+
+                        db.execSQL(
+                            """
+                            INSERT INTO `revision_notes_new` (
+                                `id`, `deckId`, `title`, `contentBlocksJson`, `plainTextPreview`, `contentMarkdown`,
+                                `mediaType`, `mediaFilePath`, `createdAt`, `updatedAt`,
+                                `stability`, `difficulty`, `retrievability`, `state`,
+                                `intervalDays`, `repetitions`, `dueDate`, `lastReviewedAt`,
+                                `firestoreId`, `syncStatus`
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """.trimIndent(),
+                            arrayOf<Any?>(
+                                id, deckId, title, contentBlocksJson, plainTextPreview, contentMarkdown,
+                                mediaType, mediaFilePath, createdAt, updatedAt,
+                                fsrs.stability, fsrs.difficulty, fsrs.retrievability, fsrs.state,
+                                fsrs.intervalDays, fsrs.repetitions, dueDate, lastReviewedAt,
+                                firestoreId, syncStatus
+                            )
+                        )
+                    }
+                }
+
+                db.execSQL("DROP TABLE `revision_notes`")
+                db.execSQL("ALTER TABLE `revision_notes_new` RENAME TO `revision_notes`")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_revision_notes_deckId_dueDate` ON `revision_notes` (`deckId`, `dueDate`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_revision_notes_dueDate` ON `revision_notes` (`dueDate`)")
+            }
+        }
+
         val ALL_MIGRATIONS = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
-            MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8
+            MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9
         )
 
         private fun repairLegacyNoteBodies(db: SupportSQLiteDatabase) {

@@ -65,8 +65,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.db.entity.RevisionNoteEntity
+import com.example.data.srs.FsrsScheduler
 import com.example.data.srs.ReviewGrade
-import com.example.data.srs.Sm2Scheduler
 import com.example.ui.designsystem.BannerTone
 import com.example.ui.designsystem.InfoBanner
 import com.example.ui.designsystem.LoadingState
@@ -276,7 +276,7 @@ private fun GradeButtons(note: RevisionNoteEntity, showIntervals: Boolean, onGra
                     ReviewGrade.EASY -> R.string.grade_easy
                 }
             )
-            val nextDue = remember(note, grade) { Sm2Scheduler.schedule(note, grade).dueDate }
+            val nextDue = remember(note, grade) { FsrsScheduler.schedule(note, grade, now).dueDate }
             val spoken = if (showIntervals) stringResource(R.string.study_grade_a11y, label, dueLabel(nextDue, now)) else label
             Button(
                 onClick = { onGrade(grade) },

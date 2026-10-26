@@ -24,8 +24,11 @@ data class RevisionNoteEntity(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 
-    // --- SM-2 scheduling fields ---
-    val easeFactor: Float = 2.5f,
+    // --- FSRS-5 scheduling fields ---
+    val stability: Float = 0f,
+    val difficulty: Float = 0f,
+    val retrievability: Float = 1f,
+    val state: String = "NEW",            // "NEW", "LEARNING", "REVIEW", "RELEARNING"
     val intervalDays: Int = 0,
     val repetitions: Int = 0,
     val dueDate: Long = System.currentTimeMillis(), // next review date timestamp (ms)
