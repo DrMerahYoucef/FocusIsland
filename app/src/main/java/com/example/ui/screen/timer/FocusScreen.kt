@@ -148,6 +148,7 @@ fun TimerScreen(
     onNavigateToRadio: () -> Unit = {},
     onNavigateToChallenges: () -> Unit = {},
     onNavigateToStyles: () -> Unit = {},
+    topBarPadding: androidx.compose.ui.unit.Dp = 0.dp,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -235,7 +236,7 @@ fun TimerScreen(
     }
 
     PhaseTexturedBackground(modifier = modifier.fillMaxSize()) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+    Box(Modifier.fillMaxSize().padding(top = topBarPadding), contentAlignment = Alignment.TopCenter) {
     Box(Modifier.widthIn(max = Spacing.contentMaxWidth).fillMaxSize()) {
     FocusContent(
         state = state,

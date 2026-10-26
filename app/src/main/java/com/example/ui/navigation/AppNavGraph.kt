@@ -394,9 +394,14 @@ private fun MainShell(
         }
         Scaffold(
             modifier = Modifier.weight(1f),
+            containerColor = androidx.compose.ui.graphics.Color.Transparent,
             topBar = {
-                TopAppBar(
+                androidx.compose.material3.TopAppBar(
                     title = { Text(stringResource(current.label)) },
+                    colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+                        scrolledContainerColor = androidx.compose.ui.graphics.Color.Transparent
+                    ),
                     actions = {
                         IconButton(onClick = { navController.navigate(Routes.SETTINGS) }) {
                             Icon(Icons.Rounded.Settings, contentDescription = stringResource(R.string.nav_settings))
@@ -423,12 +428,15 @@ private fun MainShell(
                 state = pagerState,
                 userScrollEnabled = settings.swipeToNavigate,
                 beyondViewportPageCount = 0,
-                modifier = Modifier.fillMaxSize().padding(padding)
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = padding.calculateBottomPadding())
             ) { page ->
                 if (tabs[page] == TopLevel.FOCUS) {
                     TimerScreen(
                         viewModel = timerViewModel,
                         settingsViewModel = settingsViewModel,
+                        topBarPadding = padding.calculateTopPadding(),
                         onNavigateToBatterySaver = {
                             if (navController.currentDestination?.route != Routes.FOCUS_MODE) {
                                 navController.navigate(Routes.FOCUS_MODE) { launchSingleTop = true }
@@ -440,7 +448,12 @@ private fun MainShell(
                     )
                 } else {
                     // Tablets, foldables and landscape: keep each tab a readable column instead of stretching it.
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(top = padding.calculateTopPadding()),
+                        contentAlignment = Alignment.TopCenter
+                    ) {
                         Box(Modifier.widthIn(max = Spacing.contentMaxWidth).fillMaxSize()) {
                             when (tabs[page]) {
                                 TopLevel.FOCUS -> Unit

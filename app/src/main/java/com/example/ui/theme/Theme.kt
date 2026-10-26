@@ -497,8 +497,16 @@ private fun DrawScope.drawArcadeMotherboard(
     }
 
     // 2. 8 Octilinear PCB Bus Banks (0°, 45°, 90°, 135°, 180°, 225°, 270°, 315°)
-    // Each bank carries 4 parallel ribbon lanes + 1 auxiliary clock trace (up to 40 total slots).
-    val totalSlots = 36
+    // Traces appear in a scattered random order around the entire 360° perimeter of the timer circle
+    // rather than one next to another.
+    val randomSlotOrder = intArrayOf(
+        5, 22, 12, 31, 2, 17, 27, 8,
+        28, 15, 20, 7, 18, 11, 25, 0,
+        13, 30, 4, 23, 9, 16, 3, 24,
+        14, 29, 6, 19, 26, 1, 21, 10,
+        34, 32, 35, 33
+    )
+    val totalSlots = randomSlotOrder.size
     val totalTracesToDraw = (completedCount + 1).coerceAtMost(totalSlots)
     val invSqrt2 = 0.70710677f
 
@@ -510,19 +518,22 @@ private fun DrawScope.drawArcadeMotherboard(
         }
         if (progress <= 0.02f) continue
 
-        // Group into 8 banks of 4 parallel bus lanes first (minutes 0..31), then outer bus lanes (32..35)
+        val slotId = randomSlotOrder[minuteIdx]
         val bank: Int
         val lane: Int // 0..3 within the 4-lane parallel ribbon bus
         val isOuterLayer: Boolean
-        if (minuteIdx < 32) {
-            bank = minuteIdx / 4
-            lane = minuteIdx % 4
+        if (slotId < 32) {
+            bank = slotId / 4
+            lane = slotId % 4
             isOuterLayer = false
         } else {
-            bank = (minuteIdx - 32) * 2
+            bank = (slotId - 32) * 2
             lane = 4
             isOuterLayer = true
         }
+
+        // Deterministic per-slot variation so traces have organic motherboard reach around the circle
+        val slotHash = (slotId * 37 + 11) % 7
 
         // Bank primary unit vector u = (ux, uy) snapped strictly to 45° multiples (-90° + bank * 45°)
         val (ux, uy) = when (bank % 8) {
@@ -557,7 +568,7 @@ private fun DrawScope.drawArcadeMotherboard(
         val turnStagger = -doglegSign * d * 0.52f
 
         // Segment 1: Straight parallel launch along u (strictly 0°/90° for cardinal banks, 45° for diagonal banks)
-        val baseSeg1 = innerRadius * (if (bank % 2 == 0) 0.19f else 0.15f)
+        val baseSeg1 = innerRadius * (if (bank % 2 == 0) 0.17f else 0.14f) + (slotHash % 3) * 3.dp.toPx()
         val seg1Len = (baseSeg1 + turnStagger).coerceAtLeast(8.dp.toPx())
         val p1 = Offset(
             x = p0.x + ux * seg1Len,
@@ -567,14 +578,14 @@ private fun DrawScope.drawArcadeMotherboard(
         // Segment 2: 45° PCB ribbon dogleg turn (rotates u by ±45° so every segment stays strictly octilinear)
         val diagUx = (ux + doglegSign * vx) * invSqrt2
         val diagUy = (uy + doglegSign * vy) * invSqrt2
-        val seg2Len = innerRadius * (0.21f + (bank % 3) * 0.04f)
+        val seg2Len = innerRadius * (0.19f + (bank % 3) * 0.045f)
         val p2 = Offset(
             x = p1.x + diagUx * seg2Len,
             y = p1.y + diagUy * seg2Len
         )
 
-        // Segment 3: Parallel bus continuation back along u
-        val seg3Base = maxReach * (0.20f + ((bank + lane) % 4) * 0.055f)
+        // Segment 3: Parallel bus continuation back along u with per-slot varied reach
+        val seg3Base = maxReach * (0.16f + slotHash * 0.032f)
         val seg3Len = (seg3Base - turnStagger * 0.5f).coerceAtLeast(16.dp.toPx())
         val p3 = Offset(
             x = p2.x + ux * seg3Len,
