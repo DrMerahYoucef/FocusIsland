@@ -1100,5 +1100,44 @@
     <string name="challenge_history_overtime">%1$s · %2$s (total %3$s)</string>
     <string name="settings_language">Langue</string>
     <string name="settings_language_system">Système</string>
+
+    <!-- Study Group Multi-Friend Challenge, Chat & Focus Nudge -->
+    <string name="study_group_title">Défi Groupe d\'étude</string>
+    <string name="study_group_new_button">Groupe d\'étude entre amis</string>
+    <string name="study_group_add_friends">Ajouter des amis</string>
+    <string name="study_group_select_friends_title">Inviter des amis au groupe d\'étude</string>
+    <string name="study_group_select_friends_subtitle">Sélectionnez un ou plusieurs amis pour étudier ensemble aujourd\'hui.</string>
+    <string name="study_group_no_friends_yet">Ajoutez des amis dans l\'onglet Communauté pour les inviter à un groupe d\'étude.</string>
+    <string name="study_group_launch_selected">Lancer le groupe (%1$d)</string>
+    <string name="study_group_add_selected">Inviter (%1$d)</string>
+    <string name="study_group_add_friend_button">Ajouter %1$s au groupe d\'étude</string>
+    <string name="study_group_status_focusing">En focus</string>
+    <string name="study_group_status_paused">En pause</string>
+    <string name="study_group_status_idle">En pause</string>
+    <string name="study_group_status_invited">Invité</string>
+    <string name="study_group_nudge_button">Relancer</string>
+    <string name="study_group_nudge_sent">Envoyé</string>
+    <string name="study_group_nudge_a11y">Envoyer un rappel sonore et vibrant à %1$s</string>
+    <string name="study_group_nudge_notif_channel">Rappels du groupe d\'étude</string>
+    <string name="study_group_nudge_notif_channel_desc">Alertes sonores et vibrations quand un ami du groupe vous relance</string>
+    <string name="study_group_nudge_notif_title">%1$s vous relance pour commencer à étudier !</string>
+    <string name="study_group_nudge_notif_body">Votre groupe d\'étude compte sur vous — touchez pour lancer ou reprendre votre Pomodoro.</string>
+    <string name="study_group_nudge_chat_event">🔔 %1$s a relancé %2$s pour se concentrer !</string>
+    <string name="study_group_chat_header">Messages et emojis</string>
+    <string name="study_group_chat_empty">Envoyez un message ou un emoji pour motiver votre groupe d\'étude !</string>
+    <string name="study_group_chat_placeholder">Écrire au groupe d\'étude…</string>
+    <string name="study_group_chat_send">Envoyer le message</string>
+    <string name="study_group_members_count">%1$d participants</string>
+    <string name="study_group_leave">Abandonner</string>
+    <string name="study_group_leave_title">Abandonner ce défi d\'étude ?</string>
+    <string name="study_group_leave_body">Vous quitterez ce défi et pourrez en lancer un nouveau à tout moment.</string>
+    <string name="study_group_chat_ephemeral_notice">Messages supprimés à la fin du défi ou par le créateur</string>
+    <string name="study_group_clear_chat">Supprimer les messages</string>
+    <string name="study_group_clear_chat_title">Supprimer tous les messages ?</string>
+    <string name="study_group_clear_chat_body">Tous les messages de ce groupe d\'étude seront définitivement supprimés pour tout le monde.</string>
+    <string name="study_group_delete_group">Supprimer le défi</string>
+    <string name="study_group_delete_group_title">Supprimer ce groupe d\'étude ?</string>
+    <string name="study_group_delete_group_body">Supprimer ce défi y met fin pour tout le monde et efface définitivement tous les messages du groupe.</string>
+    <string name="study_group_creator_badge">Créateur</string>
 </resources>
 

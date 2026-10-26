@@ -446,26 +446,6 @@ fun FocusContent(
             }
         }
     }
-    val friendDuelPanel = @Composable {
-        friendState.incomingPending.firstOrNull()?.let { incoming ->
-            FriendDuelIncomingCard(
-                challenge = incoming,
-                onAccept = onAcceptFriendChallenge,
-                onDecline = onDeclineFriendChallenge,
-                modifier = Modifier.widthIn(max = Spacing.formMaxWidth)
-            )
-        }
-        friendState.activeDuel?.let { activeDuel ->
-            FriendDuelLiveCard(
-                duel = activeDuel,
-                myUid = friendState.myUid,
-                onSurrender = onSurrenderFriendChallenge,
-                onOpenDetails = onOpenChallenges,
-                compact = true,
-                modifier = Modifier.widthIn(max = Spacing.formMaxWidth)
-            )
-        }
-    }
     val extras = @Composable {
         FocusExtras(today, nextExam, sound, onOpenSounds, onToggleSound)
     }
@@ -512,7 +492,6 @@ fun FocusContent(
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm, Alignment.CenterVertically)
                 ) {
                     banner()
-                    friendDuelPanel()
                     dots()
                     controls()
                     extras()
@@ -525,7 +504,6 @@ fun FocusContent(
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
                 banner()
-                friendDuelPanel()
                 dial(Modifier.weight(1f).fillMaxWidth())
                 dots()
                 controls()

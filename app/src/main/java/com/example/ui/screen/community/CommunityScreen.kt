@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
@@ -291,12 +292,15 @@ fun CommunityScreen(
 
     selectedProfile?.let { friend ->
         val isFriend = relations.of(friend.uid) == Relation.FRIEND
-        val hasActiveDuel = friendChallengeState.activeDuel != null
-        val isPendingChallenge = friendChallengeState.outgoingPending.any { it.opponentUid == friend.uid }
+        val activeDuel = friendChallengeState.activeDuel
+        val isAlreadyInGroup = activeDuel?.hasActiveParticipant(friend.uid) == true
+        val canAddToExistingGroup = activeDuel != null && !isAlreadyInGroup
+        val isPendingChallenge = friendChallengeState.outgoingPending.any { it.hasActiveParticipant(friend.uid) }
         FriendSheet(
             friend = friend,
             isFriend = isFriend,
-            hasActiveDuel = hasActiveDuel,
+            hasActiveDuel = isAlreadyInGroup,
+            canAddToStudyGroup = canAddToExistingGroup,
             isPendingChallenge = isPendingChallenge,
             onChallenge = {
                 viewModel.challengeFriend(friend.uid, friend.username)
@@ -930,6 +934,7 @@ private fun FriendSheet(
     friend: UserProfile,
     isFriend: Boolean = true,
     hasActiveDuel: Boolean = false,
+    canAddToStudyGroup: Boolean = false,
     isPendingChallenge: Boolean = false,
     onChallenge: () -> Unit = {},
     onRemove: () -> Unit,
@@ -937,9 +942,18 @@ private fun FriendSheet(
 ) {
     var confirmRemove by remember { mutableStateOf(false) }
     val name = friend.username.ifBlank { stringResource(R.string.community_unnamed) }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
         Column(
-            Modifier.padding(horizontal = Spacing.md).navigationBarsPadding(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = Spacing.md)
+                .navigationBarsPadding()
+                .padding(bottom = 56.dp),
             verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -976,12 +990,17 @@ private fun FriendSheet(
                     .heightIn(min = Spacing.buttonHeight)
                     .testTag("challenge_friend_button")
             ) {
-                Icon(Icons.Rounded.SportsScore, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                Icon(
+                    imageVector = if (canAddToStudyGroup) Icons.Rounded.Groups else Icons.Rounded.SportsScore,
+                    contentDescription = null,
+                    modifier = Modifier.size(ButtonDefaults.IconSize)
+                )
                 Spacer(Modifier.size(ButtonDefaults.IconSpacing))
                 Text(
                     when {
                         isPendingChallenge -> stringResource(R.string.friend_duel_waiting_accept, name)
                         hasActiveDuel -> stringResource(R.string.friend_duel_already_active)
+                        canAddToStudyGroup -> stringResource(R.string.study_group_add_friend_button, name)
                         else -> stringResource(R.string.friend_duel_challenge_button, name)
                     }
                 )
@@ -997,7 +1016,6 @@ private fun FriendSheet(
                     Text(stringResource(R.string.community_remove_friend))
                 }
             }
-            Spacer(Modifier.height(Spacing.sm))
         }
     }
     if (confirmRemove) {

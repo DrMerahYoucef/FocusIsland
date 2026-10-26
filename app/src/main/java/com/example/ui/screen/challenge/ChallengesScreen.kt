@@ -36,6 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.Flag
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.HourglassBottom
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material3.AlertDialog
@@ -44,6 +45,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
@@ -75,6 +77,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -129,13 +132,15 @@ private const val COUNTDOWN_FROM = 5
 
 /**
  * Challenges: set a goal and a time limit, a 5-second countdown with sound, then beat the clock.
- * "Goal reached" before the end celebrates with confetti; otherwise the challenge fails.
+ * Also hosts the multi-friend Study Group Challenge with live focus progress, group chat & emojis,
+ * and sound+vibration focus nudges when a friend is paused.
  */
 @Composable
 fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifier) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val friendState by viewModel.friendState.collectAsStateWithLifecycle()
     var showNew by rememberSaveable { mutableStateOf(false) }
+    var showStudyGroupSheet by rememberSaveable { mutableStateOf(false) }
     var pending by rememberSaveable(stateSaver = PendingSaver) { mutableStateOf(null) }
     var celebrated by remember { mutableStateOf<Challenge?>(null) }
     var confirmGiveUp by rememberSaveable { mutableStateOf(false) }
@@ -172,10 +177,15 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
             onStopOvertime = viewModel::stopOvertime,
             onDismissCelebration = { celebrated = null },
             onClearHistory = { confirmClear = true },
+            onOpenStudyGroupFriends = { showStudyGroupSheet = true },
             onAcceptFriendDuel = viewModel::acceptFriendChallenge,
             onDeclineFriendDuel = viewModel::declineFriendChallenge,
             onCancelFriendDuel = viewModel::cancelOutgoingFriendChallenge,
-            onSurrenderFriendDuel = viewModel::surrenderFriendChallenge
+            onSurrenderFriendDuel = viewModel::surrenderFriendChallenge,
+            onSendStudyGroupMessage = viewModel::sendStudyGroupMessage,
+            onNudgeStudyGroupFriend = viewModel::nudgeStudyGroupFriend,
+            onClearStudyGroupMessages = viewModel::clearStudyGroupMessages,
+            onDeleteStudyGroupChallenge = viewModel::deleteStudyGroupChallenge
         )
         Celebration(trigger = celebrated?.id)
         FriendDuelVictoryCelebration(
@@ -199,6 +209,22 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
         NewChallengeSheet(
             onStart = { showNew = false; celebrated = null; pending = it },
             onDismiss = { showNew = false }
+        )
+    }
+    if (showStudyGroupSheet) {
+        val existingUids = friendState.activeDuel
+            ?.activeAndInvitedMembers()
+            ?.mapTo(HashSet()) { it.uid }
+            .orEmpty()
+        StudyGroupFriendsSheet(
+            friends = friendState.availableFriends,
+            alreadyInGroupUids = existingUids,
+            isAddingToExisting = friendState.activeDuel != null,
+            onConfirmSelection = { chosen ->
+                showStudyGroupSheet = false
+                viewModel.startOrInviteStudyGroup(chosen)
+            },
+            onDismiss = { showStudyGroupSheet = false }
         )
     }
     if (confirmGiveUp) {
@@ -238,10 +264,15 @@ internal fun ChallengesContent(
     onClearHistory: () -> Unit,
     onStopOvertime: () -> Unit = {},
     friendState: FriendChallengeState = FriendChallengeState(),
+    onOpenStudyGroupFriends: () -> Unit = {},
     onAcceptFriendDuel: (FriendChallenge) -> Unit = {},
     onDeclineFriendDuel: (FriendChallenge) -> Unit = {},
     onCancelFriendDuel: (FriendChallenge) -> Unit = {},
-    onSurrenderFriendDuel: (FriendChallenge) -> Unit = {}
+    onSurrenderFriendDuel: (FriendChallenge) -> Unit = {},
+    onSendStudyGroupMessage: (FriendChallenge, String) -> Unit = { _, _ -> },
+    onNudgeStudyGroupFriend: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
+    onClearStudyGroupMessages: (FriendChallenge) -> Unit = {},
+    onDeleteStudyGroupChallenge: (FriendChallenge) -> Unit = {}
 ) {
     val lastFailed = state.history.firstOrNull()?.takeIf {
         it.result == ChallengeResult.FAILED && it.finishedAt != null && nowMs - it.finishedAt < RECENT_MS && state.active == null
@@ -251,7 +282,7 @@ internal fun ChallengesContent(
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         modifier = Modifier.fillMaxSize()
     ) {
-        // Incoming friend duel invitations
+        // Incoming friend duel / study group invitations
         items(friendState.incomingPending, key = { "in_duel_" + it.id }) { incoming ->
             FriendDuelIncomingCard(
                 challenge = incoming,
@@ -265,7 +296,7 @@ internal fun ChallengesContent(
             val opponent = outgoing.opponentName.ifBlank { stringResource(R.string.community_unnamed) }
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                 ListItem(
-                    headlineContent = { Text(stringResource(R.string.friend_duel_title)) },
+                    headlineContent = { Text(stringResource(R.string.study_group_title)) },
                     supportingContent = { Text(stringResource(R.string.friend_duel_waiting_accept, opponent)) },
                     trailingContent = {
                         TextButton(onClick = { onCancelFriendDuel(outgoing) }) {
@@ -276,14 +307,36 @@ internal fun ChallengesContent(
             }
         }
 
-        // Active head-to-head friend duel
-        friendState.activeDuel?.let { duel ->
-            item(key = "active_duel_" + duel.id) {
+        // Active Multi-Friend Study Group / Duel
+        val activeStudyGroup = friendState.activeDuel
+        if (activeStudyGroup != null) {
+            item(key = "active_duel_" + activeStudyGroup.id) {
                 FriendDuelLiveCard(
-                    duel = duel,
+                    duel = activeStudyGroup,
                     myUid = friendState.myUid,
-                    onSurrender = onSurrenderFriendDuel
+                    onSurrender = onSurrenderFriendDuel,
+                    onSendMessage = onSendStudyGroupMessage,
+                    onNudgeFriend = onNudgeStudyGroupFriend,
+                    onClearMessages = onClearStudyGroupMessages,
+                    onDeleteGroup = onDeleteStudyGroupChallenge,
+                    onAddFriends = onOpenStudyGroupFriends,
+                    nudgeCooldownUntil = friendState.nudgeCooldownUntil
                 )
+            }
+        } else {
+            // Button to launch a new Study Group with one or multiple friends anytime
+            item(key = "launch_study_group_button") {
+                FilledTonalButton(
+                    onClick = onOpenStudyGroupFriends,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = Spacing.buttonHeight)
+                        .testTag("launch_study_group_button")
+                ) {
+                    Icon(Icons.Rounded.Groups, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                    Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                    Text(stringResource(R.string.study_group_new_button))
+                }
             }
         }
 

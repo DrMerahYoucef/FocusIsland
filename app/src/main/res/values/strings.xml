@@ -1116,5 +1116,44 @@
     <string name="settings_language_system">System</string>
     <string name="settings_language_en" translatable="false">English</string>
     <string name="settings_language_fr" translatable="false">Français</string>
+
+    <!-- Study Group Multi-Friend Challenge, Chat & Focus Nudge -->
+    <string name="study_group_title">Study Group Challenge</string>
+    <string name="study_group_new_button">Study Group with Friends</string>
+    <string name="study_group_add_friends">Add friends</string>
+    <string name="study_group_select_friends_title">Invite friends to Study Group</string>
+    <string name="study_group_select_friends_subtitle">Select one or multiple friends to focus together today.</string>
+    <string name="study_group_no_friends_yet">Add friends in the Community tab to invite them to a Study Group.</string>
+    <string name="study_group_launch_selected">Start Study Group (%1$d)</string>
+    <string name="study_group_add_selected">Invite (%1$d)</string>
+    <string name="study_group_add_friend_button">Add %1$s to Study Group</string>
+    <string name="study_group_status_focusing">Focusing</string>
+    <string name="study_group_status_paused">Paused</string>
+    <string name="study_group_status_idle">Paused</string>
+    <string name="study_group_status_invited">Invited</string>
+    <string name="study_group_nudge_button">Nudge</string>
+    <string name="study_group_nudge_sent">Sent</string>
+    <string name="study_group_nudge_a11y">Send sound and vibration reminder to %1$s</string>
+    <string name="study_group_nudge_notif_channel">Study Group Focus Nudges</string>
+    <string name="study_group_nudge_notif_channel_desc">Sound and vibration alerts when a study group friend nudges you to focus</string>
+    <string name="study_group_nudge_notif_title">%1$s nudged you to start focusing!</string>
+    <string name="study_group_nudge_notif_body">Your study group is counting on you — tap to start or resume your Pomodoro timer.</string>
+    <string name="study_group_nudge_chat_event">🔔 %1$s nudged %2$s to start focusing!</string>
+    <string name="study_group_chat_header">Messages &amp; Emojis</string>
+    <string name="study_group_chat_empty">Send a message or tap an emoji to motivate your study group!</string>
+    <string name="study_group_chat_placeholder">Message your study group…</string>
+    <string name="study_group_chat_send">Send message</string>
+    <string name="study_group_members_count">%1$d members</string>
+    <string name="study_group_leave">Abandon</string>
+    <string name="study_group_leave_title">Abandon this study challenge?</string>
+    <string name="study_group_leave_body">You will leave this challenge and can launch a new one anytime.</string>
+    <string name="study_group_chat_ephemeral_notice">Messages are deleted when the challenge ends or by the creator</string>
+    <string name="study_group_clear_chat">Delete messages</string>
+    <string name="study_group_clear_chat_title">Delete all group messages?</string>
+    <string name="study_group_clear_chat_body">All messages in this Study Group will be permanently deleted for everyone.</string>
+    <string name="study_group_delete_group">Delete challenge</string>
+    <string name="study_group_delete_group_title">Delete this Study Group?</string>
+    <string name="study_group_delete_group_body">Deleting this challenge ends it for everyone and permanently deletes all group chat messages.</string>
+    <string name="study_group_creator_badge">Creator</string>
 </resources>
 

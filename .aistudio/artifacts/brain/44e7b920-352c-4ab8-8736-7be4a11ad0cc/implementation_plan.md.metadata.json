@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan to replace the SM-2 flashcard scheduling algorithm with FSRS-5 (90% target retention and short intra-day learning/relearning steps), update the flashcard data model with Stability, Difficulty, Retrievability, and State, and migrate existing SM-2 cards without losing study progress.",
-  "updatedAt":  "2026-10-26T00:39:44.862934575Z",
+  "summary":  "Implementation plan for fixing the cut-off friend profile bottom sheet on 3-button navigation devices, allowing challenge re-launches after surrendering/abandoning, removing challenge progress cards from the Focus screen so the Pomodoro circle stays full size, and upgrading Friend Challenges into a multi-friend Study Group with live focus progress, group chat (custom messages + quick emojis), and sound + vibration focus nudges when a friend is paused or idle.",
+  "updatedAt":  "2026-10-26T16:05:18.284181288Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

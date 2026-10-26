@@ -9,6 +9,7 @@ import com.example.data.challenge.ChallengeResult
 import com.example.data.challenge.ChallengeState
 import com.example.data.challenge.FriendChallenge
 import com.example.data.challenge.FriendChallengeState
+import com.example.data.challenge.StudyFriendOption
 import com.example.service.ChallengeAlarmReceiver
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -56,6 +57,42 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun clearHistory() = store.clearHistory()
+
+    fun startOrInviteStudyGroup(friends: List<StudyFriendOption>) {
+        if (friends.isEmpty()) return
+        viewModelScope.launch {
+            friendRepo.startOrInviteToStudyGroup(
+                challengerName = friendState.value.myName.ifBlank { "You" },
+                friendsToInvite = friends
+            )
+        }
+    }
+
+    fun sendStudyGroupMessage(challenge: FriendChallenge, text: String) {
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            friendRepo.sendStudyGroupMessage(challenge, text)
+        }
+    }
+
+    fun nudgeStudyGroupFriend(challenge: FriendChallenge, targetUid: String, targetName: String) {
+        if (targetUid.isBlank()) return
+        viewModelScope.launch {
+            friendRepo.sendFocusNudge(challenge, targetUid, targetName)
+        }
+    }
+
+    fun clearStudyGroupMessages(challenge: FriendChallenge) {
+        viewModelScope.launch {
+            friendRepo.clearStudyGroupMessagesByCreator(challenge)
+        }
+    }
+
+    fun deleteStudyGroupChallenge(challenge: FriendChallenge) {
+        viewModelScope.launch {
+            friendRepo.deleteStudyGroupByCreator(challenge)
+        }
+    }
 
     fun acceptFriendChallenge(challenge: FriendChallenge) {
         viewModelScope.launch { friendRepo.acceptChallenge(challenge) }
