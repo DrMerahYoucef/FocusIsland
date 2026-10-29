@@ -38,6 +38,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.EmojiEvents
@@ -46,6 +47,7 @@ import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.LocalFireDepartment
+import androidx.compose.material.icons.rounded.MoreTime
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.PauseCircle
@@ -338,6 +340,7 @@ fun FriendDuelLiveCard(
     onSendMessage: (FriendChallenge, String) -> Unit = { _, _ -> },
     onNudgeFriend: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
     onResendInvite: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
+    onAddTime: (FriendChallenge, Int) -> Unit = { _, _ -> },
     onClearMessages: (FriendChallenge) -> Unit = {},
     onDeleteGroup: (FriendChallenge) -> Unit = {},
     onAddFriends: (() -> Unit)? = null,
@@ -350,6 +353,7 @@ fun FriendDuelLiveCard(
     var confirmSurrender by rememberSaveable { mutableStateOf(false) }
     var confirmClearChat by rememberSaveable { mutableStateOf(false) }
     var confirmDeleteGroup by rememberSaveable { mutableStateOf(false) }
+    var showAddTimeSheet by rememberSaveable { mutableStateOf(false) }
     var moreMenuExpanded by remember { mutableStateOf(false) }
     var messageDraft by rememberSaveable(duel.id) { mutableStateOf("") }
     // Default to collapsed in full-screen chat room so the conversation takes center stage
@@ -494,14 +498,25 @@ fun FriendDuelLiveCard(
                                         MaterialTheme.colorScheme.onTertiaryContainer
                                     } else {
                                         MaterialTheme.colorScheme.onSecondaryContainer
-                                    }
+                                    },
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .then(
+                                            if (isCreator && !compact) {
+                                                Modifier.clickable { showAddTimeSheet = true }
+                                            } else {
+                                                Modifier
+                                            }
+                                        )
+                                        .testTag("study_group_target_badge_button")
                                 ) {
+                                    val baseBadgeLabel = if (duel.isTargetHoursChallenge) {
+                                        stringResource(R.string.study_group_mode_badge_target, durationText(duel.targetMinutes))
+                                    } else {
+                                        stringResource(R.string.study_group_mode_badge_open)
+                                    }
                                     Text(
-                                        text = if (duel.isTargetHoursChallenge) {
-                                            stringResource(R.string.study_group_mode_badge_target, durationText(duel.targetMinutes))
-                                        } else {
-                                            stringResource(R.string.study_group_mode_badge_open)
-                                        },
+                                        text = if (isCreator && !compact) "$baseBadgeLabel +" else baseBadgeLabel,
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold,
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
@@ -563,6 +578,21 @@ fun FriendDuelLiveCard(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
+                            if (isCreator) {
+                                FilledTonalIconButton(
+                                    onClick = { showAddTimeSheet = true },
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .testTag("study_group_add_time_icon_button")
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.MoreTime,
+                                        contentDescription = stringResource(R.string.study_group_add_time),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+
                             if (onAddFriends != null) {
                                 FilledTonalIconButton(
                                     onClick = onAddFriends,
@@ -614,6 +644,19 @@ fun FriendDuelLiveCard(
                                             leaderboardExpanded = !leaderboardExpanded
                                         }
                                     )
+                                    if (isCreator) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.study_group_add_time)) },
+                                            leadingIcon = {
+                                                Icon(Icons.Rounded.MoreTime, contentDescription = null)
+                                            },
+                                            onClick = {
+                                                moreMenuExpanded = false
+                                                showAddTimeSheet = true
+                                            },
+                                            modifier = Modifier.testTag("study_group_add_time_button")
+                                        )
+                                    }
                                     if (onAddFriends != null) {
                                         DropdownMenuItem(
                                             text = { Text(stringResource(R.string.study_group_add_friends)) },
@@ -863,6 +906,19 @@ fun FriendDuelLiveCard(
             },
             onDismiss = { confirmDeleteGroup = false },
             destructive = true
+        )
+    }
+
+    if (showAddTimeSheet && isCreator) {
+        val highestActiveMinutes = remember(members) { members.maxOfOrNull { it.minutes } ?: 0 }
+        AddChallengeTimeSheet(
+            currentTargetMinutes = duel.targetMinutes,
+            highestActiveMinutes = highestActiveMinutes,
+            onConfirmAddMinutes = { addedMinutes ->
+                showAddTimeSheet = false
+                onAddTime(duel, addedMinutes)
+            },
+            onDismiss = { showAddTimeSheet = false }
         )
     }
 }
@@ -1909,6 +1965,180 @@ fun StudyGroupFriendsSheet(
                     stringResource(
                         if (isAddingToExisting) R.string.study_group_add_selected else R.string.study_group_launch_selected,
                         selectedUids.size
+                    )
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Bottom sheet allowing the challenge creator to add extra focus goal time to an active Study Group / Friend Challenge.
+ * Supports quick increment chips (+30m, +1h, +2h, +3h, +4h) and custom hours + minutes inputs.
+ */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+fun AddChallengeTimeSheet(
+    currentTargetMinutes: Int,
+    highestActiveMinutes: Int = 0,
+    onConfirmAddMinutes: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var addHoursText by rememberSaveable { mutableStateOf("1") }
+    var addMinutesText by rememberSaveable { mutableStateOf("0") }
+    val addHours = addHoursText.toIntOrNull() ?: 0
+    val addMinutes = addMinutesText.toIntOrNull() ?: 0
+    val addedTotalMinutes = addHours * 60 + addMinutes
+
+    val baseTarget = if (currentTargetMinutes > 0) {
+        currentTargetMinutes
+    } else {
+        if (addedTotalMinutes <= highestActiveMinutes) highestActiveMinutes else 0
+    }
+    val newTargetMinutes = (baseTarget + addedTotalMinutes).coerceIn(1, ChallengeTime.MAX_MINUTES)
+    val durationValid = addedTotalMinutes in 1..ChallengeTime.MAX_MINUTES &&
+        addMinutes in 0..59 &&
+        currentTargetMinutes < ChallengeTime.MAX_MINUTES
+
+    val quickIncrementMinutes = remember { listOf(30, 60, 120, 180, 240) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = Spacing.lg)
+                .padding(bottom = Spacing.xxl)
+                .navigationBarsPadding()
+                .imePadding(),
+            verticalArrangement = Arrangement.spacedBy(Spacing.md)
+        ) {
+            Text(
+                text = stringResource(R.string.study_group_add_time_title),
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.semantics { heading() }
+            )
+            Text(
+                text = if (currentTargetMinutes > 0) {
+                    stringResource(
+                        R.string.study_group_add_time_subtitle_target,
+                        durationText(currentTargetMinutes)
+                    )
+                } else {
+                    stringResource(R.string.study_group_add_time_subtitle_open)
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(Spacing.sm),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                ) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xxs)
+                    ) {
+                        quickIncrementMinutes.forEach { presetMins ->
+                            FilterChip(
+                                selected = addedTotalMinutes == presetMins,
+                                onClick = {
+                                    addHoursText = (presetMins / 60).toString()
+                                    addMinutesText = (presetMins % 60).toString()
+                                },
+                                label = { Text("+${durationText(presetMins)}") },
+                                modifier = Modifier.testTag("add_time_chip_$presetMins")
+                            )
+                        }
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        OutlinedTextField(
+                            value = addHoursText,
+                            onValueChange = { s ->
+                                if (s.length <= 2 && s.all(Char::isDigit)) addHoursText = s
+                            },
+                            label = { Text(stringResource(R.string.challenge_hours)) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("add_time_hours_input")
+                        )
+                        OutlinedTextField(
+                            value = addMinutesText,
+                            onValueChange = { s ->
+                                if (s.length <= 2 && s.all(Char::isDigit)) addMinutesText = s
+                            },
+                            label = { Text(stringResource(R.string.challenge_minutes)) },
+                            singleLine = true,
+                            isError = addMinutes > 59,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("add_time_minutes_input")
+                        )
+                    }
+
+                    if (durationValid) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.65f),
+                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.MoreTime,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = stringResource(
+                                        R.string.study_group_add_time_new_target,
+                                        durationText(newTargetMinutes)
+                                    ),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Button(
+                onClick = {
+                    if (durationValid) {
+                        onConfirmAddMinutes(addedTotalMinutes)
+                    }
+                },
+                enabled = durationValid,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = Spacing.buttonHeight)
+                    .testTag("study_group_confirm_add_time_button")
+            ) {
+                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                Text(
+                    text = stringResource(
+                        R.string.study_group_add_time_confirm,
+                        durationText(addedTotalMinutes.coerceAtLeast(1))
                     )
                 )
             }

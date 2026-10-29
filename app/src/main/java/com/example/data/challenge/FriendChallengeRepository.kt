@@ -1381,6 +1381,74 @@ class FriendChallengeRepository(
     }
 
     /**
+     * Allows the creator of an active Study Group / Friend Challenge to add extra focus minutes
+     * to the challenge's target goal (`targetMinutes`), optionally posting an announcement message
+     * in the group chat so all participants are notified in real time.
+     */
+    suspend fun addTargetMinutesByCreator(
+        challenge: FriendChallenge,
+        additionalMinutes: Int,
+        announcementText: String = ""
+    ): Result<FriendChallenge> = runCatching {
+        val myUid = _state.value.myUid.ifEmpty { currentUid().ifEmpty { challenge.challengerUid } }
+        require(myUid.isEmpty() || challenge.isChallenger(myUid) || challenge.challengerUid == "local_user") {
+            "Only the challenge creator can add more time to the challenge"
+        }
+        require(additionalMinutes > 0) { "Additional minutes must be positive" }
+
+        val maxMinutes = 24 * 60
+        // Ensure if a participant already studied more than the old target (e.g., when converting an Open challenge),
+        // adding time extends beyond the current base so the challenge continues cleanly.
+        val baseTarget = if (challenge.targetMinutes > 0) {
+            challenge.targetMinutes
+        } else {
+            val highestActiveMinutes = challenge.acceptedMembers().maxOfOrNull { it.minutes } ?: 0
+            if (additionalMinutes <= highestActiveMinutes) highestActiveMinutes else 0
+        }
+        val newTargetMinutes = (baseTarget + additionalMinutes).coerceIn(1, maxMinutes)
+
+        val now = clock()
+        val myName = myResolvedUsername.ifBlank { challenge.myName(myUid).ifBlank { "You" } }
+        val trimNotice = announcementText.trim()
+        val updatedMessages = if (trimNotice.isNotEmpty()) {
+            val msg = StudyGroupMessage(
+                id = "${myUid}_${now}",
+                senderUid = myUid,
+                senderName = myName,
+                text = trimNotice,
+                createdAt = now,
+                isNudgeAlert = false
+            )
+            markMessageHandled(msg.id)
+            (challenge.messages + msg)
+                .distinctBy { it.id }
+                .sortedBy { it.createdAt }
+                .takeLast(MAX_MESSAGES)
+        } else {
+            challenge.messages
+        }
+
+        val updated = challenge.copy(
+            targetMinutes = newTargetMinutes,
+            messages = updatedMessages
+        )
+        remoteCollectionDuels[updated.id] = updated
+        if (myUid.isNotEmpty()) {
+            remoteUserDuels[myUid] = updated
+        }
+        val cached = loadCachedChallenges()
+        val nextCached = if (cached.any { it.id == challenge.id }) {
+            cached.map { if (it.id == challenge.id) updated else it }
+        } else {
+            cached + updated
+        }
+        saveCachedChallenges(nextCached)
+        rebuildState(nextCached, myUid, _state.value.myLiveMinutesToday)
+        syncChallengeToFirestoreAsync(updated)
+        updated
+    }
+
+    /**
      * Allows the creator of the Study Group challenge to delete the challenge and wipe all its messages.
      * Broadcasts a CANCELLED tombstone with participants intact so every invited friend's phone
      * immediately receives the update and closes the group in real time.

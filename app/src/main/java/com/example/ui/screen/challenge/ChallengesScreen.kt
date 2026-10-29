@@ -199,7 +199,20 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
             onNudgeStudyGroupFriend = viewModel::nudgeStudyGroupFriend,
             onClearStudyGroupMessages = viewModel::clearStudyGroupMessages,
             onDeleteStudyGroupChallenge = viewModel::deleteStudyGroupChallenge,
-            onResendStudyGroupInvite = viewModel::resendStudyGroupInvite
+            onResendStudyGroupInvite = viewModel::resendStudyGroupInvite,
+            onAddStudyGroupTime = { duel, addedMinutes ->
+                val highestActive = duel.acceptedMembers().maxOfOrNull { it.minutes } ?: 0
+                val baseTarget = if (duel.targetMinutes > 0) {
+                    duel.targetMinutes
+                } else {
+                    if (addedMinutes <= highestActive) highestActive else 0
+                }
+                val newTarget = (baseTarget + addedMinutes).coerceIn(1, ChallengeTime.MAX_MINUTES)
+                val addedFmt = formatMinutesForNotice(context, addedMinutes)
+                val newTargetFmt = formatMinutesForNotice(context, newTarget)
+                val notice = context.getString(R.string.study_group_add_time_chat_notice, addedFmt, newTargetFmt)
+                viewModel.addStudyGroupTime(duel, addedMinutes, notice)
+            }
         )
         Celebration(trigger = celebrated?.id)
         FriendDuelVictoryCelebration(
@@ -297,7 +310,8 @@ internal fun ChallengesContent(
     onNudgeStudyGroupFriend: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
     onClearStudyGroupMessages: (FriendChallenge) -> Unit = {},
     onDeleteStudyGroupChallenge: (FriendChallenge) -> Unit = {},
-    onResendStudyGroupInvite: (FriendChallenge, String, String) -> Unit = { _, _, _ -> }
+    onResendStudyGroupInvite: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
+    onAddStudyGroupTime: (FriendChallenge, Int) -> Unit = { _, _ -> }
 ) {
     val hasActiveOrInviteGroup = friendState.activeDuel != null || friendState.incomingPending.isNotEmpty()
     val isImeVisible = WindowInsets.isImeVisible
@@ -426,6 +440,7 @@ internal fun ChallengesContent(
                 onClearStudyGroupMessages = onClearStudyGroupMessages,
                 onDeleteStudyGroupChallenge = onDeleteStudyGroupChallenge,
                 onResendStudyGroupInvite = onResendStudyGroupInvite,
+                onAddStudyGroupTime = onAddStudyGroupTime,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -538,6 +553,7 @@ private fun StudyGroupTabContent(
     onClearStudyGroupMessages: (FriendChallenge) -> Unit,
     onDeleteStudyGroupChallenge: (FriendChallenge) -> Unit,
     onResendStudyGroupInvite: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
+    onAddStudyGroupTime: (FriendChallenge, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val activeStudyGroup = friendState.activeDuel
@@ -569,6 +585,7 @@ private fun StudyGroupTabContent(
                 onSendMessage = onSendStudyGroupMessage,
                 onNudgeFriend = onNudgeStudyGroupFriend,
                 onResendInvite = onResendStudyGroupInvite,
+                onAddTime = onAddStudyGroupTime,
                 onClearMessages = onClearStudyGroupMessages,
                 onDeleteGroup = onDeleteStudyGroupChallenge,
                 onAddFriends = onOpenStudyGroupFriends,
@@ -1074,6 +1091,12 @@ internal fun durationText(minutes: Int): String =
         if (minutes % 60 == 0) stringResource(R.string.duration_h, minutes / 60)
         else stringResource(R.string.duration_h_m, minutes / 60, minutes % 60)
     } else stringResource(R.string.duration_m, minutes)
+
+private fun formatMinutesForNotice(context: android.content.Context, minutes: Int): String =
+    if (minutes >= 60) {
+        if (minutes % 60 == 0) context.getString(R.string.duration_h, minutes / 60)
+        else context.getString(R.string.duration_h_m, minutes / 60, minutes % 60)
+    } else context.getString(R.string.duration_m, minutes)
 
 private fun formatTime(epochMs: Long): String =
     formatTime(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()).toLocalTime())

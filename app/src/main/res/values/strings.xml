@@ -1192,6 +1192,13 @@
     <string name="study_group_message_notif_channel">Study Group &amp; Challenge Messages</string>
     <string name="study_group_message_notif_channel_desc">Sound and vibration alerts when a friend sends a message in your Study Group or challenge</string>
     <string name="study_group_message_notif_title">Message from %1$s</string>
+    <string name="study_group_add_time">Add time</string>
+    <string name="study_group_add_time_title">Add Challenge Time</string>
+    <string name="study_group_add_time_subtitle_target">Current target goal: %1$s. Choose how much focus time to add.</string>
+    <string name="study_group_add_time_subtitle_open">This is an open challenge. Adding focus time sets a target goal for everyone.</string>
+    <string name="study_group_add_time_new_target">New target goal: %1$s</string>
+    <string name="study_group_add_time_confirm">Add +%1$s</string>
+    <string name="study_group_add_time_chat_notice">⏱️ Added +%1$s to the challenge goal (New target: %2$s)</string>
 
     <!-- Progress Focus Hours -->
     <string name="stats_yearly_history">History by period</string>

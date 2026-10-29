@@ -370,6 +370,83 @@ class StudyGroupChallengeTest {
         val merged = mergeChallenges(openChallenge, updatedChallenge)
         assertEquals(180, merged.targetMinutes)
     }
+
+    @Test
+    fun `creator adding extra focus time extends targetMinutes and propagates through mergeChallenges`() {
+        val t0 = 7_000_000L
+        val creator = StudyGroupMember(
+            uid = "creator",
+            name = "Youcef",
+            minutes = 110,
+            timerState = StudyMemberTimerState.FOCUSING,
+            roleStatus = StudyMemberRoleStatus.ACTIVE,
+            invitedAt = t0,
+            updatedAt = t0 + 1_000L
+        )
+        val friend = StudyGroupMember(
+            uid = "friend1",
+            name = "Salmi",
+            minutes = 95,
+            timerState = StudyMemberTimerState.FOCUSING,
+            roleStatus = StudyMemberRoleStatus.ACTIVE,
+            invitedAt = t0,
+            updatedAt = t0 + 2_000L
+        )
+
+        // Initial 2-hour (120m) challenge created by Youcef
+        val initialChallenge = FriendChallenge(
+            id = "2026-10-29_creator_$t0",
+            challengerUid = "creator",
+            challengerName = "Youcef",
+            challengerMinutes = 110,
+            opponentUid = "friend1",
+            opponentName = "Salmi",
+            opponentMinutes = 95,
+            dayKey = "2026-10-29",
+            createdAt = t0,
+            acceptedAt = t0,
+            endAt = t0 + 86_400_000L,
+            targetMinutes = 120,
+            status = FriendChallengeStatus.ACTIVE,
+            members = listOf(creator, friend)
+        )
+        assertTrue(initialChallenge.isChallenger("creator"))
+        assertFalse(initialChallenge.isChallenger("friend1"))
+        assertEquals(null, initialChallenge.findTargetReachedWinnerUid())
+
+        // Creator adds +60m (1 hour) -> new target is 180m (3 hours) with announcement message
+        val addTimeMsg = StudyGroupMessage(
+            id = "creator_${t0 + 3_000L}",
+            senderUid = "creator",
+            senderName = "Youcef",
+            text = "⏱️ Added +1h to the challenge goal (New target: 3h)",
+            createdAt = t0 + 3_000L
+        )
+        val extendedChallenge = initialChallenge.copy(
+            targetMinutes = initialChallenge.targetMinutes + 60,
+            messages = initialChallenge.messages + addTimeMsg
+        )
+        assertEquals(180, extendedChallenge.targetMinutes)
+
+        // Merging with an older snapshot from friend1 keeps the higher 180m target and announcement message
+        val merged = mergeChallenges(initialChallenge, extendedChallenge)
+        assertEquals(180, merged.targetMinutes)
+        assertEquals(1, merged.messages.size)
+
+        // Even when creator reaches 125m (which would have won the old 120m goal), challenge continues until 180m
+        val after125m = merged.copy(
+            challengerMinutes = 125,
+            members = listOf(creator.copy(minutes = 125, updatedAt = t0 + 4_000L), friend)
+        )
+        assertEquals(null, after125m.findTargetReachedWinnerUid())
+
+        // Once creator reaches 180m, creator wins
+        val after180m = after125m.copy(
+            challengerMinutes = 180,
+            members = listOf(creator.copy(minutes = 180, updatedAt = t0 + 8_000L), friend)
+        )
+        assertEquals("creator", after180m.findTargetReachedWinnerUid())
+    }
 }
 
 

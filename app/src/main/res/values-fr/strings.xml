@@ -1176,6 +1176,13 @@
     <string name="study_group_message_notif_channel">Messages du groupe d\'étude et défis</string>
     <string name="study_group_message_notif_channel_desc">Alertes sonores et vibrations lorsqu\'un ami envoie un message dans votre défi</string>
     <string name="study_group_message_notif_title">Message de %1$s</string>
+    <string name="study_group_add_time">Ajouter du temps</string>
+    <string name="study_group_add_time_title">Ajouter du temps au défi</string>
+    <string name="study_group_add_time_subtitle_target">Objectif actuel : %1$s. Choisissez combien de temps de focus ajouter.</string>
+    <string name="study_group_add_time_subtitle_open">C\'est un défi ouvert. Ajouter du temps définit un objectif cible pour le groupe.</string>
+    <string name="study_group_add_time_new_target">Nouvel objectif cible : %1$s</string>
+    <string name="study_group_add_time_confirm">Ajouter +%1$s</string>
+    <string name="study_group_add_time_chat_notice">⏱️ A ajouté +%1$s à l\'objectif du défi (Nouvel objectif : %2$s)</string>
 
     <!-- Progress Focus Hours -->
     <string name="stats_yearly_history">Historique par période</string>

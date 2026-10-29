@@ -1,37 +1,34 @@
-# 50,000-Point Island Progression & Sky Fireworks Plan
+# Implementation Plan: Add More Target Focus Time to Active Challenges
 
-## 1. Reorder Island Progression Curve (Max 50,000 Points)
-We will update `IslandProgression.kt` and `IslandRenderer.kt` so that `FULL_GROWTH_UNITS = 50_000` and all 12 landmarks scale smoothly up to **50,000 points**:
+## Overview
+After a Study Group / Friend Challenge has been initialized, the creator (`challengerUid`) will be able to add more target focus time to the active challenge at any time before it ends.
 
-| # | Landmark | Previous Points | New Points | Trees | Era |
-|---|---|---|---|---|---|
-| 1 | First Island Sprout | 100 | **100** | 1 | Era I (0+) |
-| 2 | Timber Pier & Campfire | 500 | **400** | 4 | Era II (400+) |
-| 3 | Island Dwelling | 1,500 | **1,000** | 8 | Era III (1,000+) |
-| 4 | Seafarer's Vessel | 3,000 | **2,000** | 11 | Era III |
-| 5 | Coastal Beacon | 5,500 | **3,500** | 14 | Era III |
-| 6 | Soaring Bird Flock | 9,000 | **5,500** | 16 | Era IV (5,500+) |
-| 7 | Highland Ridge & Hamlet | 14,000 | **8,500** | 18 | Era IV |
-| 8 | Waterfall & Lagoon Bridge | 21,000 | **12,500** | 20 | Era V (12,500+) |
-| 9 | Grand Palace Citadel | 32,000 | **18,000** | 22 | Era VI (18,000+) |
-| 10 | Sky Vessel & Harbor Fleet | 48,000 | **26,000** | 24 | Era VI |
-| 11 | Ancient Guardian Sanctuary | 70,000 | **36,000** | 26 | Era VII (36,000+) |
-| 12 | Grand Sky Fireworks | 100,000 | **50,000** | 28 | Era VII |
+## User Experience & Design
+1. **Creator Entry Points in the Active Challenge Room (`FriendDuelLiveCard`)**:
+   - **Quick-Access Header Action**: For the challenge creator (`isCreator == true`), the target/mode badge in the top bar (and a dedicated **Add Time (+)** icon button / overflow menu item `"Add More Time"`) will open the **Add Challenge Time** modal bottom sheet.
+   - Non-creators continue to see the current target goal badge in read-only mode.
+2. **Add Challenge Time Sheet (`AddChallengeTimeSheet`)**:
+   - Displays the current target focus goal (or indicates that adding time to an Open Challenge sets a target focus goal).
+   - **Quick Increment Chips**: One-tap selectable chips (`+30m`, `+1h`, `+2h`, `+3h`, `+4h`) that populate the hours/minutes fields.
+   - **Custom Time Input**: Hours (`0–24`) and Minutes (`0–59`) numeric fields allowing any custom increment (capped so total target duration stays within `24h` / `1440m`).
+   - Live preview showing the **New Target Goal** (e.g., `Current: 2h -> New Target: 3h 30m`).
+   - Primary confirmation button (`study_group_confirm_add_time_button`) to apply the extra time.
+3. **Real-Time Sync & Group Chat Notice**:
+   - Calling `addTargetMinutesByCreator(challenge, additionalMinutes)` in `FriendChallengeRepository` verifies the caller is the challenge creator (`isChallenger`), increments `targetMinutes` (ensuring it is also strictly above any participant's already-logged minutes if needed, up to `MAX_MINUTES`), and posts an automatic update message in the group chat (e.g., `"⏱️ Added +1h to the challenge target (New goal: 3h)"`) so all participants see the updated target in real time and receive a message alert.
 
-- `IslandRenderer.radius(...)` will also adjust its early/late landmass expansion inflection to match `HIGHLAND_AT` (`8,500`) and `FULL_GROWTH` (`50,000`).
+## Key Files to Modify
+- **`/app/src/main/res/values/strings.xml` & `/app/src/main/res/values-fr/strings.xml`**:
+  - Add English and French string resources for the "Add Time" button/menu action, bottom sheet title/subtitle, quick chips, new target preview, and chat update announcement.
+- **`/app/src/main/java/com/example/data/challenge/FriendChallengeRepository.kt`**:
+  - Add `suspend fun addTargetMinutesByCreator(challenge: FriendChallenge, additionalMinutes: Int, announcementText: String = ""): Result<FriendChallenge>` to validate creator ownership, increment `targetMinutes`, append the optional group chat update message, update local cache, and sync to `/users/{myUid}` and `/friend_challenges/{id}`.
+- **`/app/src/main/java/com/example/ui/screen/challenge/ChallengeViewModel.kt`**:
+  - Add `fun addStudyGroupTime(challenge: FriendChallenge, additionalMinutes: Int, announcementText: String)` delegating to `friendRepo.addTargetMinutesByCreator(...)`.
+- **`/app/src/main/java/com/example/ui/screen/challenge/FriendDuelComponents.kt` & `/app/src/main/java/com/example/ui/screen/challenge/ChallengesScreen.kt`**:
+  - Wire `onAddTime: (FriendChallenge, Int) -> Unit` into `ChallengesContent`, `StudyGroupTabContent`, and `FriendDuelLiveCard`.
+  - Add creator-only "Add More Time" button/menu item and interactive target badge in `FriendDuelLiveCard`, plus the `AddChallengeTimeSheet` composable with quick increment chips (`+30m`, `+1h`, `+2h`, `+3h`, `+4h`) and custom hours/minutes inputs.
+- **`/app/src/test/java/com/example/StudyGroupChallengeTest.kt`**:
+  - Add unit/Robolectric tests verifying creator-only permission enforcement, target focus time extension, and UI interactions.
 
----
-
-## 2. Replace Celestial Aurora Crown with Grand Sky Fireworks
-We will replace the Aurora ribbons in `IslandLandmarksRenderer.kt` with a multi-burst **Sky Fireworks** celebration (`drawSkyFireworks`) unlocked at **50,000 points**:
-- **Visual Design**:
-  - 4 festive firework bursts across the sky above the island (`left`, `center-left high`, `center-right high`, and `right`) at varied sizes and heights so they frame the Grand Palace and highland peak cleanly.
-  - Each firework burst renders:
-    - A soft radial glow halo in the sky.
-    - Rising launch trail arcs from behind the island ridge.
-    - Concentric primary and secondary starburst rays (`12` outer rays + `8` inner rays) with rounded caps and sparkling tip droplets.
-    - Theme-aware color palettes (Golden/Coral/Cyan for Palm & Treasure, Magenta/Cyan/Electric Gold for Neon, Sakura Pink/Gold/Warm White for Blossom).
-- **Localization (`strings.xml` & `values-fr/strings.xml`)**:
-  - Update `island_ms_12_title`, `island_ms_12_desc`, and `island_era_7_desc` in both English and French to describe the **Grand Sky Fireworks** (*Feux d'Artifice Royaux*) instead of the Celestial Aurora Crown.
-- **Unit Tests (`ArchipelagoLayoutTest.kt`)**:
-  - Update the progression unit test assertions to verify the new 50,000-point curve.
+## Verification Plan
+- Run `compile_applet` to verify there are no compilation or resource errors.
+- Run `gradle :app:testDebugUnitTest --tests com.example.StudyGroupChallengeTest` to verify the new creator time-extension logic and UI flow.

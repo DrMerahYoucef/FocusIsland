@@ -102,6 +102,17 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun addStudyGroupTime(
+        challenge: FriendChallenge,
+        additionalMinutes: Int,
+        announcementText: String = ""
+    ) {
+        if (additionalMinutes <= 0) return
+        viewModelScope.launch {
+            friendRepo.addTargetMinutesByCreator(challenge, additionalMinutes, announcementText)
+        }
+    }
+
     fun acceptFriendChallenge(challenge: FriendChallenge) {
         viewModelScope.launch { friendRepo.acceptChallenge(challenge) }
     }
