@@ -1,59 +1,37 @@
-# Study Group UX/UI Redesign & Keyboard-Aware Chat Layout Plan
+# 50,000-Point Island Progression & Sky Fireworks Plan
 
-## Overview
-We will redesign the **Study Group (`Groupe d'étude`)** screen in **Challenges (`Défis`)** so that it feels like a clean, modern real-time study messenger rather than a stack of nested cards, and ensure the chat stream remains spacious and readable when the soft keyboard (`IME`) opens.
+## 1. Reorder Island Progression Curve (Max 50,000 Points)
+We will update `IslandProgression.kt` and `IslandRenderer.kt` so that `FULL_GROWTH_UNITS = 50_000` and all 12 landmarks scale smoothly up to **50,000 points**:
 
----
+| # | Landmark | Previous Points | New Points | Trees | Era |
+|---|---|---|---|---|---|
+| 1 | First Island Sprout | 100 | **100** | 1 | Era I (0+) |
+| 2 | Timber Pier & Campfire | 500 | **400** | 4 | Era II (400+) |
+| 3 | Island Dwelling | 1,500 | **1,000** | 8 | Era III (1,000+) |
+| 4 | Seafarer's Vessel | 3,000 | **2,000** | 11 | Era III |
+| 5 | Coastal Beacon | 5,500 | **3,500** | 14 | Era III |
+| 6 | Soaring Bird Flock | 9,000 | **5,500** | 16 | Era IV (5,500+) |
+| 7 | Highland Ridge & Hamlet | 14,000 | **8,500** | 18 | Era IV |
+| 8 | Waterfall & Lagoon Bridge | 21,000 | **12,500** | 20 | Era V (12,500+) |
+| 9 | Grand Palace Citadel | 32,000 | **18,000** | 22 | Era VI (18,000+) |
+| 10 | Sky Vessel & Harbor Fleet | 48,000 | **26,000** | 24 | Era VI |
+| 11 | Ancient Guardian Sanctuary | 70,000 | **36,000** | 26 | Era VII (36,000+) |
+| 12 | Grand Sky Fireworks | 100,000 | **50,000** | 28 | Era VII |
 
-## 1. Decluttering Chrome: Unified Compact Top Bar & Overflow Menu
-Currently, six vertical layers of headers, sub-headers, and permanent bottom destructive buttons compete for screen height. We will consolidate them into a single **Unified Study Group Top Bar**:
-
-- **Compact Group Header Bar**:
-  - Displays the group icon/avatar stack, **Study Group title**, **Creator badge**, and live Horloge leader summary (`🕐 Vous (1h 40m) · youyou (1h 40m)`) in one sleek header surface.
-  - Tapping the header/summary chip (`study_group_leaderboard_toggle`) smoothly expands or collapses the **Horloge Member Leaderboard** drawer (showing full/half/quarter clock icons, exact focus time, and 1-minute cooldown Nudge buttons).
-  - Includes a compact **`+` Add Friends** button (`study_group_add_friends_button`) and a **`⋮` More Actions Menu** button right in the header.
-- **Overflow Menu (`⋮`) for Secondary & Destructive Actions**:
-  - Moves **Clear Chat** (`study_group_clear_chat_button`), **Leave / Abandon Group** (`surrender_friend_duel_button`), and creator-only **Delete Study Group** (`study_group_delete_group_button`) into the `⋮` dropdown menu—removing the permanent bottom button row (`Supprimer le défi` / `Abandonner`) that was stealing vertical space and sitting between the composer and the keyboard.
-- **Remove Redundant Inner Sub-Header**:
-  - Eliminates the duplicate `"Messages et emojis / Messages supprimés à la fin du défi..."` card header inside the chat container so the message list starts immediately below the compact top bar (and optional pending-invite pill bar).
-
----
-
-## 2. Keyboard-Aware Layout & Direct Composer Docking
-When the user taps the message input and the soft keyboard appears (`WindowInsets.isImeVisible`):
-
-- **Eliminate the Dead Space Above the Keyboard**:
-  - Currently, `MainShell`'s `Scaffold` applies ~80dp bottom padding for the `NavigationBar`, and `StudyGroupTabContent` adds `.imePadding()` on top of that—creating an 80dp empty gap above the keyboard and crushing the chat area.
-  - We will hide the bottom `NavigationBar` in `MainShell` while the soft keyboard is visible on the Study Group screen and consume navigation bar insets cleanly so `.imePadding()` docks the message composer flush against the top of the keyboard.
-- **Auto-Collapse Chrome on Keyboard Open**:
-  - When `WindowInsets.isImeVisible` becomes `true`, the screen automatically collapses the expanded **Horloge Member Leaderboard**, hides the top app bar / tab row chrome while typing, and condenses the quick-emoji bar into a compact single-row strip or toggle so the **scrollable chat message stream retains generous vertical space** and auto-scrolls to the latest message.
+- `IslandRenderer.radius(...)` will also adjust its early/late landmass expansion inflection to match `HIGHLAND_AT` (`8,500`) and `FULL_GROWTH` (`50,000`).
 
 ---
 
-## 3. Visual Layout Comparison (Idle vs. Keyboard Open)
-
-```text
-+--------------------------------------------------+      +--------------------------------------------------+
-| Défis                                        [P] |      | [👥] Groupe d'étude · 🕐 Vous (1h40m) [▾] [+][⋮] |
-| [ 🏳️ Défi personnel ]   [ 👥 Groupe d'étude ● ]  |      +--------------------------------------------------+
-+--------------------------------------------------+      |                                                  |
-| [👥] Défi Groupe d'étude [Créateur]   [+👤] [⋮]  |      |  [Y] youyou                                      |
-| 🕐 Vous (1h 40m) · youyou (1h 40m)   Membres [▾] |      |      On attaque le chapitre 3 !           19:18  |
-| ⏳ En attente: salmi (28m)                       |      |                                                  |
-+--------------------------------------------------+      |                           Cc, j'arrive !  19:19  |
-|                                                  |      |                                              [V] |
-|  [Y] youyou                                      |      |     🔔 youyou a relancé salmi · 19:19            |
-|      On attaque le chapitre 3 !           19:18  |      |                                                  |
-|                                                  |      +--------------------------------------------------+
-|                           Cc, j'arrive !  19:19  |      |  🔥   💪   📚   🎯   ☕   👏   ⚡   🏆            |
-|                                              [V] |      | [ Écrire au groupe d'étude...            ] [ ➤ ] |
-|     🔔 youyou a relancé salmi · 19:19            |      +==================================================+
-|                                                  |      |              SOFT KEYBOARD (IME)                 |
-+--------------------------------------------------+      |      (Docked flush — zero dead space gap)        |
-|  🔥   💪   📚   🎯   ☕   👏   ⚡   🏆            |      |                                                  |
-| [ Écrire au groupe d'étude...            ] [ ➤ ] |      |                                                  |
-+--------------------------------------------------+      +==================================================+
-|  ⏱️ Focus  🎴 Étude  🏳️ Défis  📈 Progrès  👥 Com |
-+--------------------------------------------------+
-          1. Standard View (Spacious Chat)                     2. Keyboard Open (Auto-Collapsed & Docked)
-```
+## 2. Replace Celestial Aurora Crown with Grand Sky Fireworks
+We will replace the Aurora ribbons in `IslandLandmarksRenderer.kt` with a multi-burst **Sky Fireworks** celebration (`drawSkyFireworks`) unlocked at **50,000 points**:
+- **Visual Design**:
+  - 4 festive firework bursts across the sky above the island (`left`, `center-left high`, `center-right high`, and `right`) at varied sizes and heights so they frame the Grand Palace and highland peak cleanly.
+  - Each firework burst renders:
+    - A soft radial glow halo in the sky.
+    - Rising launch trail arcs from behind the island ridge.
+    - Concentric primary and secondary starburst rays (`12` outer rays + `8` inner rays) with rounded caps and sparkling tip droplets.
+    - Theme-aware color palettes (Golden/Coral/Cyan for Palm & Treasure, Magenta/Cyan/Electric Gold for Neon, Sakura Pink/Gold/Warm White for Blossom).
+- **Localization (`strings.xml` & `values-fr/strings.xml`)**:
+  - Update `island_ms_12_title`, `island_ms_12_desc`, and `island_era_7_desc` in both English and French to describe the **Grand Sky Fireworks** (*Feux d'Artifice Royaux*) instead of the Celestial Aurora Crown.
+- **Unit Tests (`ArchipelagoLayoutTest.kt`)**:
+  - Update the progression unit test assertions to verify the new 50,000-point curve.

@@ -70,6 +70,7 @@ fun SettingsRow(
     summary: String? = null,
     onClick: (() -> Unit)? = null,
     titleColor: Color = Color.Unspecified,
+    modifier: Modifier = Modifier,
     trailing: (@Composable () -> Unit)? = null
 ) {
     ListItem(
@@ -78,7 +79,7 @@ fun SettingsRow(
         supportingContent = summary?.let { { Text(it) } },
         trailingContent = trailing,
         colors = rowColors,
-        modifier = if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier
+        modifier = if (onClick != null) modifier.clickable(role = Role.Button, onClick = onClick) else modifier
     )
 }
 

@@ -65,15 +65,20 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -103,6 +108,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -166,6 +172,7 @@ fun FriendDuelIncomingCard(
     val countdownText = ChallengeTime.clock(remainingMs)
     val challenger = challenge.challengerName.ifBlank { stringResource(R.string.community_unnamed) }
     val isDeclinedOffer = inviteMember?.roleStatus == StudyMemberRoleStatus.DECLINED
+    val targetLabel = if (challenge.isTargetHoursChallenge) durationText(challenge.targetMinutes) else null
 
     if (isDeclinedOffer) {
         // Compact Pending Invite row with live 30m countdown so the user can still accept after declining
@@ -196,7 +203,11 @@ fun FriendDuelIncomingCard(
                     )
                     Column {
                         Text(
-                            text = stringResource(R.string.study_group_pending_invite_from, challenger),
+                            text = if (targetLabel != null) {
+                                stringResource(R.string.study_group_pending_invite_target_from, challenger, targetLabel)
+                            } else {
+                                stringResource(R.string.study_group_pending_invite_open_from, challenger)
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface,
@@ -281,7 +292,11 @@ fun FriendDuelIncomingCard(
                 }
             }
             Text(
-                text = stringResource(R.string.friend_duel_incoming_body),
+                text = if (targetLabel != null) {
+                    stringResource(R.string.friend_duel_incoming_body_target, targetLabel)
+                } else {
+                    stringResource(R.string.friend_duel_incoming_body_open)
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSecondaryContainer
             )
@@ -467,6 +482,30 @@ fun FriendDuelLiveCard(
                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
                                         )
                                     }
+                                }
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (duel.isTargetHoursChallenge) {
+                                        MaterialTheme.colorScheme.tertiaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.secondaryContainer
+                                    },
+                                    contentColor = if (duel.isTargetHoursChallenge) {
+                                        MaterialTheme.colorScheme.onTertiaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSecondaryContainer
+                                    }
+                                ) {
+                                    Text(
+                                        text = if (duel.isTargetHoursChallenge) {
+                                            stringResource(R.string.study_group_mode_badge_target, durationText(duel.targetMinutes))
+                                        } else {
+                                            stringResource(R.string.study_group_mode_badge_open)
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                    )
                                 }
                                 if (!isImeVisible) {
                                     Text(
@@ -733,6 +772,7 @@ fun FriendDuelLiveCard(
                             member = member,
                             displayName = displayName,
                             isMe = isMe,
+                            targetMinutes = duel.targetMinutes,
                             onCooldown = onCooldown,
                             cooldownRemainingSec = cooldownRemainingSec,
                             onNudge = {
@@ -1244,6 +1284,7 @@ private fun StudyGroupMemberRow(
     member: StudyGroupMember,
     displayName: String,
     isMe: Boolean,
+    targetMinutes: Int = 0,
     onCooldown: Boolean,
     cooldownRemainingSec: Int = 0,
     onNudge: () -> Unit
@@ -1375,8 +1416,21 @@ private fun StudyGroupMemberRow(
             // Horloge (clock) icons row: 1 full clock per hour, ¾ for 45m, ½ for 30m, ¼ for 15m + exact time text
             FocusHorlogeIconsRow(
                 minutes = member.minutes,
-                isMe = isMe
+                isMe = isMe,
+                targetMinutes = targetMinutes
             )
+            if (targetMinutes > 0) {
+                val progress = (member.minutes.toFloat() / targetMinutes.toFloat()).coerceIn(0f, 1f)
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(5.dp)
+                        .clip(CircleShape),
+                    color = if (isMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
+                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                )
+            }
         }
     }
 }
@@ -1396,6 +1450,7 @@ private fun StudyGroupMemberRow(
 fun FocusHorlogeIconsRow(
     minutes: Int,
     isMe: Boolean,
+    targetMinutes: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val safeMinutes = minutes.coerceAtLeast(0)
@@ -1473,7 +1528,11 @@ fun FocusHorlogeIconsRow(
         Spacer(Modifier.width(Spacing.xs))
 
         Text(
-            text = formatStudyMinutesText(safeMinutes),
+            text = if (targetMinutes > 0) {
+                "${formatStudyMinutesText(safeMinutes)} / ${durationText(targetMinutes)}"
+            } else {
+                formatStudyMinutesText(safeMinutes)
+            },
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Bold,
             color = if (isMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
@@ -1588,6 +1647,134 @@ fun HorlogeFractionIcon(
     }
 }
 
+private val QUICK_TARGET_HOURS_MINUTES = listOf(60, 120, 180, 240, 360)
+
+/**
+ * Reusable selector for choosing between an Open Whole-Day Challenge (`targetMinutes == 0`)
+ * and a Target-Hours Race (`targetMinutes > 0`) with quick hour chips (1h, 2h, 3h, 4h, 6h)
+ * plus custom hours & minutes inputs.
+ */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+fun ChallengeInviteModeSelector(
+    isTargetMode: Boolean,
+    onModeChange: (Boolean) -> Unit,
+    hoursInput: String,
+    onHoursChange: (String) -> Unit,
+    minutesInput: String,
+    onMinutesChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val totalMinutes = (hoursInput.toIntOrNull() ?: 0) * 60 + (minutesInput.toIntOrNull() ?: 0)
+    val durationValid = totalMinutes in 1..ChallengeTime.MAX_MINUTES
+
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("challenge_invite_mode_selector")
+    ) {
+        Column(
+            modifier = Modifier.padding(Spacing.md),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            Text(
+                text = stringResource(R.string.challenge_invite_mode_label),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = !isTargetMode,
+                    onClick = { onModeChange(false) },
+                    shape = SegmentedButtonDefaults.itemShape(0, 2),
+                    modifier = Modifier.testTag("invite_mode_open_button")
+                ) {
+                    Text(
+                        text = stringResource(R.string.challenge_invite_mode_open),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                SegmentedButton(
+                    selected = isTargetMode,
+                    onClick = { onModeChange(true) },
+                    shape = SegmentedButtonDefaults.itemShape(1, 2),
+                    modifier = Modifier.testTag("invite_mode_target_button")
+                ) {
+                    Text(
+                        text = stringResource(R.string.challenge_invite_mode_target),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            AnimatedVisibility(
+                visible = isTargetMode,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        QUICK_TARGET_HOURS_MINUTES.forEach { presetMins ->
+                            FilterChip(
+                                selected = totalMinutes == presetMins,
+                                onClick = {
+                                    onHoursChange((presetMins / 60).toString())
+                                    onMinutesChange((presetMins % 60).toString())
+                                },
+                                label = { Text(durationText(presetMins)) },
+                                modifier = Modifier.testTag("quick_target_chip_$presetMins")
+                            )
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        OutlinedTextField(
+                            value = hoursInput,
+                            onValueChange = { v -> onHoursChange(v.filter(Char::isDigit).take(2)) },
+                            label = { Text(stringResource(R.string.challenge_hours)) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("target_hours_input")
+                        )
+                        OutlinedTextField(
+                            value = minutesInput,
+                            onValueChange = { v -> onMinutesChange(v.filter(Char::isDigit).take(2)) },
+                            label = { Text(stringResource(R.string.challenge_minutes)) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("target_minutes_input")
+                        )
+                    }
+                    if (!durationValid) {
+                        Text(
+                            text = stringResource(R.string.challenge_duration_invalid),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+
+            Text(
+                text = if (isTargetMode && durationValid) {
+                    stringResource(R.string.challenge_invite_target_desc, durationText(totalMinutes))
+                } else {
+                    stringResource(R.string.challenge_invite_open_desc)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
 /**
  * Multi-friend selection bottom sheet to start a new Study Group or invite additional friends.
  * Fully safe-area and 3-button navigation bar compliant.
@@ -1598,13 +1785,18 @@ fun StudyGroupFriendsSheet(
     friends: List<StudyFriendOption>,
     alreadyInGroupUids: Set<String> = emptySet(),
     isAddingToExisting: Boolean = false,
-    onConfirmSelection: (List<StudyFriendOption>) -> Unit,
+    onConfirmSelection: (List<StudyFriendOption>, Int) -> Unit,
     onDismiss: () -> Unit
 ) {
     val selectableFriends = remember(friends, alreadyInGroupUids) {
         friends.filter { it.uid !in alreadyInGroupUids }
     }
     val selectedUids = remember { mutableStateListOf<String>() }
+    var isTargetMode by rememberSaveable { mutableStateOf(false) }
+    var hoursInput by rememberSaveable { mutableStateOf("2") }
+    var minutesInput by rememberSaveable { mutableStateOf("0") }
+    val targetTotalMinutes = (hoursInput.toIntOrNull() ?: 0) * 60 + (minutesInput.toIntOrNull() ?: 0)
+    val durationValid = !isTargetMode || targetTotalMinutes in 1..ChallengeTime.MAX_MINUTES
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1630,6 +1822,17 @@ fun StudyGroupFriendsSheet(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            if (!isAddingToExisting) {
+                ChallengeInviteModeSelector(
+                    isTargetMode = isTargetMode,
+                    onModeChange = { isTargetMode = it },
+                    hoursInput = hoursInput,
+                    onHoursChange = { hoursInput = it },
+                    minutesInput = minutesInput,
+                    onMinutesChange = { minutesInput = it }
+                )
+            }
 
             if (selectableFriends.isEmpty()) {
                 Surface(
@@ -1690,11 +1893,11 @@ fun StudyGroupFriendsSheet(
             Button(
                 onClick = {
                     val chosen = selectableFriends.filter { it.uid in selectedUids }
-                    if (chosen.isNotEmpty()) {
-                        onConfirmSelection(chosen)
+                    if (chosen.isNotEmpty() && durationValid) {
+                        onConfirmSelection(chosen, if (!isAddingToExisting && isTargetMode) targetTotalMinutes else 0)
                     }
                 },
-                enabled = selectedUids.isNotEmpty(),
+                enabled = selectedUids.isNotEmpty() && durationValid,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = Spacing.buttonHeight)
@@ -1734,10 +1937,13 @@ fun FriendDuelVictoryCelebration(
         val friendName = win.friendName(myUid).ifBlank { stringResource(R.string.community_unnamed) }
         val myMins = win.myMinutes(myUid)
         val friendMins = win.friendMinutes(myUid)
-        val bodyText = if (win.didFriendSurrender(myUid)) {
-            stringResource(R.string.friend_duel_won_by_surrender_body, friendName, myMins, friendMins)
-        } else {
-            stringResource(R.string.friend_duel_won_by_minutes_body, friendName, myMins, friendMins)
+        val bodyText = when {
+            win.didFriendSurrender(myUid) ->
+                stringResource(R.string.friend_duel_won_by_surrender_body, friendName, myMins, friendMins)
+            win.isTargetHoursChallenge ->
+                stringResource(R.string.friend_duel_won_by_target_body, durationText(win.targetMinutes), friendName, myMins, friendMins)
+            else ->
+                stringResource(R.string.friend_duel_won_by_minutes_body, friendName, myMins, friendMins)
         }
         AlertDialog(
             onDismissRequest = { onAcknowledge(win.id) },
@@ -1789,6 +1995,7 @@ fun FriendDuelHistoryRow(
     val won = duel.didIWin(myUid)
     val surrendered = duel.didISurrender(myUid)
     val tied = duel.winnerUid == "tie"
+    val noWinner = duel.winnerUid == "none"
 
     val dayText = remember(duel.createdAt, duel.dayKey) {
         if (duel.createdAt > 0L) {
@@ -1808,6 +2015,11 @@ fun FriendDuelHistoryRow(
             MaterialTheme.colorScheme.errorContainer,
             MaterialTheme.colorScheme.onErrorContainer
         )
+        noWinner -> Triple(
+            stringResource(R.string.friend_duel_badge_no_winner),
+            MaterialTheme.colorScheme.secondaryContainer,
+            MaterialTheme.colorScheme.onSecondaryContainer
+        )
         tied -> Triple(
             stringResource(R.string.friend_duel_badge_tie),
             MaterialTheme.colorScheme.secondaryContainer,
@@ -1818,6 +2030,12 @@ fun FriendDuelHistoryRow(
             MaterialTheme.colorScheme.errorContainer,
             MaterialTheme.colorScheme.onErrorContainer
         )
+    }
+
+    val modePrefix = if (duel.isTargetHoursChallenge) {
+        stringResource(R.string.study_group_mode_badge_target, durationText(duel.targetMinutes))
+    } else {
+        stringResource(R.string.study_group_mode_badge_open)
     }
 
     ListItem(
@@ -1838,7 +2056,7 @@ fun FriendDuelHistoryRow(
         },
         supportingContent = {
             Text(
-                text = "$dayText · ${stringResource(R.string.friend_duel_history_score, myMins, friendName, friendMins)}",
+                text = "$dayText · $modePrefix · ${stringResource(R.string.friend_duel_history_score, myMins, friendName, friendMins)}",
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

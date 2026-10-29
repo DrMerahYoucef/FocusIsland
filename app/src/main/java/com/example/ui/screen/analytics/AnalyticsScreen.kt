@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -19,14 +20,18 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AvTimer
+import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.LocalFireDepartment
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Stars
 import androidx.compose.material.icons.rounded.TaskAlt
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -39,11 +44,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.R
@@ -62,19 +69,29 @@ import java.time.format.FormatStyle
 import java.util.Locale
 
 @Composable
-fun AnalyticsScreen(viewModel: AnalyticsViewModel, modifier: Modifier = Modifier) {
+fun AnalyticsScreen(
+    viewModel: AnalyticsViewModel,
+    modifier: Modifier = Modifier,
+    onOpenIsland: () -> Unit = {}
+) {
     val state by viewModel.state.collectAsState()
-    AnalyticsContent(state, modifier)
+    AnalyticsContent(state, modifier, onOpenIsland)
 }
 
 @Composable
-fun AnalyticsContent(state: AnalyticsState, modifier: Modifier = Modifier) {
+fun AnalyticsContent(
+    state: AnalyticsState,
+    modifier: Modifier = Modifier,
+    onOpenIsland: () -> Unit = {}
+) {
     when {
         state.isLoading -> LoadingState(modifier)
         state.isEmpty -> EmptyState(
             icon = Icons.Rounded.Insights,
             title = stringResource(R.string.stats_empty_title),
             body = stringResource(R.string.stats_empty_body),
+            actionLabel = stringResource(R.string.island_explore_cta),
+            onAction = onOpenIsland,
             modifier = modifier
         )
         else -> {
@@ -84,11 +101,20 @@ fun AnalyticsContent(state: AnalyticsState, modifier: Modifier = Modifier) {
                 contentPadding = PaddingValues(Spacing.screenCompact),
                 verticalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
+                item {
+                    IslandProgressBannerCard(
+                        totals = state.totals,
+                        onClick = onOpenIsland
+                    )
+                }
                 item { SectionHeader(stringResource(R.string.stats_overview)) }
                 item { OverviewGrid(state.totals, state.averageSessionMinutes) }
                 item {
                     Column {
-                        SectionHeader(stringResource(R.string.stats_this_week))
+                        SectionHeader(
+                            title = stringResource(R.string.stats_this_week),
+                            action = { FocusDurationBadge(minutes = state.weekMinutes, testTag = "week_focus_badge") }
+                        )
                         Text(
                             stringResource(R.string.stats_points_rule),
                             style = MaterialTheme.typography.bodySmall,
@@ -97,9 +123,195 @@ fun AnalyticsContent(state: AnalyticsState, modifier: Modifier = Modifier) {
                     }
                 }
                 item { WeekChart(state.week) }
-                item { SectionHeader(stringResource(R.string.stats_last_30_days)) }
+                item {
+                    SectionHeader(
+                        title = stringResource(R.string.stats_last_30_days),
+                        action = { FocusDurationBadge(minutes = state.monthMinutes, testTag = "month_focus_badge") }
+                    )
+                }
                 item { HistoryStrip(state.history, selected) { selected = it } }
                 state.history.getOrNull(selected)?.let { day -> item { DayDetail(day) } }
+                if (state.year2022Minutes > 0 || state.sinceJune2026Minutes > 0) {
+                    item { SectionHeader(stringResource(R.string.stats_yearly_history)) }
+                    item {
+                        HistoricalPeriodsCard(
+                            year2022Minutes = state.year2022Minutes,
+                            sinceJune2026Minutes = state.sinceJune2026Minutes
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun IslandProgressBannerCard(
+    totals: FocusTotals,
+    onClick: () -> Unit
+) {
+    val sessions = totals.completedSessions
+    val points = totals.points
+    val units = com.example.ui.components.IslandProgression.effectiveUnits(sessions, points)
+    val era = com.example.ui.components.IslandProgression.eraFor(sessions, points)
+    val trees = com.example.ui.components.IslandProgression.treeCountForUnits(units)
+    val unlocked = com.example.ui.components.IslandProgression.unlockedCount(units)
+    val dark = com.example.ui.theme.LocalIsDarkTheme.current
+    val islandColors = com.example.ui.theme.LocalFocusStyle.current.island(dark)
+
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("stats_island_banner_card")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(Spacing.md),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.md)
+        ) {
+            androidx.compose.foundation.Canvas(
+                modifier = Modifier
+                    .width(96.dp)
+                    .height(76.dp)
+                    .clip(MaterialTheme.shapes.medium)
+            ) {
+                with(com.example.ui.components.IslandRenderer) {
+                    drawSkyAndSea(
+                        size.height * 0.46f,
+                         androidx.compose.ui.geometry.Offset(size.width * 0.80f, size.height * 0.20f),
+                        size.width * 0.06f,
+                        islandColors
+                    )
+                    drawIsland(
+                        center = androidx.compose.ui.geometry.Offset(size.width * 0.48f, size.height * 0.82f),
+                        radius = radius(size.width * 0.36f, sessions, points),
+                        sessions = sessions,
+                        colors = islandColors,
+                        points = points
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(Spacing.xxs)
+            ) {
+                Text(
+                    text = stringResource(era.titleRes),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "${stringResource(R.string.island_trees_planted, trees, com.example.ui.components.IslandProgression.MAX_TREES)} · ${stringResource(R.string.island_landmarks_unlocked, unlocked, com.example.ui.components.IslandProgression.milestones.size)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = stringResource(R.string.island_explore_cta),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FocusDurationBadge(minutes: Int, testTag: String, modifier: Modifier = Modifier) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        modifier = modifier.testTag(testTag)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xxs),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Schedule,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp)
+            )
+            Text(
+                text = formatMinutes(minutes),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun HistoricalPeriodsCard(year2022Minutes: Int, sinceJune2026Minutes: Int) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(Spacing.md),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            if (year2022Minutes > 0) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.CalendarMonth,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(Spacing.iconSm)
+                        )
+                        Text(
+                            text = stringResource(R.string.stats_period_2022),
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
+                    FocusDurationBadge(minutes = year2022Minutes, testTag = "year_2022_focus_badge")
+                }
+            }
+            if (year2022Minutes > 0 && sinceJune2026Minutes > 0) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+            if (sinceJune2026Minutes > 0) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.CalendarMonth,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(Spacing.iconSm)
+                        )
+                        Text(
+                            text = stringResource(R.string.stats_period_2026),
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
+                    FocusDurationBadge(minutes = sinceJune2026Minutes, testTag = "since_june_2026_focus_badge")
+                }
+            }
+            if (year2022Minutes > 0) {
+                Text(
+                    text = stringResource(R.string.stats_period_gap_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

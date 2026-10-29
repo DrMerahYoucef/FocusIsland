@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
@@ -20,6 +21,7 @@ import com.example.data.db.dao.SessionDao
 import com.example.data.stats.StatsCalculator
 import com.example.service.Phase
 import com.example.service.PomodoroTimerService
+import com.example.ui.designsystem.playSuccessSound
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
@@ -174,8 +176,29 @@ data class FriendChallenge(
     val members: List<StudyGroupMember> = emptyList(),
     val messages: List<StudyGroupMessage> = emptyList(),
     val nudges: List<StudyGroupNudge> = emptyList(),
-    val messagesClearedAt: Long = 0L
+    val messagesClearedAt: Long = 0L,
+    val targetMinutes: Int = 0
 ) {
+    val isTargetHoursChallenge: Boolean get() = targetMinutes > 0
+
+    /**
+     * In a Target-Hours Race (`targetMinutes > 0`), returns the UID of the accepted participant
+     * who reached [targetMinutes] first once at least 2 participants have joined (or after creation).
+     */
+    fun findTargetReachedWinnerUid(): String? {
+        if (targetMinutes <= 0) return null
+        val accepted = acceptedMembers()
+        val qualified = accepted.filter { m ->
+            m.minutes >= targetMinutes && (accepted.size >= 2 || m.updatedAt > createdAt)
+        }
+        return qualified
+            .sortedWith(
+                compareBy<StudyGroupMember> { if (it.updatedAt > 0L) it.updatedAt else Long.MAX_VALUE }
+                    .thenByDescending { it.minutes }
+            )
+            .firstOrNull()
+            ?.uid
+    }
     fun allMembers(): List<StudyGroupMember> {
         if (members.isNotEmpty()) return members
         return buildList {
@@ -325,6 +348,8 @@ class FriendChallengeRepository(
     private var currentObservedUid: String = ""
     @Volatile
     private var myResolvedUsername: String = ""
+    @Volatile
+    private var myFriendIds: Set<String> = emptySet()
 
     private val celebratedIds: MutableSet<String> = java.util.Collections.synchronizedSet(
         (prefs.getStringSet(KEY_CELEBRATED_IDS, emptySet()) ?: emptySet()).toMutableSet()
@@ -341,12 +366,22 @@ class FriendChallengeRepository(
     private val handledInviteIds: MutableSet<String> = java.util.Collections.synchronizedSet(
         (prefs.getStringSet(KEY_HANDLED_INVITE_IDS, emptySet()) ?: emptySet()).toMutableSet()
     )
+    private val handledMessageIds: MutableSet<String> = java.util.Collections.synchronizedSet(
+        (prefs.getStringSet(KEY_HANDLED_MESSAGE_IDS, emptySet()) ?: emptySet()).toMutableSet()
+    )
 
     init {
         createNudgeNotificationChannel()
         createInviteNotificationChannel()
+        createMessageNotificationChannel()
         val cached = loadCachedChallenges()
         if (cached.isNotEmpty()) {
+            val existingMsgIds = cached.flatMap { ch -> ch.messages.map { it.id } }.filter { it.isNotBlank() }
+            if (existingMsgIds.isNotEmpty()) {
+                synchronized(handledMessageIds) {
+                    handledMessageIds.addAll(existingMsgIds)
+                }
+            }
             rebuildState(cached, currentUid(), _state.value.myLiveMinutesToday)
         }
         observeAuthAndChallenges()
@@ -383,6 +418,7 @@ class FriendChallengeRepository(
         remoteUserDuels.clear()
         remoteCollectionDuels.clear()
         liveFriendProfiles.clear()
+        myFriendIds = emptySet()
     }
 
     private fun attachFirestoreListener(uid: String) {
@@ -402,7 +438,10 @@ class FriendChallengeRepository(
                     val uname = snapshot.getString("username").orEmpty()
                     if (uname.isNotBlank()) myResolvedUsername = uname
                     @Suppress("UNCHECKED_CAST")
-                    val friendIds = (snapshot.get("friends") as? List<*>)?.mapNotNull { it as? String }.orEmpty()
+                    val friendIds = (snapshot.get("friends") as? List<*>)?.mapNotNull { it as? String }
+                        ?.filter { it.isNotBlank() && it != uid }
+                        .orEmpty()
+                    myFriendIds = friendIds.toSet()
                     ensureFriendProfileListeners(uid, friendIds)
                     handleIncomingUserDuelSnapshot(snapshot)
                     onRemoteUpdated(uid)
@@ -415,6 +454,7 @@ class FriendChallengeRepository(
                     if (error != null) return@addSnapshotListener
                     snapshot?.documents?.forEach { doc ->
                         doc.checkIncomingUserNudge(uid)
+                        doc.checkIncomingUserChatMessage(uid)
                         handleIncomingUserDuelSnapshot(doc)
                     }
                     onRemoteUpdated(uid)
@@ -427,6 +467,7 @@ class FriendChallengeRepository(
                     if (error != null) return@addSnapshotListener
                     snapshot?.documents?.forEach { doc ->
                         doc.checkIncomingUserNudge(uid)
+                        doc.checkIncomingUserChatMessage(uid)
                         handleIncomingUserDuelSnapshot(doc)
                     }
                     onRemoteUpdated(uid)
@@ -439,6 +480,7 @@ class FriendChallengeRepository(
                     if (error != null) return@addSnapshotListener
                     snapshot?.documents?.forEach { doc ->
                         doc.checkIncomingUserNudge(uid)
+                        doc.checkIncomingUserChatMessage(uid)
                         handleIncomingUserDuelSnapshot(doc)
                     }
                     onRemoteUpdated(uid)
@@ -523,6 +565,7 @@ class FriendChallengeRepository(
                         .addSnapshotListener { snapshot, error ->
                             if (error != null || snapshot == null) return@addSnapshotListener
                             snapshot.checkIncomingUserNudge(myUid)
+                            snapshot.checkIncomingUserChatMessage(myUid)
                             val todayKey = LocalDate.now().toString()
                             val friendDayKey = snapshot.getString("studyTodayDayKey").orEmpty()
                             val todayMins = if (friendDayKey == todayKey) {
@@ -617,7 +660,10 @@ class FriendChallengeRepository(
                         val inviteKey = "${ch.id}_${myMember.effectiveInvitedAt(ch.createdAt)}"
                         if (inviteKey !in handledInviteIds) {
                             markInviteHandled(inviteKey)
-                            triggerIncomingInviteNotification(ch.challengerName.ifBlank { "Friend" })
+                            triggerIncomingInviteNotification(
+                                fromFriendName = ch.challengerName.ifBlank { "Friend" },
+                                targetMinutes = ch.targetMinutes
+                            )
                         }
                     }
                 }
@@ -629,6 +675,27 @@ class FriendChallengeRepository(
                     ) {
                         markNudgeHandled(nudge.id)
                         triggerIncomingNudgeNotification(nudge.fromName.ifBlank { "Friend" })
+                    }
+                }
+
+                // Trigger phone vibration + sound when a friend sends a chat message in our challenge
+                if (now < ch.endAt && ch.id !in abandonedIds &&
+                    (ch.status == FriendChallengeStatus.PENDING || ch.status == FriendChallengeStatus.ACTIVE) &&
+                    (ch.hasActiveParticipant(uid) || uid in ch.participants)
+                ) {
+                    ch.messages.forEach { msg ->
+                        if (msg.senderUid.isNotEmpty() &&
+                            msg.senderUid != uid &&
+                            !msg.isNudgeAlert &&
+                            now - msg.createdAt < MESSAGE_FRESH_WINDOW_MS &&
+                            msg.id !in handledMessageIds
+                        ) {
+                            markMessageHandled(msg.id)
+                            triggerIncomingMessageNotification(
+                                fromFriendName = msg.senderName.ifBlank { "Friend" },
+                                messageText = msg.text
+                            )
+                        }
                     }
                 }
             }
@@ -757,9 +824,14 @@ class FriendChallengeRepository(
         val now = clock()
         val myTimerSt = _state.value.myTimerState
 
-        // Check if any active challenge has already passed midnight
-        all.filter { it.status == FriendChallengeStatus.ACTIVE && now >= it.endAt }.forEach { expired ->
-            appScope.launch { completeExpiredChallenge(expired) }
+        // Check if any active challenge has already passed midnight or reached its target hours
+        all.filter { it.status == FriendChallengeStatus.ACTIVE }.forEach { ongoing ->
+            val targetWinner = ongoing.findTargetReachedWinnerUid()
+            if (targetWinner != null) {
+                appScope.launch { completeTargetReachedChallenge(ongoing, targetWinner) }
+            } else if (now >= ongoing.endAt) {
+                appScope.launch { completeExpiredChallenge(ongoing) }
+            }
         }
 
         // Challenges where I was invited within the last 30 minutes (including declined offers still within 30m)
@@ -826,6 +898,14 @@ class FriendChallengeRepository(
             } else duel
         }
 
+        // If live minutes just reached the target hours for the active challenge, finish it immediately
+        if (active != null) {
+            val liveTargetWinner = active.findTargetReachedWinnerUid()
+            if (liveTargetWinner != null) {
+                appScope.launch { completeTargetReachedChallenge(active, liveTargetWinner) }
+            }
+        }
+
         // Auto-start the Pomodoro timer the first time a challenge becomes ACTIVE for this user
         if (active != null && active.id !in autoStartedIds && !active.isInvited(effectiveUid)) {
             markAutoStarted(active.id)
@@ -846,6 +926,7 @@ class FriendChallengeRepository(
         }
 
         val friendsList = liveFriendProfiles.values
+            .filter { it.uid in myFriendIds }
             .sortedBy { it.username.lowercase() }
 
         _state.value = _state.value.copy(
@@ -906,6 +987,14 @@ class FriendChallengeRepository(
         prefs.edit().putStringSet(KEY_HANDLED_INVITE_IDS, snapshot).apply()
     }
 
+    private fun markMessageHandled(messageId: String) {
+        val snapshot = synchronized(handledMessageIds) {
+            handledMessageIds.add(messageId)
+            handledMessageIds.toSet()
+        }
+        prefs.edit().putStringSet(KEY_HANDLED_MESSAGE_IDS, snapshot).apply()
+    }
+
     fun acknowledgeCelebration(challengeId: String) {
         val snapshot = synchronized(celebratedIds) {
             celebratedIds.add(challengeId)
@@ -942,6 +1031,24 @@ class FriendChallengeRepository(
         }
     }
 
+    private suspend fun verifyConfirmedFriendIds(myUid: String, candidateUids: List<String>): Set<String> {
+        if (myUid.isEmpty() || myUid == "local_user") return candidateUids.toSet()
+        var currentFriends = myFriendIds
+        if (candidateUids.any { it !in currentFriends }) {
+            runCatching {
+                val snap = Firebase.firestore.collection(USERS_COLLECTION).document(myUid).get().await()
+                @Suppress("UNCHECKED_CAST")
+                val fetched = (snap.get("friends") as? List<*>)?.mapNotNull { it as? String }
+                    ?.filter { it.isNotBlank() && it != myUid }
+                    .orEmpty()
+                    .toSet()
+                myFriendIds = fetched
+                currentFriends = fetched
+            }
+        }
+        return currentFriends
+    }
+
     /**
      * Launches a new Study Group challenge with one or multiple friends, or invites those friends
      * to the currently active Study Group if one is already running.
@@ -950,20 +1057,25 @@ class FriendChallengeRepository(
      */
     suspend fun startOrInviteToStudyGroup(
         challengerName: String,
-        friendsToInvite: List<StudyFriendOption>
+        friendsToInvite: List<StudyFriendOption>,
+        targetMinutes: Int = 0
     ): Result<FriendChallenge> = runCatching {
         require(friendsToInvite.isNotEmpty()) { "At least one friend is required" }
         val myUid = currentUid().ifEmpty { "local_user" }
+        val confirmedFriends = verifyConfirmedFriendIds(myUid, friendsToInvite.map { it.uid })
+        val allowedFriendsToInvite = friendsToInvite.filter { it.uid in confirmedFriends && it.uid != myUid }
+        require(allowedFriendsToInvite.isNotEmpty()) { "You can only send challenge invitations to your friends" }
         val effectiveMyName = challengerName.ifBlank { myResolvedUsername.ifBlank { "You" } }
         val now = clock()
         val myMins = _state.value.myLiveMinutesToday
         val myTimerSt = _state.value.myTimerState
+        val normalizedTargetMinutes = targetMinutes.coerceAtLeast(0)
 
         val existingActive = _state.value.activeDuel
         if (existingActive != null && existingActive.id !in abandonedIds && now < existingActive.endAt) {
             // Invite newly selected or expired/declined friends into the existing active Study Group
             val currentMembers = existingActive.allMembers().toMutableList()
-            friendsToInvite.forEach { friend ->
+            allowedFriendsToInvite.forEach { friend ->
                 val idx = currentMembers.indexOfFirst { it.uid == friend.uid }
                 val existingMember = if (idx >= 0) currentMembers[idx] else null
                 val liveFriend = liveFriendProfiles[friend.uid]
@@ -1002,7 +1114,7 @@ class FriendChallengeRepository(
         val midnight = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
         // Unique ID using current timestamp so abandoning a challenge never blocks creating a new one!
         val id = "${dayKey}_${myUid}_${now}"
-        val primaryOpponent = friendsToInvite.first()
+        val primaryOpponent = allowedFriendsToInvite.first()
 
         val initialMembers = buildList {
             add(
@@ -1016,7 +1128,7 @@ class FriendChallengeRepository(
                     updatedAt = now
                 )
             )
-            friendsToInvite.distinctBy { it.uid }.filter { it.uid != myUid }.forEach { f ->
+            allowedFriendsToInvite.distinctBy { it.uid }.filter { it.uid != myUid }.forEach { f ->
                 val liveFriend = liveFriendProfiles[f.uid]
                 add(
                     StudyGroupMember(
@@ -1048,7 +1160,8 @@ class FriendChallengeRepository(
             status = FriendChallengeStatus.ACTIVE,
             members = initialMembers,
             messages = emptyList(),
-            nudges = emptyList()
+            nudges = emptyList(),
+            targetMinutes = normalizedTargetMinutes
         )
 
         upsertLocalCache(challenge)
@@ -1064,6 +1177,9 @@ class FriendChallengeRepository(
         friendUid: String,
         friendName: String
     ): Result<FriendChallenge> = runCatching {
+        val myUid = currentUid().ifEmpty { "local_user" }
+        val confirmedFriends = verifyConfirmedFriendIds(myUid, listOf(friendUid))
+        require(friendUid in confirmedFriends) { "You can only send challenge invitations to your friends" }
         val now = clock()
         val liveFriend = liveFriendProfiles[friendUid]
         val currentMembers = challenge.allMembers().toMutableList()
@@ -1096,7 +1212,8 @@ class FriendChallengeRepository(
         challengerName: String,
         opponentUid: String,
         opponentName: String,
-        opponentInitialMinutes: Int = 0
+        opponentInitialMinutes: Int = 0,
+        targetMinutes: Int = 0
     ): Result<FriendChallenge> {
         val liveFriend = liveFriendProfiles[opponentUid]
         return startOrInviteToStudyGroup(
@@ -1108,7 +1225,8 @@ class FriendChallengeRepository(
                     todayMinutes = maxOf(opponentInitialMinutes, liveFriend?.todayMinutes ?: 0),
                     timerState = liveFriend?.timerState ?: StudyMemberTimerState.IDLE
                 )
-            )
+            ),
+            targetMinutes = targetMinutes
         )
     }
 
@@ -1327,6 +1445,7 @@ class FriendChallengeRepository(
             createdAt = now,
             isNudgeAlert = false
         )
+        markMessageHandled(msg.id)
         val mergedMessages = (challenge.messages + msg)
             .distinctBy { it.id }
             .sortedBy { it.createdAt }
@@ -1335,6 +1454,27 @@ class FriendChallengeRepository(
         val updated = challenge.copy(messages = mergedMessages)
         upsertLocalCache(updated)
         syncChallengeToFirestoreAsync(updated)
+
+        if (myUid.isNotEmpty() && myUid != "local_user") {
+            appScope.launch {
+                runCatching {
+                    Firebase.firestore.collection(USERS_COLLECTION)
+                        .document(myUid)
+                        .set(
+                            mapOf(
+                                "lastChatMessageId" to msg.id,
+                                "lastChatChallengeId" to challenge.id,
+                                "lastChatSenderUid" to myUid,
+                                "lastChatSenderName" to myName,
+                                "lastChatText" to msg.text,
+                                "lastChatAt" to now
+                            ),
+                            SetOptions.merge()
+                        )
+                        .await()
+                }
+            }
+        }
         updated
     }
 
@@ -1421,13 +1561,44 @@ class FriendChallengeRepository(
         }
     }
 
+    private fun DocumentSnapshot.checkIncomingUserChatMessage(myUid: String) {
+        if (myUid.isEmpty()) return
+        val msgId = getString("lastChatMessageId")?.takeIf { it.isNotBlank() } ?: return
+        if (msgId in handledMessageIds) return
+        val senderUid = getString("lastChatSenderUid").orEmpty()
+        if (senderUid.isEmpty() || senderUid == myUid) return
+        val chatAt = getLong("lastChatAt") ?: 0L
+        val now = clock()
+        if (now - chatAt >= MESSAGE_FRESH_WINDOW_MS) return
+
+        val challengeId = getString("lastChatChallengeId").orEmpty()
+        if (challengeId.isNotEmpty() && challengeId in abandonedIds) return
+        val rawStatus = getString("duelStatus")?.lowercase().orEmpty()
+        if (rawStatus == "cancelled" || rawStatus == "deleted" || rawStatus == "surrendered" || rawStatus == "completed") return
+
+        @Suppress("UNCHECKED_CAST")
+        val participantUids = (get("studyGroupParticipantUids") as? List<*>)?.mapNotNull { it as? String }.orEmpty()
+        val isMyChallenge = getString("duelOpponentUid") == myUid ||
+            getString("duelChallengerUid") == myUid ||
+            myUid in participantUids ||
+            _state.value.activeDuel?.id == challengeId
+        if (!isMyChallenge) return
+
+        val senderName = getString("lastChatSenderName").orEmpty()
+            .ifBlank { getString("username").orEmpty().ifBlank { "Friend" } }
+        val text = getString("lastChatText").orEmpty()
+        if (text.isBlank()) return
+
+        markMessageHandled(msgId)
+        triggerIncomingMessageNotification(senderName, text)
+    }
+
     /**
-     * Plays notification sound + vibrates the device + displays a high-priority notification
-     * when a Study Group friend nudges the user to start/resume focusing.
+     * Vibrates the phone and plays the notification chime (with a bundled audio fallback
+     * so sound always plays reliably even on emulators without a system ringtone).
      */
-    internal fun triggerIncomingNudgeNotification(fromFriendName: String) {
+    private fun vibrateAndPlayAlertSound(waveformTimings: LongArray) {
         runCatching {
-            // 1. Vibrate device with an energetic double-pulse pattern
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 context.getSystemService(VibratorManager::class.java)?.defaultVibrator
             } else {
@@ -1436,18 +1607,115 @@ class FriendChallengeRepository(
             }
             if (vibrator?.hasVibrator() == true) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 280, 120, 380), -1))
+                    val attrs = AudioAttributes.Builder()
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_INSTANT)
+                        .build()
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(VibrationEffect.createWaveform(waveformTimings, -1), attrs)
                 } else {
                     @Suppress("DEPRECATION")
-                    vibrator.vibrate(longArrayOf(0, 280, 120, 380), -1)
+                    vibrator.vibrate(waveformTimings, -1)
                 }
             }
+        }
 
-            // 2. Play notification sound immediately
+        runCatching {
             val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            RingtoneManager.getRingtone(context, soundUri)?.play()
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+            val ringtone = if (soundUri != null) RingtoneManager.getRingtone(context, soundUri) else null
+            if (ringtone != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    ringtone.audioAttributes = AudioAttributes.Builder()
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                        .build()
+                }
+                ringtone.play()
+            } else {
+                playSuccessSound(context, R.raw.success_lagoon)
+            }
+        }.onFailure {
+            runCatching { playSuccessSound(context, R.raw.success_lagoon) }
+        }
+    }
 
-            // 3. Post high-priority Android Notification with tap action to open Focus tab & start timer
+    /**
+     * Plays notification sound + vibrates the device + displays a high-priority notification
+     * when a Study Group friend sends a chat message or emoji in the challenge.
+     */
+    internal fun triggerIncomingMessageNotification(fromFriendName: String, messageText: String) {
+        runCatching {
+            val pattern = longArrayOf(0, 180, 80, 220)
+            vibrateAndPlayAlertSound(pattern)
+
+            createMessageNotificationChannel()
+            val openIntent = Intent(context, MainActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                data = Uri.parse("focusisland://app/challenges")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val openPending = PendingIntent.getActivity(
+                context,
+                MESSAGE_NOTIFICATION_ID,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val title = context.getString(R.string.study_group_message_notif_title, fromFriendName)
+
+            val notification = NotificationCompat.Builder(context, MESSAGE_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_widget_flame)
+                .setContentTitle(title)
+                .setContentText(messageText)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(messageText))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setSound(soundUri)
+                .setVibrate(pattern)
+                .setAutoCancel(true)
+                .setContentIntent(openPending)
+                .build()
+
+            context.getSystemService(NotificationManager::class.java)
+                ?.notify(MESSAGE_NOTIFICATION_ID, notification)
+        }.onFailure {
+            Log.w(TAG, "Failed to trigger incoming message alert: ${it.message}")
+        }
+    }
+
+    private fun createMessageNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching {
+                val nm = context.getSystemService(NotificationManager::class.java) ?: return
+                val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                val channel = NotificationChannel(
+                    MESSAGE_CHANNEL_ID,
+                    context.getString(R.string.study_group_message_notif_channel),
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = context.getString(R.string.study_group_message_notif_channel_desc)
+                    enableVibration(true)
+                    vibrationPattern = longArrayOf(0, 180, 80, 220)
+                    setSound(soundUri, null)
+                }
+                nm.createNotificationChannel(channel)
+            }
+        }
+    }
+
+    /**
+     * Plays notification sound + vibrates the device + displays a high-priority notification
+     * when a Study Group friend nudges the user to start/resume focusing.
+     */
+    internal fun triggerIncomingNudgeNotification(fromFriendName: String) {
+        runCatching {
+            // 1. Vibrate device and play notification sound immediately
+            vibrateAndPlayAlertSound(longArrayOf(0, 280, 120, 380))
+            val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+
+            // 2. Post high-priority Android Notification with tap action to open Focus tab & start timer
             createNudgeNotificationChannel()
             val openIntent = Intent(context, MainActivity::class.java).apply {
                 action = Intent.ACTION_VIEW
@@ -1524,29 +1792,25 @@ class FriendChallengeRepository(
         }
     }
 
+    private fun formatTargetDurationForNotif(minutes: Int): String {
+        val safe = minutes.coerceAtLeast(1)
+        val h = safe / 60
+        val m = safe % 60
+        return when {
+            h > 0 && m > 0 -> context.getString(R.string.duration_h_m, h, m)
+            h > 0 -> context.getString(R.string.duration_h, h)
+            else -> context.getString(R.string.duration_m, m)
+        }
+    }
+
     /**
      * Plays notification sound + vibrates the device + displays a high-priority notification
      * when a friend invites the user to a Study Group or Challenge.
      */
-    internal fun triggerIncomingInviteNotification(fromFriendName: String) {
+    internal fun triggerIncomingInviteNotification(fromFriendName: String, targetMinutes: Int = 0) {
         runCatching {
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                context.getSystemService(VibratorManager::class.java)?.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-            }
-            if (vibrator?.hasVibrator() == true) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 220, 100, 260), -1))
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(longArrayOf(0, 220, 100, 260), -1)
-                }
-            }
-
+            vibrateAndPlayAlertSound(longArrayOf(0, 220, 100, 260))
             val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            RingtoneManager.getRingtone(context, soundUri)?.play()
 
             createInviteNotificationChannel()
             val openIntent = Intent(context, MainActivity::class.java).apply {
@@ -1562,7 +1826,11 @@ class FriendChallengeRepository(
             )
 
             val title = context.getString(R.string.study_group_invite_notif_title, fromFriendName)
-            val body = context.getString(R.string.study_group_invite_notif_body)
+            val body = if (targetMinutes > 0) {
+                context.getString(R.string.study_group_invite_notif_body_target, formatTargetDurationForNotif(targetMinutes))
+            } else {
+                context.getString(R.string.study_group_invite_notif_body_open)
+            }
 
             val notification = NotificationCompat.Builder(context, INVITE_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_widget_flame)
@@ -1621,28 +1889,60 @@ class FriendChallengeRepository(
                 )
             } else m
         }
-        val updated = if (challenge.isChallenger(myUid)) {
+        val baseUpdated = if (challenge.isChallenger(myUid)) {
             challenge.copy(challengerMinutes = minutes, members = updatedMembers)
         } else if (challenge.opponentUid == myUid) {
             challenge.copy(opponentMinutes = minutes, members = updatedMembers)
         } else {
             challenge.copy(members = updatedMembers)
         }
+        val targetWinner = baseUpdated.findTargetReachedWinnerUid()
+        val updated = if (targetWinner != null) {
+            baseUpdated.copy(
+                status = FriendChallengeStatus.COMPLETED,
+                winnerUid = targetWinner,
+                finishedAt = now,
+                messages = emptyList(),
+                nudges = emptyList(),
+                messagesClearedAt = maxOf(baseUpdated.messagesClearedAt, now)
+            )
+        } else {
+            baseUpdated
+        }
+        upsertLocalCache(updated)
+        syncChallengeToFirestoreAsync(updated)
+    }
+
+    private suspend fun completeTargetReachedChallenge(challenge: FriendChallenge, winnerUid: String) {
+        if (challenge.status == FriendChallengeStatus.COMPLETED) return
+        val now = clock()
+        val updated = challenge.copy(
+            status = FriendChallengeStatus.COMPLETED,
+            winnerUid = winnerUid,
+            finishedAt = now,
+            messages = emptyList(),
+            nudges = emptyList(),
+            messagesClearedAt = maxOf(challenge.messagesClearedAt, now)
+        )
         upsertLocalCache(updated)
         syncChallengeToFirestoreAsync(updated)
     }
 
     private suspend fun completeExpiredChallenge(challenge: FriendChallenge) {
-        val activeMembers = challenge.activeAndInvitedMembers()
-        val winner = if (activeMembers.size >= 2) {
-            val top = activeMembers.maxByOrNull { it.minutes }
-            val tiedCount = activeMembers.count { it.minutes == (top?.minutes ?: 0) }
-            if (top != null && tiedCount == 1) top.uid else "tie"
+        val winner = if (challenge.isTargetHoursChallenge) {
+            challenge.findTargetReachedWinnerUid() ?: "none"
         } else {
-            when {
-                challenge.challengerMinutes > challenge.opponentMinutes -> challenge.challengerUid
-                challenge.opponentMinutes > challenge.challengerMinutes -> challenge.opponentUid
-                else -> "tie"
+            val activeMembers = challenge.activeAndInvitedMembers()
+            if (activeMembers.size >= 2) {
+                val top = activeMembers.maxByOrNull { it.minutes }
+                val tiedCount = activeMembers.count { it.minutes == (top?.minutes ?: 0) }
+                if (top != null && tiedCount == 1) top.uid else "tie"
+            } else {
+                when {
+                    challenge.challengerMinutes > challenge.opponentMinutes -> challenge.challengerUid
+                    challenge.opponentMinutes > challenge.challengerMinutes -> challenge.opponentUid
+                    else -> "tie"
+                }
             }
         }
         val finishedAt = challenge.endAt
@@ -1691,11 +1991,15 @@ class FriendChallengeRepository(
         private const val KEY_ABANDONED_IDS = "abandoned_ids"
         private const val KEY_HANDLED_NUDGE_IDS = "handled_nudge_ids"
         private const val KEY_HANDLED_INVITE_IDS = "handled_invite_ids"
+        private const val KEY_HANDLED_MESSAGE_IDS = "handled_message_ids"
         private const val NUDGE_CHANNEL_ID = "study_group_nudge_channel"
         private const val NUDGE_NOTIFICATION_ID = 4409
         private const val INVITE_CHANNEL_ID = "study_group_invite_channel"
         private const val INVITE_NOTIFICATION_ID = 4412
+        private const val MESSAGE_CHANNEL_ID = "study_group_message_channel"
+        private const val MESSAGE_NOTIFICATION_ID = 4415
         private const val NUDGE_FRESH_WINDOW_MS = 5 * 60_000L
+        private const val MESSAGE_FRESH_WINDOW_MS = 5 * 60_000L
         internal const val NUDGE_COOLDOWN_MS = 60_000L
         internal const val INVITE_EXPIRY_MS = 30 * 60_000L
         private const val MAX_CACHE = 100
@@ -1773,7 +2077,8 @@ class FriendChallengeRepository(
                 members = mergedMembersByUid.values.toList(),
                 messages = mergedMessages,
                 nudges = mergedNudges,
-                messagesClearedAt = maxClearedAt
+                messagesClearedAt = maxClearedAt,
+                targetMinutes = maxOf(a.targetMinutes, b.targetMinutes)
             )
         }
 
@@ -1900,7 +2205,8 @@ class FriendChallengeRepository(
                 members = parseMembersJson(getString("studyMembersJson")),
                 messages = parseMessagesJson(getString("studyMessagesJson")),
                 nudges = parseNudgesJson(getString("studyNudgesJson")),
-                messagesClearedAt = getLong("studyMessagesClearedAt") ?: 0L
+                messagesClearedAt = getLong("studyMessagesClearedAt") ?: 0L,
+                targetMinutes = (getLong("duelTargetMinutes") ?: 0L).toInt()
             )
         }.getOrNull()
 
@@ -1925,7 +2231,8 @@ class FriendChallengeRepository(
             "studyMembersJson" to membersToJsonArray(allMembers()).toString(),
             "studyMessagesJson" to messagesToJsonArray(messages).toString(),
             "studyNudgesJson" to nudgesToJsonArray(nudges).toString(),
-            "studyMessagesClearedAt" to messagesClearedAt
+            "studyMessagesClearedAt" to messagesClearedAt,
+            "duelTargetMinutes" to targetMinutes
         )
 
         private fun DocumentSnapshot.toFriendChallenge(): FriendChallenge? = runCatching {
@@ -1950,7 +2257,8 @@ class FriendChallengeRepository(
                 members = parseMembersJson(getString("studyMembersJson")),
                 messages = parseMessagesJson(getString("studyMessagesJson")),
                 nudges = parseNudgesJson(getString("studyNudgesJson")),
-                messagesClearedAt = getLong("studyMessagesClearedAt") ?: 0L
+                messagesClearedAt = getLong("studyMessagesClearedAt") ?: 0L,
+                targetMinutes = (getLong("targetMinutes") ?: 0L).toInt()
             )
         }.getOrNull()
 
@@ -1973,7 +2281,8 @@ class FriendChallengeRepository(
             "studyMembersJson" to membersToJsonArray(allMembers()).toString(),
             "studyMessagesJson" to messagesToJsonArray(messages).toString(),
             "studyNudgesJson" to nudgesToJsonArray(nudges).toString(),
-            "studyMessagesClearedAt" to messagesClearedAt
+            "studyMessagesClearedAt" to messagesClearedAt,
+            "targetMinutes" to targetMinutes
         )
 
         internal fun FriendChallenge.toJson(): JSONObject = JSONObject()
@@ -1992,6 +2301,7 @@ class FriendChallengeRepository(
             .put("studyMessagesJson", messagesToJsonArray(messages).toString())
             .put("studyNudgesJson", nudgesToJsonArray(nudges).toString())
             .put("studyMessagesClearedAt", messagesClearedAt)
+            .put("targetMinutes", targetMinutes)
             .apply {
                 acceptedAt?.let { put("acceptedAt", it) }
                 finishedAt?.let { put("finishedAt", it) }
@@ -2018,7 +2328,8 @@ class FriendChallengeRepository(
             members = parseMembersJson(o.optString("studyMembersJson")),
             messages = parseMessagesJson(o.optString("studyMessagesJson")),
             nudges = parseNudgesJson(o.optString("studyNudgesJson")),
-            messagesClearedAt = o.optLong("studyMessagesClearedAt", 0L)
+            messagesClearedAt = o.optLong("studyMessagesClearedAt", 0L),
+            targetMinutes = o.optInt("targetMinutes", 0)
         )
     }
 }

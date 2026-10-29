@@ -49,8 +49,9 @@ import com.example.ui.theme.LocalIsDarkTheme
 import com.example.ui.theme.Spacing
 import com.example.ui.theme.ThemeMode
 
-/** Sessions shown on the preview islands, so every style shows all its decorations. */
-private const val SHOWCASE_SESSIONS = 30
+/** Points shown on the preview islands, so every style shows its palace, bridge, waterfall, and birds. */
+private const val SHOWCASE_SESSIONS = 110
+private const val SHOWCASE_POINTS = 35_000
 
 /**
  * Settings → Appearance → Style: one card per style, each drawn in its own colours, fonts and
@@ -112,7 +113,13 @@ private fun StyleCard(style: AppStyle, selected: Boolean, onClick: () -> Unit) {
                         val horizon = size.height * 0.42f
                         drawSkyAndSea(horizon, Offset(size.width * 0.82f, size.height * 0.2f), size.height * 0.09f, island)
                         val r = minOf(size.width * 0.28f, size.height * 0.62f)
-                        drawIsland(Offset(size.width / 2f, size.height * 0.84f), IslandRenderer.radius(r, SHOWCASE_SESSIONS), SHOWCASE_SESSIONS, island)
+                        drawIsland(
+                            Offset(size.width / 2f, size.height * 0.84f),
+                            IslandRenderer.radius(r, SHOWCASE_SESSIONS, SHOWCASE_POINTS),
+                            SHOWCASE_SESSIONS,
+                            island,
+                            SHOWCASE_POINTS
+                        )
                     }
                     Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {

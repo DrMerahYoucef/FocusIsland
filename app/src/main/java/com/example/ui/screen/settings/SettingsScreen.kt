@@ -45,9 +45,11 @@ import androidx.compose.material.icons.rounded.Coffee
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.DoNotDisturbOn
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Event
 import androidx.compose.material.icons.rounded.Facebook
 import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Landscape
@@ -95,6 +97,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -146,6 +149,7 @@ fun SettingsScreen(
     fun notify(text: String) { scope.launch { snackbar.showSnackbar(text) } }
 
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val focusTotals by viewModel.focusTotals.collectAsStateWithLifecycle()
     val revisions: RevisionsViewModel = viewModel()
     val study by revisions.uiState.collectAsStateWithLifecycle()
     val srs = study.srsSettings
@@ -201,7 +205,8 @@ fun SettingsScreen(
                 theme = if (dark) WallpaperTheme.DARK else WallpaperTheme.LIGHT,
                 setHomeScreen = state.wallpaperHomeScreen,
                 setLockScreen = state.wallpaperLockScreen,
-                sessions = sessionCount
+                sessions = focusTotals.completedSessions,
+                points = focusTotals.points
             )
             onDone(error == null, error)
         }
@@ -402,7 +407,11 @@ fun SettingsScreen(
 
             // ------------------------------------------------ wallpaper
             SettingsGroup(stringResource(R.string.settings_wallpaper)) {
-                WallpaperPreview(sessions = sessionCount, dark = wallpaperDark)
+                WallpaperPreview(
+                    sessions = focusTotals.completedSessions,
+                    points = focusTotals.points,
+                    dark = wallpaperDark
+                )
                 SettingsDivider()
                 SwitchRow(Icons.Rounded.Contrast, stringResource(R.string.wallpaper_follow_system), stringResource(R.string.wallpaper_follow_system_body), state.followSystemTheme, viewModel::updateFollowSystemTheme)
                 if (!state.followSystemTheme) {
@@ -623,10 +632,14 @@ private fun openDndAccess(context: Context) {
 private fun openUrl(context: Context, url: String): Boolean =
     runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
 
-/** What "Apply now" sets: your island, with a palm for each completed session. */
+/** What "Apply now" sets: your island, evolving with both completed sessions and total points. */
 @Composable
-private fun WallpaperPreview(sessions: Int, dark: Boolean) {
+private fun WallpaperPreview(sessions: Int, points: Int, dark: Boolean) {
     val island = LocalFocusStyle.current.island(dark)
+    val units = com.example.ui.components.IslandProgression.effectiveUnits(sessions, points)
+    val era = com.example.ui.components.IslandProgression.eraFor(sessions, points)
+    val trees = com.example.ui.components.IslandProgression.treeCountForUnits(units)
+    val unlocked = com.example.ui.components.IslandProgression.unlockedCount(units)
     Row(
         Modifier.fillMaxWidth().padding(horizontal = Spacing.md, vertical = Spacing.sm),
         verticalAlignment = Alignment.CenterVertically
@@ -637,11 +650,19 @@ private fun WallpaperPreview(sessions: Int, dark: Boolean) {
                 .aspectRatio(9f / 19.5f)
                 .clip(MaterialTheme.shapes.medium)
         ) {
-            with(IslandRenderer) { drawLagoonScene(sessions, island) }
+            with(IslandRenderer) { drawLagoonScene(sessions, island, points) }
         }
         Spacer(Modifier.size(Spacing.md))
         Text(
-            stringResource(R.string.wallpaper_preview_body, IslandRenderer.HUT_AT, IslandRenderer.LIGHTHOUSE_AT, sessions),
+            stringResource(
+                R.string.wallpaper_preview_hybrid_body,
+                stringResource(era.titleRes),
+                trees,
+                unlocked,
+                com.example.ui.components.IslandProgression.milestones.size,
+                sessions,
+                points
+            ),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

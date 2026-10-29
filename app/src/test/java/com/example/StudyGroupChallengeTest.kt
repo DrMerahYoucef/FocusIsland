@@ -303,5 +303,73 @@ class StudyGroupChallengeTest {
         assertTrue(groupAfterAccept.hasActiveParticipant("friend1"))
         assertTrue(groupAfterAccept.pendingOrExpiredInviteMembers().isEmpty())
     }
+
+    @Test
+    fun `target hours challenge detects immediate winner when target reached and serializes targetMinutes`() {
+        val t0 = 5_000_000L
+        val creator = StudyGroupMember(
+            uid = "creator",
+            name = "Youcef",
+            minutes = 60,
+            timerState = StudyMemberTimerState.FOCUSING,
+            roleStatus = StudyMemberRoleStatus.ACTIVE,
+            invitedAt = t0,
+            updatedAt = t0 + 1_000L
+        )
+        val friend = StudyGroupMember(
+            uid = "friend1",
+            name = "Amine",
+            minutes = 90,
+            timerState = StudyMemberTimerState.FOCUSING,
+            roleStatus = StudyMemberRoleStatus.ACTIVE,
+            invitedAt = t0,
+            updatedAt = t0 + 2_000L
+        )
+
+        val openChallenge = FriendChallenge(
+            id = "2026-10-28_creator_$t0",
+            challengerUid = "creator",
+            challengerName = "Youcef",
+            challengerMinutes = 60,
+            opponentUid = "friend1",
+            opponentName = "Amine",
+            opponentMinutes = 90,
+            dayKey = "2026-10-28",
+            createdAt = t0,
+            acceptedAt = t0,
+            endAt = t0 + 86_400_000L,
+            targetMinutes = 0,
+            status = FriendChallengeStatus.ACTIVE,
+            members = listOf(creator, friend)
+        )
+        assertFalse(openChallenge.isTargetHoursChallenge)
+        assertEquals(null, openChallenge.findTargetReachedWinnerUid())
+
+        val targetChallenge = openChallenge.copy(targetMinutes = 180) // 3 hours race
+        assertTrue(targetChallenge.isTargetHoursChallenge)
+        assertEquals(null, targetChallenge.findTargetReachedWinnerUid())
+
+        // Friend reaches 180 minutes first at t0 + 5_000L
+        val friendReached = friend.copy(minutes = 180, updatedAt = t0 + 5_000L)
+        val creatorReachedLater = creator.copy(minutes = 185, updatedAt = t0 + 9_000L)
+        val updatedChallenge = targetChallenge.copy(
+            challengerMinutes = 185,
+            opponentMinutes = 180,
+            members = listOf(creatorReachedLater, friendReached)
+        )
+
+        // Earliest participant to reach >= 180 minutes wins
+        assertEquals("friend1", updatedChallenge.findTargetReachedWinnerUid())
+
+        // Verify JSON round-trip and merge preserve targetMinutes
+        val roundTrip = challengeFromJson(updatedChallenge.toJson())
+        assertEquals(180, roundTrip.targetMinutes)
+        assertTrue(roundTrip.isTargetHoursChallenge)
+        assertEquals("friend1", roundTrip.findTargetReachedWinnerUid())
+
+        val merged = mergeChallenges(openChallenge, updatedChallenge)
+        assertEquals(180, merged.targetMinutes)
+    }
 }
+
 

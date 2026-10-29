@@ -106,6 +106,8 @@ import com.example.R
 import com.example.data.challenge.FriendChallenge
 import com.example.data.challenge.FriendChallengeState
 import com.example.ui.designsystem.ConfirmDialog
+import com.example.ui.screen.challenge.ChallengeInviteModeSelector
+import com.example.ui.screen.challenge.ChallengeTime
 import com.example.ui.screen.challenge.FriendDuelIncomingCard
 import com.example.ui.screen.challenge.FriendDuelVictoryCelebration
 import com.example.ui.designsystem.EmptyState
@@ -305,8 +307,8 @@ fun CommunityScreen(
             hasActiveDuel = isAlreadyInGroup,
             canAddToStudyGroup = canAddToExistingGroup,
             isPendingChallenge = isPendingChallenge,
-            onChallenge = {
-                viewModel.challengeFriend(friend.uid, friend.username)
+            onChallenge = { targetMinutes ->
+                viewModel.challengeFriend(friend.uid, friend.username, targetMinutes)
                 selectedFriendId = null
             },
             onRemove = {
@@ -470,7 +472,10 @@ private fun LeaderboardRow(
     ListItem(
         modifier = if (!isMe) {
             Modifier
-                .clickable(onClickLabel = stringResource(R.string.friend_duel_challenge_short), onClick = onClick)
+                .clickable(
+                    onClickLabel = if (relation == Relation.FRIEND) stringResource(R.string.friend_duel_challenge_short) else null,
+                    onClick = onClick
+                )
                 .testTag("leaderboard_row_${entry.uid}")
         } else {
             Modifier.testTag("leaderboard_row_me")
@@ -794,9 +799,9 @@ internal fun ArchipelagoCard(me: UserProfile?, friends: List<UserProfile>, onFri
                             val world = (camera ?: currentFit.second) + (tap - anchor) / (z0 * unit)
                             friends.forEachIndexed { i, friend ->
                                 val spot = spots[i + 1]
-                                val r = IslandRenderer.radius(FRIEND_ISLAND_DP, friend.treeCount)
+                                val r = IslandRenderer.radius(FRIEND_ISLAND_DP, friend.treeCount, friend.points)
                                 val inside = kotlin.math.abs(world.x - spot.x) < r &&
-                                    world.y in (spot.y - IslandRenderer.crownHeight(r, friend.treeCount))..(spot.y + r * .2f)
+                                    world.y in (spot.y - IslandRenderer.crownHeight(r, friend.treeCount, friend.points))..(spot.y + r * .2f)
                                 if (inside) onFriendClick(friend)
                             }
                         }
@@ -808,15 +813,16 @@ internal fun ArchipelagoCard(me: UserProfile?, friends: List<UserProfile>, onFri
                     drawSeaMarks(horizon, cam * (z * unit), ARCHIPELAGO_SPACING * 0.5f * z * unit, colors)
                 }
                 val people = buildList {
-                    add(Triple(spots[0], MY_ISLAND_DP to (me?.treeCount ?: 0), me?.username.orEmpty()))
-                    friends.forEachIndexed { i, f -> add(Triple(spots[i + 1], FRIEND_ISLAND_DP to f.treeCount, f.username)) }
+                    add(Triple(spots[0], Triple(MY_ISLAND_DP, me?.treeCount ?: 0, me?.points ?: 0), me?.username.orEmpty()))
+                    friends.forEachIndexed { i, f -> add(Triple(spots[i + 1], Triple(FRIEND_ISLAND_DP, f.treeCount, f.points), f.username)) }
                 }.sortedBy { it.first.y }
-                people.forEach { (spot, size, name) ->
+                people.forEach { (spot, metrics, name) ->
+                    val (baseDp, sessionsCount, pointsCount) = metrics
                     val center = toScreen(spot, z, cam)
-                    val r = IslandRenderer.radius(size.first * z * unit, size.second)
+                    val r = IslandRenderer.radius(baseDp * z * unit, sessionsCount, pointsCount)
                     // Skip islands far outside the card.
                     if (center.x + r * 1.5f < 0f || center.x - r * 1.5f > this.size.width || center.y - r * 1.6f > this.size.height || center.y + r < 0f) return@forEach
-                    drawIslandWithLabel(center, r, size.second, name, labelSize, colors)
+                    drawIslandWithLabel(center, r, sessionsCount, pointsCount, name, labelSize, colors)
                 }
             }
             Text(
@@ -839,23 +845,31 @@ internal fun ArchipelagoCard(me: UserProfile?, friends: List<UserProfile>, onFri
 
 /** Small island in a friend's sheet. */
 @Composable
-private fun IslandThumb(sessions: Int) {
+private fun IslandThumb(sessions: Int, points: Int = sessions * 25) {
     val colors = LocalFocusStyle.current.islandNight
     Canvas(Modifier.size(Spacing.islandThumb).clip(MaterialTheme.shapes.small)) {
         with(IslandRenderer) {
             drawSkyAndSea(size.height * .45f, Offset(size.width * .8f, size.height * .18f), size.width * .05f, colors)
-            drawIsland(Offset(size.width / 2f, size.height * .86f), radius(size.width * .42f, sessions), sessions, colors)
+            drawIsland(Offset(size.width / 2f, size.height * .86f), radius(size.width * .42f, sessions, points), sessions, colors, points)
         }
     }
 }
 
-private fun DrawScope.drawIslandWithLabel(center: Offset, r: Float, sessions: Int, label: String, labelPx: Float, colors: IslandColors) {
-    with(IslandRenderer) { drawIsland(center, r, sessions, colors) }
+private fun DrawScope.drawIslandWithLabel(
+    center: Offset,
+    r: Float,
+    sessions: Int,
+    points: Int,
+    label: String,
+    labelPx: Float,
+    colors: IslandColors
+) {
+    with(IslandRenderer) { drawIsland(center, r, sessions, colors, points) }
     if (label.isBlank() || labelPx <= 0f) return
     drawContext.canvas.nativeCanvas.drawText(
         label.take(14),
         center.x,
-        center.y - IslandRenderer.crownHeight(r, sessions) - 6f,
+        center.y - IslandRenderer.crownHeight(r, sessions, points) - 6f,
         android.graphics.Paint().apply {
             isAntiAlias = true
             color = colors.label.toArgb()
@@ -941,11 +955,17 @@ private fun FriendSheet(
     hasActiveDuel: Boolean = false,
     canAddToStudyGroup: Boolean = false,
     isPendingChallenge: Boolean = false,
-    onChallenge: () -> Unit = {},
+    onChallenge: (Int) -> Unit = {},
     onRemove: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var confirmRemove by remember { mutableStateOf(false) }
+    var isTargetMode by rememberSaveable(friend.uid) { mutableStateOf(false) }
+    var hoursInput by rememberSaveable(friend.uid) { mutableStateOf("2") }
+    var minutesInput by rememberSaveable(friend.uid) { mutableStateOf("0") }
+    val targetTotalMinutes = (hoursInput.toIntOrNull() ?: 0) * 60 + (minutesInput.toIntOrNull() ?: 0)
+    val showModeSelector = isFriend && !canAddToStudyGroup && !hasActiveDuel && !isPendingChallenge
+    val durationValid = !showModeSelector || !isTargetMode || targetTotalMinutes in 1..ChallengeTime.MAX_MINUTES
     val name = friend.username.ifBlank { stringResource(R.string.community_unnamed) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -962,7 +982,7 @@ private fun FriendSheet(
             verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IslandThumb(friend.treeCount)
+                IslandThumb(friend.treeCount, friend.points)
                 Spacer(Modifier.size(Spacing.md))
                 Text(name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
             }
@@ -987,30 +1007,43 @@ private fun FriendSheet(
                     supportingContent = { Text(stringResource(R.string.community_listening_now)) }
                 )
             }
-            Button(
-                onClick = onChallenge,
-                enabled = !hasActiveDuel && !isPendingChallenge,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = Spacing.buttonHeight)
-                    .testTag("challenge_friend_button")
-            ) {
-                Icon(
-                    imageVector = if (canAddToStudyGroup) Icons.Rounded.Groups else Icons.Rounded.SportsScore,
-                    contentDescription = null,
-                    modifier = Modifier.size(ButtonDefaults.IconSize)
-                )
-                Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                Text(
-                    when {
-                        isPendingChallenge -> stringResource(R.string.friend_duel_waiting_accept, name)
-                        hasActiveDuel -> stringResource(R.string.friend_duel_already_active)
-                        canAddToStudyGroup -> stringResource(R.string.study_group_add_friend_button, name)
-                        else -> stringResource(R.string.friend_duel_challenge_button, name)
-                    }
-                )
-            }
             if (isFriend) {
+                if (showModeSelector) {
+                    ChallengeInviteModeSelector(
+                        isTargetMode = isTargetMode,
+                        onModeChange = { isTargetMode = it },
+                        hoursInput = hoursInput,
+                        onHoursChange = { hoursInput = it },
+                        minutesInput = minutesInput,
+                        onMinutesChange = { minutesInput = it }
+                    )
+                }
+                Button(
+                    onClick = {
+                        val chosenTarget = if (showModeSelector && isTargetMode) targetTotalMinutes else 0
+                        onChallenge(chosenTarget)
+                    },
+                    enabled = !hasActiveDuel && !isPendingChallenge && durationValid,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = Spacing.buttonHeight)
+                        .testTag("challenge_friend_button")
+                ) {
+                    Icon(
+                        imageVector = if (canAddToStudyGroup) Icons.Rounded.Groups else Icons.Rounded.SportsScore,
+                        contentDescription = null,
+                        modifier = Modifier.size(ButtonDefaults.IconSize)
+                    )
+                    Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                    Text(
+                        when {
+                            isPendingChallenge -> stringResource(R.string.friend_duel_waiting_accept, name)
+                            hasActiveDuel -> stringResource(R.string.friend_duel_already_active)
+                            canAddToStudyGroup -> stringResource(R.string.study_group_add_friend_button, name)
+                            else -> stringResource(R.string.friend_duel_challenge_button, name)
+                        }
+                    )
+                }
                 OutlinedButton(
                     onClick = { confirmRemove = true },
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),

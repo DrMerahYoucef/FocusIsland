@@ -24,8 +24,8 @@ import kotlinx.coroutines.withContext
  * Focus sessions: Room is the source of truth, Firestore is a mirror.
  *
  * This is the ONLY place that writes focus statistics (treeCount, totalMinutes, points,
- * currentStreak) to Firestore. Statistics are always recomputed from real sessions;
- * nothing is ever synthesized.
+ * currentStreak) to Firestore. Statistics are always computed from the full local table
+ * after merging with Firestore, never from single-session increments.
  */
 class SessionRepository(
     private val sessionDao: SessionDao,
@@ -91,7 +91,7 @@ class SessionRepository(
                 }
 
                 // Publish stats computed from the now-merged local history.
-                val totals = StatsCalculator.totals(sessionDao.getAllSessionsList())
+                val totals = StatsCalculator.totals(local + missingLocally)
                 val stats = mapOf(
                     "uid" to uid,
                     "treeCount" to totals.completedSessions,
@@ -99,7 +99,6 @@ class SessionRepository(
                     "points" to totals.points,
                     "currentStreak" to totals.currentStreakDays
                 )
-                // Profiles are readable by other members: remove the email older versions stored there.
                 db.collection("users").document(uid).set(stats + ("email" to FieldValue.delete()), SetOptions.merge()).await()
                 db.collection("leaderboard").document(uid).set(stats, SetOptions.merge()).await()
 

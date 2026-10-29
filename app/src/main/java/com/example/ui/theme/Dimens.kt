@@ -96,4 +96,6 @@ object Spacing {
     val stylePreviewHeight = 150.dp
     val selectedBorder = 2.dp
     val swatch = 16.dp
+    val dialogListMaxHeight = 192.dp
 }
+

@@ -15,41 +15,71 @@ import kotlin.math.hypot
 import kotlin.math.sin
 
 /**
- * Focus Island's scene: your island in a lagoon. Every completed session plants a palm (up to
- * [MAX_PALMS]) and the island grows until [FULL_GROWTH] sessions; a hut appears at [HUT_AT]
- * sessions and a lighthouse at [LIGHTHOUSE_AT], lit at night. Used by the wallpaper (static and
- * live), the Community archipelago and the friend sheet. Plain DrawScope code, so it also renders off-screen.
+ * Focus Island's scene: your island in a lagoon. Evolves across 7 civilization eras and 12
+ * landmarks driven by both completed sessions and total points (see [IslandProgression]).
+ * Used by the Interactive Island Explorer, wallpaper (static and live), Community archipelago,
+ * and friend sheets. Plain DrawScope code, so it also renders off-screen.
  */
 object IslandRenderer {
-    /** Sessions after which the island has its full size. */
-    const val FULL_GROWTH = 40
+    /** Effective units after which the island reaches its maximum landmass expansion. */
+    const val FULL_GROWTH = IslandProgression.FULL_GROWTH_UNITS
 
-    /** Palms drawn at most. */
-    const val MAX_PALMS = 9
+    /** Maximum trees planted across the main hill, highland ridge, and side terrace. */
+    const val MAX_PALMS = IslandProgression.MAX_TREES
 
-    const val HUT_AT = 12
-    const val LIGHTHOUSE_AT = 25
+    const val HUT_AT = IslandProgression.HUT_AT
+    const val LIGHTHOUSE_AT = IslandProgression.LIGHTHOUSE_AT
 
-    // Palm spots on the hill, as a fraction of the island's half-width, in planting order:
-    // the first palm stands in the middle, the next ones alternate right and left.
-    private val palmSpots = floatArrayOf(0f, .30f, -.30f, .52f, -.52f, .15f, -.15f, .41f, -.41f)
+    // 28 curated tree spots (xRel, yLiftBonus) across the main hill (0..15),
+    // upper highland ridge (16..21), and connected eastern terrace islet (22..27).
+    private val palmSpots = floatArrayOf(
+        // Original 9 main hill trees
+        0f, .30f, -.30f, .52f, -.52f, .15f, -.15f, .41f, -.41f,
+        // Additional main hill & coastal grove trees (9..15)
+        .08f, -.08f, .23f, -.23f, .62f, -.62f, -.46f,
+        // Upper highland ridge trees (16..21)
+        -.26f, .28f, -.38f, .36f, -.18f, .20f,
+        // Connected eastern terrace islet & outer grove trees (22..27)
+        1.08f, 1.26f, 1.16f, .68f, -.68f, 1.32f
+    )
 
-    /** Island half-width for [sessions], from 62 % of [fullRadius] (no session) to 100 %. */
-    fun radius(fullRadius: Float, sessions: Int): Float =
-        fullRadius * (0.62f + 0.38f * sessions.coerceIn(0, FULL_GROWTH) / FULL_GROWTH)
+    /**
+     * Island half-width for [points], scaling from 58% of [fullRadius] at zero
+     * up to 108% at full civilization growth (50,000 points).
+     */
+    fun radius(fullRadius: Float, sessions: Int = 0, points: Int = 0): Float {
+        val pts = IslandProgression.effectiveUnits(sessions, points)
+        val midPoint = IslandProgression.HIGHLAND_AT
+        val early = (pts.coerceIn(0, midPoint) / midPoint.toFloat()) * 0.32f
+        val late = ((pts - midPoint).coerceIn(0, FULL_GROWTH - midPoint) / (FULL_GROWTH - midPoint).toFloat()) * 0.18f
+        return fullRadius * (0.58f + early + late)
+    }
 
-    /** Height above the waterline taken by the island and its palms (for labels and taps). */
-    fun crownHeight(radius: Float, sessions: Int): Float = radius * if (sessions > 0) 1.15f else 0.45f
+    /** Height above the waterline taken by the island, its highland palace, and sky birds (for labels and taps). */
+    fun crownHeight(radius: Float, sessions: Int = 0, points: Int = 0): Float {
+        val units = IslandProgression.effectiveUnits(sessions, points)
+        return when {
+            units >= IslandProgression.PALACE_AT -> radius * 1.42f
+            units >= IslandProgression.HIGHLAND_AT -> radius * 1.28f
+            units > 0 -> radius * 1.15f
+            else -> radius * 0.45f
+        }
+    }
 
     /** Wallpaper: sky, sea, two distant islets and your island low in the middle of the screen. */
-    fun DrawScope.drawLagoonScene(sessions: Int, colors: IslandColors) {
+    fun DrawScope.drawLagoonScene(
+        sessions: Int = 0,
+        colors: IslandColors,
+        points: Int = 0,
+        fireworkPhase: Float = -1f
+    ) {
         val w = size.width
         val h = size.height
-        val horizon = h * 0.50f
+        val horizon = h * 0.54f
         drawSkyAndSea(horizon, Offset(w * 0.74f, h * 0.30f), w * 0.07f, colors)
         drawIslet(Offset(w * 0.12f, horizon), w * 0.11f, colors)
         drawIslet(Offset(w * 0.90f, horizon), w * 0.07f, colors)
-        drawIsland(Offset(w * 0.5f, h * 0.70f), radius(w * 0.36f, sessions), sessions, colors)
+        drawIsland(Offset(w * 0.5f, h * 0.75f), radius(w * 0.33f, sessions, points), sessions, colors, points, fireworkPhase)
     }
 
     /** Sky with sun or moon (and stars, clouds), sea from [horizon] down with a reflection under the light. */
@@ -180,17 +210,37 @@ object IslandRenderer {
     }
 
     /**
-     * One island whose waterline is centred on [center], [radius] wide on each side, with a palm
-     * for each of the first [MAX_PALMS] sessions.
+     * Draws your island centred at [center] with half-width [radius], evolving through
+     * 7 civilization eras and 12 landmarks based on [sessions] and [points].
      */
-    fun DrawScope.drawIsland(center: Offset, radius: Float, sessions: Int, colors: IslandColors) {
+    fun DrawScope.drawIsland(
+        center: Offset,
+        radius: Float,
+        sessions: Int,
+        colors: IslandColors,
+        points: Int = sessions * IslandProgression.POINTS_PER_UNIT,
+        fireworkPhase: Float = -1f
+    ) {
         val cx = center.x
         val cy = center.y
         val r = radius
-        // Turquoise shallows and the foam line around the beach.
+        val units = IslandProgression.effectiveUnits(sessions, points)
+
+        // 1. Sky-level wonders (Firework launch trails & sky glow, Bird flocks, Sky vessels)
+        with(IslandLandmarksRenderer) {
+            drawSkyWonders(center, r, units, colors, fireworkPhase)
+        }
+
+        // 2. Turquoise shallows and the foam line around the main beach
         drawOval(colors.shallow, Offset(cx - r * 1.35f, cy - r * 0.16f), Size(r * 2.7f, r * 0.42f))
         drawOval(colors.foam, Offset(cx - r * 1.06f, cy - r * 0.08f), Size(r * 2.12f, r * 0.22f), style = Stroke(r * 0.02f))
-        // Beach.
+
+        // 3. Upper highland mountain peak (unlocks at 50 units)
+        with(IslandLandmarksRenderer) {
+            drawHighlandAndWaterfall(center, r, units, colors)
+        }
+
+        // 4. Main Beach
         val sand = Path().apply {
             moveTo(cx - r, cy)
             cubicTo(cx - r * 0.7f, cy - r * 0.22f, cx - r * 0.3f, cy - r * 0.30f, cx, cy - r * 0.30f)
@@ -201,7 +251,8 @@ object IslandRenderer {
         drawPath(sand, colors.sand)
         if (colors.ink.alpha > 0f) drawPath(sand, colors.ink, style = Stroke(r * 0.022f))
         drawOval(colors.sandShade, Offset(cx - r * 0.92f, cy - r * 0.02f), Size(r * 1.84f, r * 0.10f))
-        // Green hill on top of the beach.
+
+        // 5. Main green hill on top of the beach
         val hill = Path().apply {
             moveTo(cx - r * 0.80f, cy - r * 0.10f)
             cubicTo(cx - r * 0.55f, cy - r * 0.38f, cx - r * 0.2f, cy - r * 0.44f, cx + r * 0.05f, cy - r * 0.44f)
@@ -219,47 +270,91 @@ object IslandRenderer {
         }
         drawOval(colors.grassLight, Offset(cx - r * 0.50f, cy - r * 0.38f), Size(r * 0.42f, r * 0.12f))
 
-        // Palms, back (higher on the hill) to front.
-        val count = sessions.coerceIn(0, MAX_PALMS)
+        // 6. Cascading waterfall & Connected eastern side-islet with arched bridge (75+ units)
+        with(IslandLandmarksRenderer) {
+            drawSideTerraceAndBridge(center, r, units, colors)
+            drawWaterfall(center, r, units, colors)
+        }
+
+        // 7. Trees (up to 28), sorted back-to-front; when the Grand Palace is unlocked,
+        // central trees part slightly to frame the palace from behind.
+        val hasPalace = units >= IslandProgression.PALACE_AT
+        val count = IslandProgression.treeCountForUnits(units).coerceIn(0, MAX_PALMS)
         (0 until count)
             .map { i ->
-                val rel = palmSpots[i]
+                val rawRel = palmSpots[i]
+                val rel = if (hasPalace && kotlin.math.abs(rawRel) < 0.18f) {
+                    if (i % 2 == 0) rawRel - 0.24f else rawRel + 0.24f
+                } else {
+                    rawRel
+                }
                 val x = cx + rel * r
-                val base = cy - r * (0.12f + 0.30f * (1f - (rel / 0.8f) * (rel / 0.8f)).coerceAtLeast(0f))
+                val base = when {
+                    // Connected side-islet trees (planted on the eastern terrace)
+                    rel > 0.9f -> cy - r * (0.04f + 0.08f * ((i % 3) / 2f))
+                    // Upper highland ridge trees
+                    i in 16..21 || (hasPalace && kotlin.math.abs(rawRel) < 0.18f) ->
+                        cy - r * (0.38f + 0.14f * (1f - (rel / 0.5f) * (rel / 0.5f)).coerceAtLeast(0f))
+                    // Main hill & coastal grove trees
+                    else -> cy - r * (0.12f + 0.30f * (1f - (rel / 0.8f) * (rel / 0.8f)).coerceAtLeast(0f))
+                }
                 Triple(i, x, base)
             }
             .sortedBy { it.third }
             .forEach { (i, x, base) ->
-                val height = r * 0.50f * (0.82f + 0.18f * ((i * 0.61f) % 1f))
-                val lean = height * (if (palmSpots[i] < 0f) -0.20f else 0.20f) * (if (i == 0) 0.4f else 1f)
+                val scale = when {
+                    palmSpots[i] > 0.9f -> 0.72f
+                    i in 16..21 -> 0.78f
+                    i >= 9 -> 0.86f
+                    else -> 1f
+                }
+                val height = r * 0.50f * scale * (0.82f + 0.18f * ((i * 0.61f) % 1f))
+                val lean = height * (if (x < cx) -0.20f else 0.20f) * (if (i == 0) 0.4f else 1f)
                 when (colors.kind) {
                     IslandKind.NEON -> drawNeonPalm(Offset(x, base), height, lean, colors)
                     IslandKind.SAKURA -> drawCherryTree(Offset(x, base), height * 0.92f, lean * 0.4f, colors)
                     else -> drawPalm(Offset(x, base), height, lean, colors)
                 }
             }
-        // Milestones stand on the beach, in front of the trees.
+
+        // 8. Second village hamlet building (50+ units) & Ancient Sanctuary gardens/gates (220+ units)
+        with(IslandLandmarksRenderer) {
+            drawHamletBuilding(center, r, units, colors)
+            drawAncientSanctuary(center, r, units, colors)
+        }
+
+        // 9. Grand Palace / Citadel drawn IN FRONT of the trees at the center of the island
+        // plus foreground Grand Sky Fireworks bursts & diamond sparkles above the canopy
+        with(IslandLandmarksRenderer) {
+            drawGrandPalace(center, r, units, colors)
+            drawSkyFireworksForeground(center, r, units, colors, fireworkPhase)
+        }
+
+        // 9. Foreground beach landmarks: Pier & Campfire (5+), Dwelling (12+), Beacon (25+), Boats (18+)
         val left = Offset(cx - r * 0.70f, cy - r * 0.06f)
         val right = Offset(cx + r * 0.74f, cy - r * 0.05f)
         when (colors.kind) {
             IslandKind.PALM -> {
-                if (sessions >= HUT_AT) drawHut(left, r, colors)
-                if (sessions >= LIGHTHOUSE_AT) drawLighthouse(right, r, colors)
+                if (units >= HUT_AT) drawHut(left, r, colors)
+                if (units >= LIGHTHOUSE_AT) drawLighthouse(right, r, colors)
             }
             IslandKind.NEON -> {
-                if (sessions >= HUT_AT) drawServer(left, r, colors)
-                if (sessions >= LIGHTHOUSE_AT) drawRadioTower(right, r, colors)
+                if (units >= HUT_AT) drawServer(left, r, colors)
+                if (units >= LIGHTHOUSE_AT) drawRadioTower(right, r, colors)
             }
             IslandKind.SAKURA -> {
-                if (sessions >= HUT_AT) drawTeaHouse(left, r, colors)
-                if (sessions >= LIGHTHOUSE_AT) drawLantern(right, r, colors)
+                if (units >= HUT_AT) drawTeaHouse(left, r, colors)
+                if (units >= LIGHTHOUSE_AT) drawLantern(right, r, colors)
             }
             IslandKind.TREASURE -> {
-                // The chest appears first and opens when the flag goes up.
-                if (sessions >= HUT_AT) drawChest(left, r, open = sessions >= LIGHTHOUSE_AT, colors)
-                if (sessions >= LIGHTHOUSE_AT) drawPirateFlag(right, r, colors)
-                drawTurtle(Offset(cx - r * 1.08f, cy + r * 0.12f), r, colors)
+                if (units >= HUT_AT) drawChest(left, r, open = units >= LIGHTHOUSE_AT, colors)
+                if (units >= LIGHTHOUSE_AT) drawPirateFlag(right, r, colors)
+                drawTurtle(Offset(cx - r * 1.02f, cy + r * 0.16f), r, colors)
             }
+        }
+        with(IslandLandmarksRenderer) {
+            drawDockAndCampfire(center, r, units, colors)
+            drawSeaVessels(center, r, units, colors)
         }
     }
 

@@ -274,15 +274,22 @@ class CommunityViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun challengeFriend(opponentUid: String, opponentName: String) {
+    fun challengeFriend(opponentUid: String, opponentName: String, targetMinutes: Int = 0) {
         if (opponentUid.isEmpty() || opponentUid == currentUid) return
         viewModelScope.launch {
+            val isFriend = friends.value.any { it.uid == opponentUid } ||
+                myProfile.value?.friends?.contains(opponentUid) == true
+            if (!isFriend) {
+                _messages.send(CommunityMessage.Failed)
+                return@launch
+            }
             val myName = myProfile.value?.username?.takeIf { it.isNotBlank() }
                 ?: runCatching { users.document(currentUid).get().await().getString("username").orEmpty() }.getOrDefault("")
             val result = friendChallengeRepo.sendChallenge(
                 challengerName = myName.ifBlank { "You" },
                 opponentUid = opponentUid,
-                opponentName = opponentName
+                opponentName = opponentName,
+                targetMinutes = targetMinutes
             )
             if (result.isSuccess) {
                 _messages.send(CommunityMessage.ChallengeSent(opponentName))

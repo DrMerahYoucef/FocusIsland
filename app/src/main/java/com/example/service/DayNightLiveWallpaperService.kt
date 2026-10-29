@@ -34,7 +34,7 @@ class DayNightLiveWallpaperService : WallpaperService() {
         }
 
         private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (key == "follow_system_theme" || key == "wallpaper_theme" || key == "last_synced_tree_count") {
+            if (key == "follow_system_theme" || key == "wallpaper_theme" || key == "last_synced_tree_count" || key == "last_synced_points") {
                 drawFrame()
             }
         }

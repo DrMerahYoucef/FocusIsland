@@ -1174,5 +1174,96 @@
     <string name="study_group_expired_status_chip">⌛ %1$s · Expired · Resend</string>
     <string name="study_group_resend_invite">Resend invite</string>
     <string name="study_group_waiting_friends_accept">Waiting for invited friends to accept…</string>
+    <string name="challenge_invite_mode_label">Challenge format</string>
+    <string name="challenge_invite_mode_open">Whole Day (Open)</string>
+    <string name="challenge_invite_mode_target">Target Hours (Race)</string>
+    <string name="challenge_invite_open_desc">Open whole-day challenge — whoever focuses the most before midnight wins.</string>
+    <string name="challenge_invite_target_desc">First to reach %1$s of focus time wins immediately! No winner if unreached by midnight.</string>
+    <string name="friend_duel_incoming_body_open">Open whole-day challenge — who will focus the most before midnight? Accepting starts your Pomodoro timer.</string>
+    <string name="friend_duel_incoming_body_target">Target-hours challenge (%1$s) — first to reach %1$s of focus time wins! Accepting starts your Pomodoro timer.</string>
+    <string name="study_group_pending_invite_open_from">Invited by %1$s · Open whole-day challenge</string>
+    <string name="study_group_pending_invite_target_from">Invited by %1$s · First to %2$s</string>
+    <string name="study_group_invite_notif_body_open">Open whole-day challenge — accept within 30 minutes to compete until midnight!</string>
+    <string name="study_group_invite_notif_body_target">Target-hours challenge: first to reach %1$s wins! Accept within 30 minutes to join.</string>
+    <string name="study_group_mode_badge_open">Open Day</string>
+    <string name="study_group_mode_badge_target">First to %1$s</string>
+    <string name="friend_duel_badge_no_winner">No winner</string>
+    <string name="friend_duel_won_by_target_body">You reached the %1$s target first against %2$s (%3$d min vs %4$d min)!</string>
+    <string name="study_group_message_notif_channel">Study Group &amp; Challenge Messages</string>
+    <string name="study_group_message_notif_channel_desc">Sound and vibration alerts when a friend sends a message in your Study Group or challenge</string>
+    <string name="study_group_message_notif_title">Message from %1$s</string>
+
+    <!-- Progress Focus Hours -->
+    <string name="stats_yearly_history">History by period</string>
+    <string name="stats_period_2022">Year 2022</string>
+    <string name="stats_period_2026">Since June 2026</string>
+    <string name="stats_period_gap_note">No sessions between Jan 2023 and May 2026</string>
+
+    <!-- Island Civilization & Milestone Roadmap -->
+    <string name="progress_tab_island">My Island</string>
+    <string name="island_explorer_title">Island Civilization</string>
+    <string name="island_explorer_subtitle">Your island grows and unlocks new landmarks as you earn points</string>
+    <string name="island_explore_cta">Explore island &amp; roadmap</string>
+    <string name="island_day_mode">Day</string>
+    <string name="island_night_mode">Night</string>
+    <string name="island_live_badge">Live Island</string>
+    <string name="island_preview_badge">Previewing: %1$s</string>
+    <string name="island_return_live">Back to my island</string>
+    <string name="island_trees_planted">%1$d / %2$d trees</string>
+    <string name="island_landmarks_unlocked">%1$d / %2$d landmarks</string>
+    <string name="island_effective_power">Island level %1$d</string>
+    <string name="island_next_milestone_header">Next milestone unlock</string>
+    <string name="island_all_unlocked_title">Maximum Civilization Reached!</string>
+    <string name="island_all_unlocked_body">Your island has unlocked every landmark, palace, sky wonder, and all %1$d trees.</string>
+    <string name="island_req_sessions_or_points">%1$s pts</string>
+    <string name="island_remaining_to_unlock">%1$s more pts to unlock</string>
+    <string name="island_roadmap_header">Civilization Roadmap (12 Landmarks)</string>
+    <string name="island_roadmap_tap_hint">Tap any milestone to preview how your island looks at that stage</string>
+    <string name="island_milestone_unlocked">Unlocked</string>
+    <string name="island_milestone_preview_btn">Preview</string>
+    <string name="island_milestone_trees_bonus">Up to %1$d trees</string>
+    <string name="wallpaper_preview_hybrid_body">Your island evolves with your total points (%1$s · %2$d trees · %3$d/%4$d landmarks). Sessions: %5$d · Points: %6$d</string>
+
+    <!-- 7 Civilization Eras -->
+    <string name="island_era_1_title">Era I · Castaway Sandbar</string>
+    <string name="island_era_1_desc">A quiet lagoon sandbar awaiting its first sprouts of life.</string>
+    <string name="island_era_2_title">Era II · Coastal Camp</string>
+    <string name="island_era_2_desc">A timber pier and warm campfire welcome travellers to shore.</string>
+    <string name="island_era_3_title">Era III · Lagoon Settlement</string>
+    <string name="island_era_3_desc">Your first dwelling, anchored vessel, and coastal beacon light up the sea.</string>
+    <string name="island_era_4_title">Era IV · Highland Village</string>
+    <string name="island_era_4_desc">Soaring bird flocks and a new highland ridge with a bustling hamlet.</string>
+    <string name="island_era_5_title">Era V · Waterfall Kingdom</string>
+    <string name="island_era_5_desc">A cascading waterfall and arched bridge connect a new island terrace.</string>
+    <string name="island_era_6_title">Era VI · Grand Citadel</string>
+    <string name="island_era_6_desc">A majestic palace crowns the highland peak while sky vessels drift overhead.</string>
+    <string name="island_era_7_title">Era VII · Mythic Paradise</string>
+    <string name="island_era_7_desc">Ancient guardian sanctuaries, 28 lush trees, and celebratory fireworks light up the sky.</string>
+
+    <!-- 12 Unlockable Landmarks -->
+    <string name="island_ms_1_title">First Island Sprout</string>
+    <string name="island_ms_1_desc">Plants your first tree on the main hill and awakens the lagoon.</string>
+    <string name="island_ms_2_title">Timber Pier &amp; Campfire</string>
+    <string name="island_ms_2_desc">Builds a wooden dock on the west shore with a glowing beach campfire.</string>
+    <string name="island_ms_3_title">Island Dwelling</string>
+    <string name="island_ms_3_desc">Constructs your signature coastal home (Hut, Server, Tea House, or Chest).</string>
+    <string name="island_ms_4_title">Seafarer\'s Vessel</string>
+    <string name="island_ms_4_desc">Anchors a sailboat, cyber speeder, sampan, or pirate sloop in the shallows.</string>
+    <string name="island_ms_5_title">Coastal Beacon</string>
+    <string name="island_ms_5_desc">Raises the Lighthouse, Radio Tower, Grand Lantern, or Pirate Mast on the east cape.</string>
+    <string name="island_ms_6_title">Soaring Bird Flock</string>
+    <string name="island_ms_6_desc">Brings flocks of seabirds, cranes, macaws, or neon gliders wheeling across the sky.</string>
+    <string name="island_ms_7_title">Highland Ridge &amp; Hamlet</string>
+    <string name="island_ms_7_desc">Expands the island upward with a mountain peak and a second village building.</string>
+    <string name="island_ms_8_title">Waterfall &amp; Lagoon Bridge</string>
+    <string name="island_ms_8_desc">Unlocks a cascading highland waterfall and an arched bridge to a new side islet.</string>
+    <string name="island_ms_9_title">Grand Palace Citadel</string>
+    <string name="island_ms_9_desc">Crowns the upper highland peak with a Golden Palace, Cyber Citadel, Pagoda Castle, or Fortress.</string>
+    <string name="island_ms_10_title">Sky Vessel &amp; Harbor Fleet</string>
+    <string name="island_ms_10_desc">Launches a Hot Air Balloon, Synth Cruiser, Sky Lanterns, or Airship plus a second ship.</string>
+    <string name="island_ms_11_title">Ancient Guardian Sanctuary</string>
+    <string name="island_ms_11_desc">Adds sacred gates, guardian statues, blooming gardens, and dense highland groves.</string>
+    <string name="island_ms_12_title">Grand Sky Fireworks</string>
+    <string name="island_ms_12_desc">Lights up the sky with celebratory firework bursts, royal palace banners, and all 28 trees.</string>
 </resources>
 

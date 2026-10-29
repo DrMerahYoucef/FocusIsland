@@ -23,21 +23,44 @@ object WallpaperHelper {
 
     /** Completed sessions, as last published by the app (the key name predates the island). */
     private const val KEY_SESSION_COUNT = "last_synced_tree_count"
+    private const val KEY_POINTS_COUNT = "last_synced_points"
 
     fun lastSessionCount(context: Context): Int =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_SESSION_COUNT, 0)
 
+    fun lastPointsCount(context: Context): Int =
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_POINTS_COUNT, 0)
+
     /** Draws the scene straight onto an Android [canvas] (live wallpaper, bitmaps). */
-    fun drawScene(context: Context, canvas: android.graphics.Canvas, width: Int, height: Int, theme: WallpaperTheme, sessions: Int) {
+    fun drawScene(
+        context: Context,
+        canvas: android.graphics.Canvas,
+        width: Int,
+        height: Int,
+        theme: WallpaperTheme,
+        sessions: Int,
+        points: Int = lastPointsCount(context)
+    ) {
         CanvasDrawScope().draw(Density(context), LayoutDirection.Ltr, Canvas(canvas), Size(width.toFloat(), height.toFloat())) {
             // The island of the style chosen in the app (read each time, so the live wallpaper follows).
-            drawLagoonScene(sessions, FocusStyles.of(AppStyle.read(context)).island(theme == WallpaperTheme.DARK))
+            drawLagoonScene(
+                sessions = sessions,
+                colors = FocusStyles.of(AppStyle.read(context)).island(theme == WallpaperTheme.DARK),
+                points = points
+            )
         }
     }
 
-    fun renderBitmap(context: Context, width: Int, height: Int, theme: WallpaperTheme, sessions: Int): Bitmap {
+    fun renderBitmap(
+        context: Context,
+        width: Int,
+        height: Int,
+        theme: WallpaperTheme,
+        sessions: Int,
+        points: Int = lastPointsCount(context)
+    ): Bitmap {
         val bitmap = Bitmap.createBitmap(width.coerceAtLeast(1), height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-        drawScene(context, android.graphics.Canvas(bitmap), bitmap.width, bitmap.height, theme, sessions)
+        drawScene(context, android.graphics.Canvas(bitmap), bitmap.width, bitmap.height, theme, sessions, points)
         return bitmap
     }
 
@@ -50,13 +73,14 @@ object WallpaperHelper {
         theme: WallpaperTheme,
         setHomeScreen: Boolean,
         setLockScreen: Boolean,
-        sessions: Int
+        sessions: Int,
+        points: Int = lastPointsCount(context)
     ): String? = withContext(Dispatchers.Default) {
         val app = context.applicationContext
         if (!setHomeScreen && !setLockScreen) return@withContext app.getString(R.string.wallpaper_pick_screen)
         try {
             val metrics = app.resources.displayMetrics
-            val bitmap = renderBitmap(app, metrics.widthPixels, metrics.heightPixels, theme, sessions)
+            val bitmap = renderBitmap(app, metrics.widthPixels, metrics.heightPixels, theme, sessions, points)
             val flags = (if (setHomeScreen) WallpaperManager.FLAG_SYSTEM else 0) or (if (setLockScreen) WallpaperManager.FLAG_LOCK else 0)
             WallpaperManager.getInstance(app).setBitmap(bitmap, null, true, flags)
             null

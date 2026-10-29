@@ -240,9 +240,9 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
             friends = friendState.availableFriends,
             alreadyInGroupUids = existingUids,
             isAddingToExisting = friendState.activeDuel != null,
-            onConfirmSelection = { chosen ->
+            onConfirmSelection = { chosen, targetMinutes ->
                 showStudyGroupSheet = false
-                viewModel.startOrInviteStudyGroup(chosen)
+                viewModel.startOrInviteStudyGroup(chosen, targetMinutes)
             },
             onDismiss = { showStudyGroupSheet = false }
         )

@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 
 data class ForestState(
     val treeCount: Int = 0,
+    val points: Int = 0,
     val followSystemTheme: Boolean = true,
     val manualTheme: WallpaperTheme = WallpaperTheme.LIGHT,
     val isDarkTheme: Boolean = false
@@ -32,15 +33,21 @@ class ForestViewModel(application: Application) : AndroidViewModel(application) 
     init {
         sharedPrefs.registerOnSharedPreferenceChangeListener(prefListener)
         viewModelScope.launch {
-            repository
-                .getSessionCount(0L, Long.MAX_VALUE)
-                .collect { count ->
-                    val planted = count != sharedPrefs.getInt("last_synced_tree_count", 0)
-                    _forestState.update { it.copy(treeCount = count) }
-                    sharedPrefs.edit().putInt("last_synced_tree_count", count).apply()
-                    // A new session plants a palm: refresh the wallpaper if the user asked for automatic updates.
-                    if (planted) checkAndTriggerAutoWallpaper(_forestState.value.isDarkTheme)
-                }
+            repository.getAllSessions()
+                .map { sessions -> com.example.data.stats.StatsCalculator.totals(sessions) }
+                .collect { totals ->
+                val count = totals.completedSessions
+                val pts = totals.points
+                val changed = count != sharedPrefs.getInt("last_synced_tree_count", 0) ||
+                    pts != sharedPrefs.getInt("last_synced_points", 0)
+                _forestState.update { it.copy(treeCount = count, points = pts) }
+                sharedPrefs.edit()
+                    .putInt("last_synced_tree_count", count)
+                    .putInt("last_synced_points", pts)
+                    .apply()
+                // Refresh the wallpaper if the user asked for automatic updates.
+                if (changed) checkAndTriggerAutoWallpaper(_forestState.value.isDarkTheme)
+            }
         }
     }
 
@@ -53,8 +60,10 @@ class ForestViewModel(application: Application) : AndroidViewModel(application) 
             WallpaperTheme.LIGHT
         }
         val savedCount = sharedPrefs.getInt("last_synced_tree_count", 0)
+        val savedPoints = sharedPrefs.getInt("last_synced_points", 0)
         return ForestState(
             treeCount = savedCount,
+            points = savedPoints,
             followSystemTheme = followSystem,
             manualTheme = manualTheme,
             isDarkTheme = manualTheme == WallpaperTheme.DARK
@@ -96,8 +105,9 @@ class ForestViewModel(application: Application) : AndroidViewModel(application) 
         val theme = if (isDark) WallpaperTheme.DARK else WallpaperTheme.LIGHT
 
         val sessions = _forestState.value.treeCount
+        val points = _forestState.value.points
         viewModelScope.launch {
-            WallpaperHelper.setIslandWallpaper(app, theme, setHome, setLock, sessions)
+            WallpaperHelper.setIslandWallpaper(app, theme, setHome, setLock, sessions, points)
         }
     }
 

@@ -58,12 +58,13 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun clearHistory() = store.clearHistory()
 
-    fun startOrInviteStudyGroup(friends: List<StudyFriendOption>) {
+    fun startOrInviteStudyGroup(friends: List<StudyFriendOption>, targetMinutes: Int = 0) {
         if (friends.isEmpty()) return
         viewModelScope.launch {
             friendRepo.startOrInviteToStudyGroup(
                 challengerName = friendState.value.myName.ifBlank { "You" },
-                friendsToInvite = friends
+                friendsToInvite = friends,
+                targetMinutes = targetMinutes
             )
         }
     }

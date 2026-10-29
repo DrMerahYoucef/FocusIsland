@@ -24,8 +24,8 @@ service cloud.firestore {
       allow read: if isMember();
       allow create, delete: if isOwner(userId);
 
-      // The owner may change anything. Another member may only add or remove
-      // THEIR OWN uid in `friends` (accepting a request, removing a friend).
+      // The owner may change anything. Another member may only add/remove their own uid in `friends`
+      // (used when accepting a friend request or removing a friend).
       allow update: if isOwner(userId) || (isMember() && onlyOwnUidInFriendsChanged());
 
       function onlyOwnUidInFriendsChanged() {
@@ -46,7 +46,7 @@ service cloud.firestore {
       }
     }
 
-    // 🏆 Leaderboard: readable by anyone signed in (guests included); owner writes stats only.
+    // 🏆 Leaderboard: readable by anyone signed in (guests included); owner writes their own stats only.
     match /leaderboard/{userId} {
       allow read: if signedIn();
       allow delete: if isOwner(userId);

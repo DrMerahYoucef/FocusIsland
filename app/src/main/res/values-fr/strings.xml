@@ -1158,5 +1158,96 @@
     <string name="study_group_expired_status_chip">⌛ %1$s · Expirée · Renvoyer</string>
     <string name="study_group_resend_invite">Renvoyer l\'invitation</string>
     <string name="study_group_waiting_friends_accept">En attente de l\'acceptation des amis invités…</string>
+    <string name="challenge_invite_mode_label">Format du défi</string>
+    <string name="challenge_invite_mode_open">Journée entière (Ouvert)</string>
+    <string name="challenge_invite_mode_target">Objectif d\'heures (Course)</string>
+    <string name="challenge_invite_open_desc">Défi ouvert toute la journée — celui qui cumule le plus de focus avant minuit gagne.</string>
+    <string name="challenge_invite_target_desc">Le premier à atteindre %1$s de focus gagne immédiatement ! Aucun gagnant si non atteint à minuit.</string>
+    <string name="friend_duel_incoming_body_open">Défi ouvert toute la journée — qui se concentrera le plus avant minuit ? Accepter démarre votre Pomodoro.</string>
+    <string name="friend_duel_incoming_body_target">Défi d\'objectif (%1$s) — le premier à atteindre %1$s de focus gagne ! Accepter démarre votre Pomodoro.</string>
+    <string name="study_group_pending_invite_open_from">Invité par %1$s · Défi ouvert (journée)</string>
+    <string name="study_group_pending_invite_target_from">Invité par %1$s · 1er à %2$s</string>
+    <string name="study_group_invite_notif_body_open">Défi ouvert toute la journée — acceptez dans les 30 minutes pour concourir jusqu\'à minuit !</string>
+    <string name="study_group_invite_notif_body_target">Défi d\'objectif : le premier à atteindre %1$s gagne ! Acceptez dans les 30 minutes.</string>
+    <string name="study_group_mode_badge_open">Journée ouverte</string>
+    <string name="study_group_mode_badge_target">1er à %1$s</string>
+    <string name="friend_duel_badge_no_winner">Sans gagnant</string>
+    <string name="friend_duel_won_by_target_body">Vous avez atteint l\'objectif de %1$s en premier face à %2$s (%3$d min contre %4$d min) !</string>
+    <string name="study_group_message_notif_channel">Messages du groupe d\'étude et défis</string>
+    <string name="study_group_message_notif_channel_desc">Alertes sonores et vibrations lorsqu\'un ami envoie un message dans votre défi</string>
+    <string name="study_group_message_notif_title">Message de %1$s</string>
+
+    <!-- Progress Focus Hours -->
+    <string name="stats_yearly_history">Historique par période</string>
+    <string name="stats_period_2022">Année 2022</string>
+    <string name="stats_period_2026">Depuis juin 2026</string>
+    <string name="stats_period_gap_note">Aucune session entre janv. 2023 et mai 2026</string>
+
+    <!-- Island Civilization & Milestone Roadmap -->
+    <string name="progress_tab_island">Mon Île</string>
+    <string name="island_explorer_title">Civilisation de l\'Île</string>
+    <string name="island_explorer_subtitle">Votre île grandit et débloque des monuments grâce au total de vos points</string>
+    <string name="island_explore_cta">Explorer l\'île et les paliers</string>
+    <string name="island_day_mode">Jour</string>
+    <string name="island_night_mode">Nuit</string>
+    <string name="island_live_badge">Île actuelle</string>
+    <string name="island_preview_badge">Aperçu : %1$s</string>
+    <string name="island_return_live">Retour à mon île</string>
+    <string name="island_trees_planted">%1$d / %2$d arbres</string>
+    <string name="island_landmarks_unlocked">%1$d / %2$d monuments</string>
+    <string name="island_effective_power">Niveau d\'île %1$d</string>
+    <string name="island_next_milestone_header">Prochain monument à débloquer</string>
+    <string name="island_all_unlocked_title">Civilisation maximale atteinte !</string>
+    <string name="island_all_unlocked_body">Votre île a débloqué chaque monument, palais, merveille céleste et les %1$d arbres.</string>
+    <string name="island_req_sessions_or_points">%1$s pts</string>
+    <string name="island_remaining_to_unlock">Encore %1$s pts pour débloquer</string>
+    <string name="island_roadmap_header">Paliers de Civilisation (12 Monuments)</string>
+    <string name="island_roadmap_tap_hint">Touchez un palier pour prévisualiser votre île à cette étape</string>
+    <string name="island_milestone_unlocked">Débloqué</string>
+    <string name="island_milestone_preview_btn">Aperçu</string>
+    <string name="island_milestone_trees_bonus">Jusqu\'à %1$d arbres</string>
+    <string name="wallpaper_preview_hybrid_body">Votre île évolue avec le total de vos points (%1$s · %2$d arbres · %3$d/%4$d monuments). Sessions : %5$d · Points : %6$d</string>
+
+    <!-- 7 Civilization Eras -->
+    <string name="island_era_1_title">Ère I · Banc de Sable</string>
+    <string name="island_era_1_desc">Un lagon paisible attendant ses premières pousses de vie.</string>
+    <string name="island_era_2_title">Ère II · Campement Côtier</string>
+    <string name="island_era_2_desc">Une jetée en bois et un feu de camp accueillent les voyageurs.</string>
+    <string name="island_era_3_title">Ère III · Village du Lagon</string>
+    <string name="island_era_3_desc">Votre première demeure, un navire amarré et un phare illuminent la mer.</string>
+    <string name="island_era_4_title">Ère IV · Hameau des Hautes Terres</string>
+    <string name="island_era_4_desc">Des volées d\'oiseaux et une crête montagneuse avec un nouveau hameau.</string>
+    <string name="island_era_5_title">Ère V · Royaume des Cascades</string>
+    <string name="island_era_5_desc">Une cascade et un pont arqué relient une nouvelle terrasse insulaire.</string>
+    <string name="island_era_6_title">Ère VI · Grande Citadelle</string>
+    <string name="island_era_6_desc">Un palais majestueux couronne le sommet tandis que des vaisseaux célestes flottent.</string>
+    <string name="island_era_7_title">Ère VII · Paradis Mythique</string>
+    <string name="island_era_7_desc">Sanctuaires anciens, 28 arbres luxuriants et feux d\'artifice illuminent le ciel.</string>
+
+    <!-- 12 Unlockable Landmarks -->
+    <string name="island_ms_1_title">Première Pousse</string>
+    <string name="island_ms_1_desc">Plante votre premier arbre sur la colline et éveille le lagon.</string>
+    <string name="island_ms_2_title">Jetée &amp; Feu de Camp</string>
+    <string name="island_ms_2_desc">Construit un ponton en bois sur la côte ouest avec un feu de camp chaleureux.</string>
+    <string name="island_ms_3_title">Demeure de l\'Île</string>
+    <string name="island_ms_3_desc">Érige votre maison côtière (Hutte, Serveur, Maison de thé ou Coffre).</string>
+    <string name="island_ms_4_title">Navire du Lagon</string>
+    <string name="island_ms_4_desc">Amarre un voilier, speeder cyber, sampan ou sloop pirate dans les eaux claires.</string>
+    <string name="island_ms_5_title">Phare &amp; Balise</string>
+    <string name="island_ms_5_desc">Érige le Phare, la Tour radio, la Grande lanterne ou le Mât pirate à l\'est.</string>
+    <string name="island_ms_6_title">Volée d\'Oiseaux</string>
+    <string name="island_ms_6_desc">Fait planer des oiseaux marins, grues, aras ou planeurs néon dans le ciel.</string>
+    <string name="island_ms_7_title">Crête &amp; Hameau</string>
+    <string name="island_ms_7_desc">Agrandit l\'île en hauteur avec un sommet montagneux et un second bâtiment.</string>
+    <string name="island_ms_8_title">Cascade &amp; Pont du Lagon</string>
+    <string name="island_ms_8_desc">Débloque une cascade des hautes terres et un pont arqué vers un îlot voisin.</string>
+    <string name="island_ms_9_title">Grand Palais &amp; Citadelle</string>
+    <string name="island_ms_9_desc">Couronne le sommet d\'un Palais d\'Or, Citadelle Cyber, Château Pagode ou Forteresse.</string>
+    <string name="island_ms_10_title">Vaisseau Céleste &amp; Flotte</string>
+    <string name="island_ms_10_desc">Lance une Montgolfière, Croiseur Synth, Lanternes célestes ou Dirigeable et un second navire.</string>
+    <string name="island_ms_11_title">Sanctuaire des Gardiens</string>
+    <string name="island_ms_11_desc">Ajoute portes sacrées, statues gardiennes, jardins fleuris et bosquets denses.</string>
+    <string name="island_ms_12_title">Feux d\'Artifice Royaux</string>
+    <string name="island_ms_12_desc">Illumine le ciel de feux d\'artifice étincelants, de bannières royales et des 28 arbres.</string>
 </resources>
 

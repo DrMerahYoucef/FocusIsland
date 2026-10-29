@@ -6,13 +6,19 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.FocusFlowApplication
 import com.example.data.db.entity.SessionEntity
+import com.example.data.stats.FocusTotals
+import com.example.data.stats.StatsCalculator
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.firestore
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -72,6 +78,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private val _state = MutableStateFlow(SettingsState())
     val state: StateFlow<SettingsState> = _state.asStateFlow()
+
+    val focusTotals: StateFlow<FocusTotals> = sessionRepo.getAllSessions()
+        .map { sessions -> StatsCalculator.totals(sessions) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FocusTotals(0, 0, 0, 0, 0, 0))
 
     init {
         loadSettings()
@@ -232,7 +242,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         _state.update { it.copy(swipeToNavigate = value) }
     }
 
-
     /**
      * Clears what the confirmation dialog promises: focus sessions (and therefore stats and
      * streaks) and exam countdowns. Flashcards, radio stations and blocked apps are kept.
@@ -246,7 +255,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 val remote = runCatching {
                     val db = Firebase.firestore
                     deleteCollection(db.collection("users").document(user.uid).collection("sessions"))
-                    val zero = mapOf("treeCount" to 0, "totalMinutes" to 0, "points" to 0, "currentStreak" to 0)
+                    val zero = mapOf(
+                        "treeCount" to 0,
+                        "totalMinutes" to 0,
+                        "points" to 0,
+                        "currentStreak" to 0
+                    )
                     db.collection("users").document(user.uid).set(zero, SetOptions.merge()).await()
                     db.collection("leaderboard").document(user.uid).set(zero, SetOptions.merge()).await()
                 }

@@ -502,14 +502,22 @@ private fun ProgressTab(
 ) {
     Column(Modifier.fillMaxSize()) {
         PrimaryTabRow(
-            selectedTabIndex = selected,
+            selectedTabIndex = selected.coerceIn(0, 2),
             containerColor = androidx.compose.ui.graphics.Color.Transparent
         ) {
             Tab(selected = selected == 0, onClick = { onSelect(0) }, text = { Text(stringResource(R.string.progress_tab_stats)) })
             Tab(selected = selected == 1, onClick = { onSelect(1) }, text = { Text(stringResource(R.string.progress_tab_exams)) })
+            Tab(
+                selected = selected == 2,
+                onClick = { onSelect(2) },
+                text = { Text(stringResource(R.string.progress_tab_island)) }
+            )
         }
-        if (selected == 0) AnalyticsScreen(viewModel = analyticsViewModel)
-        else ExamsScreen(viewModel = examsViewModel)
+        when (selected) {
+            0 -> AnalyticsScreen(viewModel = analyticsViewModel, onOpenIsland = { onSelect(2) })
+            1 -> ExamsScreen(viewModel = examsViewModel)
+            else -> com.example.ui.screen.island.IslandExplorerScreen(analyticsViewModel = analyticsViewModel)
+        }
     }
 }
 
