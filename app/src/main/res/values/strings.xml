@@ -1272,5 +1272,30 @@
     <string name="island_ms_11_desc">Adds sacred gates, guardian statues, blooming gardens, and dense highland groves.</string>
     <string name="island_ms_12_title">Grand Sky Fireworks</string>
     <string name="island_ms_12_desc">Lights up the sky with celebratory firework bursts, royal palace banners, and all 28 trees.</string>
+
+    <!-- Floating Return to Focus Bubble, Nudge Banner, Break Status & Challenge Podium -->
+    <string name="floating_focus_paused_title">Pomodoro paused · %1$s left</string>
+    <string name="floating_focus_paused_subtitle">Tap to return to Focus Island · Drag to move</string>
+    <string name="floating_focus_return_cta">Return to Focus</string>
+    <string name="nudge_banner_title">%1$s sent you a Focus Nudge!</string>
+    <string name="nudge_banner_message">Return to focus and resume your Pomodoro timer with your study group.</string>
+    <string name="nudge_banner_return_button">Return to focus</string>
+    <string name="study_group_status_on_break">In break</string>
+    <string name="study_group_status_not_focusing">Not focusing</string>
+    <string name="challenge_podium_title">Challenge Results &amp; Podium</string>
+    <string name="challenge_podium_subtitle_open">%1$s · Open Whole-Day Challenge</string>
+    <string name="challenge_podium_subtitle_target">%1$s · Target Goal: %2$s</string>
+    <string name="challenge_podium_first">1st Place</string>
+    <string name="challenge_podium_second">2nd Place</string>
+    <string name="challenge_podium_third">3rd Place</string>
+    <string name="challenge_podium_winner_badge">Winner</string>
+    <string name="challenge_podium_other_participants">Other Participants</string>
+    <string name="challenge_podium_tap_hint">Tap to view podium &amp; rankings</string>
+    <string name="personal_challenge_summary_title">Personal Challenge Summary</string>
+    <string name="community_challenges_won">Challenges won</string>
+    <plurals name="community_challenges_won_badge">
+        <item quantity="one">%d challenge won</item>
+        <item quantity="other">%d challenges won</item>
+    </plurals>
 </resources>
 

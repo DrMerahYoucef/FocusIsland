@@ -128,6 +128,7 @@ class PomodoroTimerService : Service() {
     override fun onDestroy() {
         serviceAlive = false
         runCatching { unregisterReceiver(screenOffReceiver) }
+        FloatingFocusBubbleManager.hidePausedBubble(this)
         tickerJob?.cancel()
         launchMonitor.stop()
         restoreDnd()
@@ -144,6 +145,7 @@ class PomodoroTimerService : Service() {
     // ------------------------------------------------------------------ timer engine
 
     private fun start() {
+        FloatingFocusBubbleManager.hidePausedBubble(this)
         val s = _state.value
         if (s.isRunning && tickerJob?.isActive == true) {
             startForegroundCompat()
@@ -167,21 +169,28 @@ class PomodoroTimerService : Service() {
     }
 
     private fun pause() {
+        FloatingFocusBubbleManager.hidePausedBubble(this)
         if (!_state.value.isRunning) return
         pauseInternal()
         updateNotification()
     }
 
-    private fun pauseInternal() {
+    private fun pauseInternal(keepLaunchMonitor: Boolean = false) {
         tickerJob?.cancel()
         _state.update { it.copy(isRunning = false, remainingMs = remainingNow()) }
         persist(this)
         releaseWakeLock()
-        focusProtectionOff()
+        if (keepLaunchMonitor && _state.value.phase == Phase.FOCUS) {
+            restoreDnd()
+            launchMonitor.start()
+        } else {
+            focusProtectionOff()
+        }
         syncAmbientPlayback()
     }
 
     private fun skip() {
+        FloatingFocusBubbleManager.hidePausedBubble(this)
         val s = _state.value
         tickerJob?.cancel()
         val remaining = if (s.isRunning) remainingNow() else s.remainingMs
@@ -201,14 +210,21 @@ class PomodoroTimerService : Service() {
         if (pm?.isInteractive == false || km?.isKeyguardLocked == true || km?.isDeviceLocked == true) {
             return
         }
+        // If the user switched to an app on the App Blocker list during Focus, block that app
+        // and keep the Pomodoro running uninterrupted!
+        if (_state.value.phase == Phase.FOCUS && launchMonitor.checkAndBlockForegroundApp()) {
+            return
+        }
         lastAutoPausedElapsed = SystemClock.elapsedRealtime()
-        pauseInternal()
+        pauseInternal(keepLaunchMonitor = true)
         _state.update { it.copy(isAutoPausedByAppSwitch = true) }
         persist(this)
         updateNotification()
+        FloatingFocusBubbleManager.showPausedBubble(this, formatClock(_state.value.remainingMs))
     }
 
     private fun autoResumeFromAppSwitch() {
+        FloatingFocusBubbleManager.hidePausedBubble(this)
         if (_state.value.isRunning || !_state.value.isAutoPausedByAppSwitch) return
         _state.update {
             it.copy(
@@ -220,6 +236,7 @@ class PomodoroTimerService : Service() {
     }
 
     private fun stopTimer() {
+        FloatingFocusBubbleManager.hidePausedBubble(this)
         tickerJob?.cancel()
         releaseWakeLock()
         focusProtectionOff()

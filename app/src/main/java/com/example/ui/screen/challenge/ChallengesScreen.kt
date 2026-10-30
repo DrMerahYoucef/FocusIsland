@@ -15,6 +15,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -333,6 +334,8 @@ internal fun ChallengesContent(
         }
     }
 
+    var selectedHistoryDuel by remember { mutableStateOf<FriendChallenge?>(null) }
+    var selectedPersonalHistory by remember { mutableStateOf<Challenge?>(null) }
     val hideTabsForChatKeyboard = isImeVisible && selectedTab == TAB_STUDY_GROUP && friendState.activeDuel != null
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -425,6 +428,8 @@ internal fun ChallengesContent(
                     selectedTab = TAB_STUDY_GROUP
                 },
                 onDeclineFriendDuel = onDeclineFriendDuel,
+                onHistoryChallengeClick = { selectedPersonalHistory = it },
+                onHistoryDuelClick = { selectedHistoryDuel = it },
                 modifier = Modifier.weight(1f)
             )
         } else {
@@ -441,9 +446,25 @@ internal fun ChallengesContent(
                 onDeleteStudyGroupChallenge = onDeleteStudyGroupChallenge,
                 onResendStudyGroupInvite = onResendStudyGroupInvite,
                 onAddStudyGroupTime = onAddStudyGroupTime,
+                onHistoryDuelClick = { selectedHistoryDuel = it },
                 modifier = Modifier.weight(1f)
             )
         }
+    }
+
+    selectedHistoryDuel?.let { duel ->
+        ChallengePodiumSheet(
+            duel = duel,
+            myUid = friendState.myUid,
+            onDismiss = { selectedHistoryDuel = null }
+        )
+    }
+
+    selectedPersonalHistory?.let { ch ->
+        PersonalChallengeSummarySheet(
+            challenge = ch,
+            onDismiss = { selectedPersonalHistory = null }
+        )
     }
 }
 
@@ -461,6 +482,8 @@ private fun PersonalChallengeTabContent(
     onClearHistory: () -> Unit,
     onAcceptFriendDuel: (FriendChallenge) -> Unit,
     onDeclineFriendDuel: (FriendChallenge) -> Unit,
+    onHistoryChallengeClick: (Challenge) -> Unit = {},
+    onHistoryDuelClick: (FriendChallenge) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val lastFailed = state.history.firstOrNull()?.takeIf {
@@ -507,7 +530,7 @@ private fun PersonalChallengeTabContent(
             }
         }
 
-        if (state.history.isEmpty()) {
+        if (state.history.isEmpty() && friendState.history.isEmpty()) {
             if (state.active == null) {
                 item {
                     EmptyState(
@@ -518,22 +541,41 @@ private fun PersonalChallengeTabContent(
                 }
             }
         } else {
-            item {
-                SectionHeader(stringResource(R.string.challenges_history)) {
-                    TextButton(onClick = onClearHistory) { Text(stringResource(R.string.challenges_clear)) }
+            if (state.history.isNotEmpty()) {
+                item {
+                    SectionHeader(stringResource(R.string.challenges_history)) {
+                        TextButton(onClick = onClearHistory) { Text(stringResource(R.string.challenges_clear)) }
+                    }
+                }
+                item {
+                    val total = state.history.size
+                    val done = state.doneCount
+                    Text(
+                        pluralStringResource(R.plurals.challenges_stats, done, done, total, done * 100 / total),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                items(state.history, key = { it.id }) {
+                    HistoryRow(
+                        challenge = it,
+                        activeChallenge = state.active,
+                        nowMs = nowMs,
+                        onClick = { onHistoryChallengeClick(it) }
+                    )
                 }
             }
-            item {
-                val total = state.history.size
-                val done = state.doneCount
-                Text(
-                    pluralStringResource(R.plurals.challenges_stats, done, done, total, done * 100 / total),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            items(state.history, key = { it.id }) {
-                HistoryRow(it, activeChallenge = state.active, nowMs = nowMs)
+            if (friendState.history.isNotEmpty()) {
+                item(key = "personal_tab_friend_history_header") {
+                    SectionHeader(stringResource(R.string.friend_duel_history_header))
+                }
+                items(friendState.history, key = { "personal_tab_duel_hist_" + it.id }) { duel ->
+                    FriendDuelHistoryRow(
+                        duel = duel,
+                        myUid = friendState.myUid,
+                        onClick = { onHistoryDuelClick(duel) }
+                    )
+                }
             }
         }
     }
@@ -554,8 +596,10 @@ private fun StudyGroupTabContent(
     onDeleteStudyGroupChallenge: (FriendChallenge) -> Unit,
     onResendStudyGroupInvite: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
     onAddStudyGroupTime: (FriendChallenge, Int) -> Unit = { _, _ -> },
+    onHistoryDuelClick: (FriendChallenge) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    var showHistorySheetFromActive by rememberSaveable { mutableStateOf(false) }
     val activeStudyGroup = friendState.activeDuel
     val isImeVisible = WindowInsets.isImeVisible
     if (activeStudyGroup != null) {
@@ -590,8 +634,19 @@ private fun StudyGroupTabContent(
                 onDeleteGroup = onDeleteStudyGroupChallenge,
                 onAddFriends = onOpenStudyGroupFriends,
                 nudgeCooldownUntil = friendState.nudgeCooldownUntil,
+                onOpenDetails = if (friendState.history.isNotEmpty()) {
+                    { showHistorySheetFromActive = true }
+                } else null,
                 fullScreenChat = true,
                 modifier = Modifier.weight(1f)
+            )
+        }
+        if (showHistorySheetFromActive && friendState.history.isNotEmpty()) {
+            val latestCompleted = friendState.history.first()
+            ChallengePodiumSheet(
+                duel = latestCompleted,
+                myUid = friendState.myUid,
+                onDismiss = { showHistorySheetFromActive = false }
             )
         }
     } else {
@@ -672,7 +727,11 @@ private fun StudyGroupTabContent(
                     SectionHeader(stringResource(R.string.friend_duel_history_header))
                 }
                 items(friendState.history, key = { "duel_hist_" + it.id }) { duel ->
-                    FriendDuelHistoryRow(duel = duel, myUid = friendState.myUid)
+                    FriendDuelHistoryRow(
+                        duel = duel,
+                        myUid = friendState.myUid,
+                        onClick = { onHistoryDuelClick(duel) }
+                    )
                 }
             }
         }
@@ -854,7 +913,12 @@ private fun ResultCard(challenge: Challenge, success: Boolean, onDismiss: (() ->
 }
 
 @Composable
-private fun HistoryRow(challenge: Challenge, activeChallenge: Challenge? = null, nowMs: Long = 0L) {
+private fun HistoryRow(
+    challenge: Challenge,
+    activeChallenge: Challenge? = null,
+    nowMs: Long = 0L,
+    onClick: (() -> Unit)? = null
+) {
     val done = challenge.result == ChallengeResult.DONE
     val day = remember(challenge.startAt) {
         DateTimeFormatter.ofPattern("EEE d MMM").format(Instant.ofEpochMilli(challenge.startAt).atZone(ZoneId.systemDefault()))
@@ -868,6 +932,10 @@ private fun HistoryRow(challenge: Challenge, activeChallenge: Challenge? = null,
     val hasOvertime = !done && totalMs >= challenge.durationMs + 1_000L
 
     ListItem(
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.medium)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .testTag("personal_challenge_history_row_${challenge.id}"),
         leadingContent = {
             Icon(
                 if (done) Icons.Rounded.EmojiEvents else Icons.Rounded.HourglassBottom,
@@ -899,6 +967,90 @@ private fun HistoryRow(challenge: Challenge, activeChallenge: Challenge? = null,
             }
         }
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PersonalChallengeSummarySheet(
+    challenge: Challenge,
+    onDismiss: () -> Unit
+) {
+    val done = challenge.result == ChallengeResult.DONE
+    val day = remember(challenge.startAt) {
+        DateTimeFormatter.ofPattern("EEE d MMM yyyy")
+            .format(Instant.ofEpochMilli(challenge.startAt).atZone(ZoneId.systemDefault()))
+    }
+    val plannedDurationText = durationText((challenge.durationMs / 60_000L).toInt().coerceAtLeast(1))
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        modifier = Modifier.testTag("personal_challenge_summary_sheet")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.lg)
+                .navigationBarsPadding()
+                .padding(bottom = Spacing.xxl),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(Spacing.md)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = if (done) MaterialTheme.extendedColors.successContainer else MaterialTheme.colorScheme.errorContainer,
+                contentColor = if (done) MaterialTheme.extendedColors.onSuccessContainer else MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.size(64.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = if (done) Icons.Rounded.EmojiEvents else Icons.Rounded.HourglassBottom,
+                        contentDescription = null,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+            }
+            Surface(
+                shape = CircleShape,
+                color = if (done) MaterialTheme.extendedColors.successContainer else MaterialTheme.colorScheme.errorContainer,
+                contentColor = if (done) MaterialTheme.extendedColors.onSuccessContainer else MaterialTheme.colorScheme.onErrorContainer
+            ) {
+                Text(
+                    text = if (done) {
+                        "${stringResource(R.string.challenge_podium_first)} · ${stringResource(R.string.challenge_done)}"
+                    } else {
+                        stringResource(R.string.challenge_failed)
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = Spacing.md, vertical = 4.dp)
+                )
+            }
+            Text(
+                text = stringResource(R.string.personal_challenge_summary_title),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = challenge.goal,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = "$day · $plannedDurationText",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = Spacing.buttonHeight)
+            ) {
+                Text(stringResource(R.string.challenge_dismiss))
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------- new challenge

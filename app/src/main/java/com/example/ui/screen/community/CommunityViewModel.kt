@@ -43,7 +43,8 @@ data class UserProfile(
     val points: Int = 0,
     val currentStreak: Int = 0,
     val currentRadio: String = "",
-    val friends: List<String> = emptyList()
+    val friends: List<String> = emptyList(),
+    val challengesWon: Int = 0
 )
 
 data class LeaderboardEntry(
@@ -52,7 +53,8 @@ data class LeaderboardEntry(
     val treeCount: Int = 0,
     val totalMinutes: Int = 0,
     val points: Int = 0,
-    val currentStreak: Int = 0
+    val currentStreak: Int = 0,
+    val challengesWon: Int = 0
 )
 
 data class FriendRequest(
@@ -81,7 +83,7 @@ data class LeaderboardState(
     val failed: Boolean = false
 )
 
-private fun UserProfile.toEntry() = LeaderboardEntry(uid, username, treeCount, totalMinutes, points, currentStreak)
+private fun UserProfile.toEntry() = LeaderboardEntry(uid, username, treeCount, totalMinutes, points, currentStreak, challengesWon)
 
 /**
  * The ranked top list plus [people] (me and my friends, always shown with their live profile),
@@ -160,10 +162,14 @@ class CommunityViewModel(application: Application) : AndroidViewModel(applicatio
         _sort.flatMapLatest { rankingFlow(it) },
         myProfile,
         friends,
-        _sort
-    ) { ranked, me, friends, sort ->
+        _sort,
+        friendChallengeState
+    ) { ranked, me, friends, sort, challengeState ->
         if (ranked.loading || ranked.failed) ranked
-        else ranked.copy(entries = mergeRanking(ranked.entries, friends + listOfNotNull(me), sort))
+        else {
+            val enrichedMe = me?.copy(challengesWon = maxOf(me.challengesWon, challengeState.challengesWonCount))
+            ranked.copy(entries = mergeRanking(ranked.entries, friends + listOfNotNull(enrichedMe), sort))
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT), LeaderboardState())
 
     fun setSort(sort: LeaderboardSort) {
@@ -446,7 +452,8 @@ class CommunityViewModel(application: Application) : AndroidViewModel(applicatio
             points = int("points"),
             currentStreak = int("currentStreak"),
             currentRadio = getString("currentRadio").orEmpty(),
-            friends = (get("friends") as? List<*>).orEmpty().mapNotNull { it?.toString() }
+            friends = (get("friends") as? List<*>).orEmpty().mapNotNull { it?.toString() },
+            challengesWon = int("challengesWon")
         )
     }.getOrNull()
 

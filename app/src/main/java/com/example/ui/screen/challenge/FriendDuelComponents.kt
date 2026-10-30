@@ -121,6 +121,7 @@ import com.example.data.challenge.FriendChallenge
 import com.example.data.challenge.StudyFriendOption
 import com.example.data.challenge.StudyGroupMember
 import com.example.data.challenge.StudyGroupMessage
+import com.example.data.challenge.StudyGroupNudge
 import com.example.data.challenge.StudyMemberRoleStatus
 import com.example.data.challenge.StudyMemberTimerState
 import com.example.ui.designsystem.Celebration
@@ -1346,6 +1347,7 @@ private fun StudyGroupMemberRow(
     onNudge: () -> Unit
 ) {
     val isFocusing = member.timerState == StudyMemberTimerState.FOCUSING
+    val isOnBreak = member.timerState == StudyMemberTimerState.ON_BREAK
 
     Surface(
         shape = MaterialTheme.shapes.medium,
@@ -1403,19 +1405,33 @@ private fun StudyGroupMemberRow(
                         overflow = TextOverflow.Ellipsis
                     )
 
-                    // Live timer state badge (Focusing vs Paused)
+                    // Live timer state badge: Focusing vs Session Break vs Paused / Not Focusing
+                    val statusContainerColor = when {
+                        isFocusing -> MaterialTheme.extendedColors.successContainer
+                        isOnBreak -> MaterialTheme.colorScheme.tertiaryContainer
+                        else -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.65f)
+                    }
+                    val statusContentColor = when {
+                        isFocusing -> MaterialTheme.extendedColors.onSuccessContainer
+                        isOnBreak -> MaterialTheme.colorScheme.onTertiaryContainer
+                        else -> MaterialTheme.colorScheme.onErrorContainer
+                    }
+                    val statusIcon = when {
+                        isFocusing -> Icons.Rounded.PlayCircle
+                        isOnBreak -> Icons.Rounded.Schedule
+                        else -> Icons.Rounded.PauseCircle
+                    }
+                    val statusTextRes = when {
+                        isFocusing -> R.string.study_group_status_focusing
+                        isOnBreak -> R.string.study_group_status_on_break
+                        else -> R.string.study_group_status_not_focusing
+                    }
+
                     Surface(
                         shape = CircleShape,
-                        color = if (isFocusing) {
-                            MaterialTheme.extendedColors.successContainer
-                        } else {
-                            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.65f)
-                        },
-                        contentColor = if (isFocusing) {
-                            MaterialTheme.extendedColors.onSuccessContainer
-                        } else {
-                            MaterialTheme.colorScheme.onErrorContainer
-                        }
+                        color = statusContainerColor,
+                        contentColor = statusContentColor,
+                        modifier = Modifier.testTag("member_status_badge_${member.uid}")
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = Spacing.xs, vertical = 2.dp),
@@ -1423,21 +1439,19 @@ private fun StudyGroupMemberRow(
                             horizontalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
                             Icon(
-                                imageVector = if (isFocusing) Icons.Rounded.PlayCircle else Icons.Rounded.PauseCircle,
+                                imageVector = statusIcon,
                                 contentDescription = null,
                                 modifier = Modifier.size(12.dp)
                             )
                             Text(
-                                text = stringResource(
-                                    if (isFocusing) R.string.study_group_status_focusing else R.string.study_group_status_paused
-                                ),
+                                text = stringResource(statusTextRes),
                                 style = MaterialTheme.typography.labelSmall
                             )
                         }
                     }
                 }
 
-                // If this friend's progress is paused or idle, allow sending a sound + vibration Nudge!
+                // If this friend's progress is paused or idle (not focusing and not in a break cycle), allow sending a Nudge!
                 if (!isMe && member.isPausedOrIdle) {
                     FilledTonalButton(
                         onClick = onNudge,
@@ -1933,10 +1947,10 @@ fun StudyGroupFriendsSheet(
                                 Text(
                                     text = stringResource(R.string.friend_duel_minutes_fmt, friend.todayMinutes) +
                                         " · " + stringResource(
-                                            if (friend.timerState == StudyMemberTimerState.FOCUSING) {
-                                                R.string.study_group_status_focusing
-                                            } else {
-                                                R.string.study_group_status_paused
+                                            when (friend.timerState) {
+                                                StudyMemberTimerState.FOCUSING -> R.string.study_group_status_focusing
+                                                StudyMemberTimerState.ON_BREAK -> R.string.study_group_status_on_break
+                                                StudyMemberTimerState.PAUSED, StudyMemberTimerState.IDLE -> R.string.study_group_status_not_focusing
                                             }
                                         )
                                 )
@@ -2217,7 +2231,8 @@ fun FriendDuelVictoryCelebration(
 @Composable
 fun FriendDuelHistoryRow(
     duel: FriendChallenge,
-    myUid: String
+    myUid: String,
+    onClick: (() -> Unit)? = null
 ) {
     val friendName = duel.friendName(myUid).ifBlank { stringResource(R.string.community_unnamed) }
     val myMins = duel.myMinutes(myUid)
@@ -2268,41 +2283,569 @@ fun FriendDuelHistoryRow(
         stringResource(R.string.study_group_mode_badge_open)
     }
 
-    ListItem(
-        leadingContent = {
-            Icon(
-                imageVector = if (won) Icons.Rounded.EmojiEvents else Icons.Rounded.SportsScore,
-                contentDescription = null,
-                tint = if (won) MaterialTheme.extendedColors.success else MaterialTheme.colorScheme.onSurfaceVariant
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(
+                        onClickLabel = stringResource(R.string.challenge_podium_tap_hint),
+                        onClick = onClick
+                    )
+                } else Modifier
             )
-        },
-        headlineContent = {
-            Text(
-                text = "${stringResource(R.string.friend_duel_you)} vs $friendName",
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontWeight = FontWeight.Medium
-            )
-        },
-        supportingContent = {
-            Text(
-                text = "$dayText · $modePrefix · ${stringResource(R.string.friend_duel_history_score, myMins, friendName, friendMins)}",
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        },
-        trailingContent = {
+            .testTag("friend_duel_history_row_${duel.id}")
+    ) {
+        ListItem(
+            leadingContent = {
+                Surface(
+                    shape = CircleShape,
+                    color = if (won) Color(0xFFFFD700).copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceContainerHighest,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = if (won) Icons.Rounded.EmojiEvents else Icons.Rounded.SportsScore,
+                            contentDescription = null,
+                            tint = if (won) Color(0xFFD99B00) else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            headlineContent = {
+                Text(
+                    text = "${stringResource(R.string.friend_duel_you)} vs $friendName",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.SemiBold
+                )
+            },
+            supportingContent = {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "$dayText · $modePrefix · ${stringResource(R.string.friend_duel_history_score, myMins, friendName, friendMins)}",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (onClick != null) {
+                        Text(
+                            text = stringResource(R.string.challenge_podium_tap_hint),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            },
+            trailingContent = {
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = badgeContainer,
+                    contentColor = badgeContent
+                ) {
+                    Text(
+                        text = badgeLabel,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xxs)
+                    )
+                }
+            }
+        )
+    }
+}
+
+/**
+ * Bottom sheet displaying a completed challenge's 1st, 2nd, and 3rd place podium with Gold, Silver,
+ * and Bronze badges, and the remaining participants listed underneath with styled rank badges.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ChallengePodiumSheet(
+    duel: FriendChallenge,
+    myUid: String,
+    onDismiss: () -> Unit
+) {
+    val ranked = remember(duel, myUid) { duel.rankedParticipants() }
+    val topThree = remember(ranked) { ranked.take(3) }
+    val restParticipants = remember(ranked) { if (ranked.size > 3) ranked.drop(3) else emptyList() }
+    val dayText = remember(duel.createdAt, duel.dayKey) {
+        if (duel.createdAt > 0L) {
+            DateTimeFormatter.ofPattern("EEE d MMM yyyy")
+                .format(Instant.ofEpochMilli(duel.createdAt).atZone(ZoneId.systemDefault()))
+        } else duel.dayKey
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        modifier = Modifier.testTag("challenge_podium_sheet")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = Spacing.lg)
+                .navigationBarsPadding()
+                .padding(bottom = Spacing.xxl),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(Spacing.md)
+        ) {
+            // Header badge + Title + Date
             Surface(
-                shape = MaterialTheme.shapes.small,
-                color = badgeContainer,
-                contentColor = badgeContent
+                shape = CircleShape,
+                color = Color(0xFFFFD700).copy(alpha = 0.2f),
+                contentColor = Color(0xFFB77E00)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = Spacing.md, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.EmojiEvents,
+                        contentDescription = null,
+                        tint = Color(0xFFD99B00),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = stringResource(R.string.challenge_podium_winner_badge),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Text(
+                text = stringResource(R.string.challenge_podium_title),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.semantics { heading() }
+            )
+
+            Text(
+                text = if (duel.isTargetHoursChallenge) {
+                    stringResource(R.string.challenge_podium_subtitle_target, durationText(duel.targetMinutes), dayText)
+                } else {
+                    stringResource(R.string.challenge_podium_subtitle_open, dayText)
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+
+            // Podium for 1st, 2nd, and 3rd place
+            if (topThree.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("challenge_podium_top_three_container")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.sm, vertical = Spacing.md),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        val first = topThree.getOrNull(0)
+                        val second = topThree.getOrNull(1)
+                        val third = topThree.getOrNull(2)
+
+                        if (second != null) {
+                            PodiumColumnItem(
+                                rank = 2,
+                                member = second,
+                                isMe = second.uid == myUid || (myUid.isEmpty() && second.uid == duel.challengerUid),
+                                badgeText = stringResource(R.string.challenge_podium_second),
+                                medalColor = Color(0xFFC0C0C0),
+                                medalLabelColor = Color(0xFF37474F),
+                                pedestalHeight = 76.dp,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        if (first != null) {
+                            PodiumColumnItem(
+                                rank = 1,
+                                member = first,
+                                isMe = first.uid == myUid || (myUid.isEmpty() && first.uid == duel.challengerUid),
+                                badgeText = stringResource(R.string.challenge_podium_first),
+                                medalColor = Color(0xFFFFD700),
+                                medalLabelColor = Color(0xFF4E342E),
+                                pedestalHeight = 104.dp,
+                                isFirst = true,
+                                modifier = Modifier.weight(1.1f)
+                            )
+                        }
+
+                        if (third != null) {
+                            PodiumColumnItem(
+                                rank = 3,
+                                member = third,
+                                isMe = third.uid == myUid || (myUid.isEmpty() && third.uid == duel.challengerUid),
+                                badgeText = stringResource(R.string.challenge_podium_third),
+                                medalColor = Color(0xFFCD7F32),
+                                medalLabelColor = Color.White,
+                                pedestalHeight = 58.dp,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Full Ranked List (including 1st, 2nd, 3rd with badges and 4th+ underneath)
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+            ) {
+                if (restParticipants.isNotEmpty()) {
+                    Text(
+                        text = stringResource(R.string.challenge_podium_other_participants),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = Spacing.xs, bottom = 2.dp)
+                    )
+                }
+
+                ranked.forEachIndexed { index, participant ->
+                    val place = index + 1
+                    val isMe = participant.uid == myUid || (myUid.isEmpty() && participant.uid == duel.challengerUid)
+                    val displayName = if (isMe) {
+                        "${participant.name.ifBlank { stringResource(R.string.friend_duel_you) }} (${stringResource(R.string.friend_duel_you)})"
+                    } else {
+                        participant.name.ifBlank { stringResource(R.string.community_unnamed) }
+                    }
+                    PodiumStandingRow(
+                        place = place,
+                        participant = participant,
+                        displayName = displayName,
+                        isMe = isMe,
+                        targetMinutes = duel.targetMinutes
+                    )
+                }
+            }
+
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = Spacing.buttonHeight)
+                    .testTag("close_challenge_podium_button")
+            ) {
+                Text(stringResource(R.string.challenge_dismiss))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PodiumColumnItem(
+    rank: Int,
+    member: StudyGroupMember,
+    isMe: Boolean,
+    badgeText: String,
+    medalColor: Color,
+    medalLabelColor: Color,
+    pedestalHeight: Dp,
+    isFirst: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    val displayName = if (isMe) {
+        stringResource(R.string.friend_duel_you)
+    } else {
+        member.name.ifBlank { stringResource(R.string.community_unnamed) }
+    }
+    val initial = remember(member.name) {
+        member.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    }
+
+    Column(
+        modifier = modifier
+            .padding(horizontal = 4.dp)
+            .testTag("podium_place_$rank"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        if (isFirst) {
+            Icon(
+                imageVector = Icons.Rounded.EmojiEvents,
+                contentDescription = null,
+                tint = medalColor,
+                modifier = Modifier.size(28.dp)
+            )
+        }
+        // Avatar with medal ring
+        Box(contentAlignment = Alignment.BottomCenter) {
+            Surface(
+                shape = CircleShape,
+                color = medalColor.copy(alpha = 0.22f),
+                modifier = Modifier
+                    .size(if (isFirst) 58.dp else 48.dp)
+                    .border(2.5.dp, medalColor, CircleShape)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = initial,
+                        style = if (isFirst) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+            Surface(
+                shape = CircleShape,
+                color = medalColor,
+                contentColor = medalLabelColor
             ) {
                 Text(
-                    text = badgeLabel,
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xxs)
+                    text = badgeText,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp)
                 )
             }
         }
-    )
+
+        Text(
+            text = displayName,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
+        )
+
+        Text(
+            text = formatStudyMinutesText(member.minutes),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.SemiBold
+        )
+
+        // Pedestal block
+        Surface(
+            shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp, bottomStart = 6.dp, bottomEnd = 6.dp),
+            color = medalColor.copy(alpha = if (isFirst) 0.32f else 0.20f),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(pedestalHeight)
+                .border(
+                    width = 1.dp,
+                    color = medalColor.copy(alpha = 0.6f),
+                    shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp, bottomStart = 6.dp, bottomEnd = 6.dp)
+                )
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    text = "#$rank",
+                    style = if (isFirst) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PodiumStandingRow(
+    place: Int,
+    participant: StudyGroupMember,
+    displayName: String,
+    isMe: Boolean,
+    targetMinutes: Int
+) {
+    val badgeBg = when (place) {
+        1 -> Color(0xFFFFD700)
+        2 -> Color(0xFFC0C0C0)
+        3 -> Color(0xFFCD7F32)
+        else -> MaterialTheme.colorScheme.secondaryContainer
+    }
+    val badgeFg = when (place) {
+        1 -> Color(0xFF4E342E)
+        2 -> Color(0xFF263238)
+        3 -> Color.White
+        else -> MaterialTheme.colorScheme.onSecondaryContainer
+    }
+    val badgeText = when (place) {
+        1 -> stringResource(R.string.challenge_podium_first)
+        2 -> stringResource(R.string.challenge_podium_second)
+        3 -> stringResource(R.string.challenge_podium_third)
+        else -> "#$place"
+    }
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = if (isMe) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+        } else {
+            MaterialTheme.colorScheme.surfaceContainer
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("podium_standing_row_$place")
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = badgeBg,
+                        contentColor = badgeFg
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            if (place <= 3) {
+                                Icon(
+                                    imageVector = Icons.Rounded.EmojiEvents,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
+                            Text(
+                                text = badgeText,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = displayName,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = if (place == 1 || isMe) FontWeight.Bold else FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                if (participant.roleStatus == StudyMemberRoleStatus.SURRENDERED) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    ) {
+                        Text(
+                            text = stringResource(R.string.friend_duel_badge_surrendered),
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+
+            FocusHorlogeIconsRow(
+                minutes = participant.minutes,
+                isMe = isMe,
+                targetMinutes = targetMinutes
+            )
+        }
+    }
+}
+
+/**
+ * Interactive on-screen toast banner displayed over any screen when a friend in a challenge
+ * sends a "Return to Focus" nudge, featuring a button to immediately return to focus.
+ */
+@Composable
+fun NudgeToastBanner(
+    nudge: StudyGroupNudge,
+    onReturnToFocus: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val friendName = nudge.fromName.ifBlank { stringResource(R.string.community_unnamed) }
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .widthIn(max = 520.dp)
+            .padding(horizontal = Spacing.md, vertical = Spacing.sm)
+            .testTag("nudge_toast_banner")
+    ) {
+        Column(
+            modifier = Modifier.padding(Spacing.md),
+            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Rounded.NotificationsActive,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+                Text(
+                    text = stringResource(R.string.nudge_banner_title, friendName),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Text(
+                text = stringResource(R.string.nudge_banner_message),
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.testTag("nudge_banner_dismiss_button")
+                ) {
+                    Text(stringResource(R.string.challenge_dismiss))
+                }
+                Button(
+                    onClick = onReturnToFocus,
+                    modifier = Modifier.testTag("nudge_banner_return_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.PlayCircle,
+                        contentDescription = null,
+                        modifier = Modifier.size(ButtonDefaults.IconSize)
+                    )
+                    Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                    Text(stringResource(R.string.nudge_banner_return_button))
+                }
+            }
+        }
+    }
 }

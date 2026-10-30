@@ -103,6 +103,17 @@ class FocusFlowApplication : Application() {
             override fun onActivityStarted(activity: Activity) {
                 autoPauseJob?.cancel()
                 autoPauseJob = null
+                com.example.service.FloatingFocusBubbleManager.hidePausedBubble(this@FocusFlowApplication)
+                if (activity is FocusOverlayActivity) {
+                    if (PomodoroTimerService.state.value.isAutoPausedByAppSwitch) {
+                        runCatching {
+                            val intent = Intent(this@FocusFlowApplication, PomodoroTimerService::class.java)
+                                .setAction(PomodoroTimerService.ACTION_AUTO_RESUME)
+                            ContextCompat.startForegroundService(this@FocusFlowApplication, intent)
+                        }
+                    }
+                    return
+                }
                 val wasBackground = startedActivitiesCount == 0
                 startedActivitiesCount++
                 if (wasBackground && PomodoroTimerService.state.value.isAutoPausedByAppSwitch) {
@@ -117,13 +128,15 @@ class FocusFlowApplication : Application() {
             }
 
             override fun onActivityStopped(activity: Activity) {
+                if (activity is FocusOverlayActivity) return
                 startedActivitiesCount = (startedActivitiesCount - 1).coerceAtLeast(0)
                 if (startedActivitiesCount == 0 && !activity.isChangingConfigurations) {
                     autoPauseJob?.cancel()
                     autoPauseJob = applicationScope.launch {
                         // Wait briefly so pressing the Power button to lock the screen has time to
-                        // transition PowerManager.isInteractive to false or engage KeyguardManager.
-                        kotlinx.coroutines.delay(400L)
+                        // transition PowerManager.isInteractive to false or engage KeyguardManager,
+                        // and AppLaunchMonitor has time to detect if a blocked app came to the foreground.
+                        kotlinx.coroutines.delay(450L)
                         if (startedActivitiesCount == 0 && shouldAutoPauseForAppSwitch(this@FocusFlowApplication)) {
                             if (PomodoroTimerService.state.value.isRunning) {
                                 runCatching {

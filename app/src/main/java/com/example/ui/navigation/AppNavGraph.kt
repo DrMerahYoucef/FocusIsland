@@ -1,10 +1,14 @@
 package com.example.ui.navigation
 
+import android.content.Intent
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +19,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.pager.HorizontalPager
@@ -57,10 +62,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -80,10 +87,12 @@ import com.example.ui.designsystem.EmptyState
 import com.example.ui.screen.analytics.AnalyticsScreen
 import com.example.ui.screen.analytics.AnalyticsViewModel
 import com.example.ui.screen.appblocker.AppBlockerScreen
+import com.example.service.PomodoroTimerService
 import com.example.ui.screen.auth.AuthMode
 import com.example.ui.screen.auth.AuthScreen
 import com.example.ui.screen.challenge.ChallengeViewModel
 import com.example.ui.screen.challenge.ChallengesScreen
+import com.example.ui.screen.challenge.NudgeToastBanner
 import com.example.ui.screen.community.CommunityScreen
 import com.example.ui.screen.community.CommunityViewModel
 import com.example.ui.screen.exams.ExamsScreen
@@ -185,10 +194,23 @@ fun AppNavGraph(
     val systemDark = isSystemInDarkTheme()
     LaunchedEffect(systemDark) { forestViewModel.updateSystemDarkTheme(systemDark) }
 
+    val context = LocalContext.current
+    val friendChallengeState by challengeViewModel.friendState.collectAsStateWithLifecycle()
+    var localNavRequest by remember { mutableStateOf<NavRequest?>(null) }
+    val effectiveNavRequest = localNavRequest ?: navRequest
+    val consumeNav: () -> Unit = {
+        if (localNavRequest != null) {
+            localNavRequest = null
+        } else {
+            onConsumeNavRequest()
+        }
+    }
+
     // Signed in OR guest mode skips the welcome screen. Decided once per launch.
     val authRepository = remember { FocusFlowApplication.instance.authRepository }
     val startDestination = remember { if (authRepository.canEnterApp) Routes.MAIN else Routes.AUTH }
 
+    Box(Modifier.fillMaxSize()) {
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -218,8 +240,8 @@ fun AppNavGraph(
         composable(Routes.MAIN) {
             MainShell(
                 navController = navController,
-                navRequest = navRequest,
-                onConsumeNavRequest = onConsumeNavRequest,
+                navRequest = effectiveNavRequest,
+                onConsumeNavRequest = consumeNav,
                 settingsViewModel = settingsViewModel,
                 timerViewModel = timerViewModel,
                 analyticsViewModel = analyticsViewModel,
@@ -344,6 +366,43 @@ fun AppNavGraph(
                 onBack = { navController.popBackStack() }
             )
         }
+    }
+
+    val activeNudge = friendChallengeState.activeNudgeBanner
+    AnimatedVisibility(
+        visible = activeNudge != null,
+        enter = slideInVertically { -it } + fadeIn(),
+        exit = slideOutVertically { -it } + fadeOut(),
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .statusBarsPadding()
+    ) {
+        if (activeNudge != null) {
+            NudgeToastBanner(
+                nudge = activeNudge,
+                onReturnToFocus = {
+                    challengeViewModel.dismissNudgeBanner()
+                    runCatching {
+                        val serviceIntent = Intent(context, PomodoroTimerService::class.java).apply {
+                            action = PomodoroTimerService.ACTION_START
+                        }
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            context.startForegroundService(serviceIntent)
+                        } else {
+                            context.startService(serviceIntent)
+                        }
+                    }
+                    if (navController.currentDestination?.route != Routes.MAIN) {
+                        if (!navController.popBackStack(Routes.MAIN, inclusive = false)) {
+                            navController.navigate(Routes.MAIN) { launchSingleTop = true }
+                        }
+                    }
+                    localNavRequest = NavRequest(tab = TopLevel.FOCUS)
+                },
+                onDismiss = challengeViewModel::dismissNudgeBanner
+            )
+        }
+    }
     }
 }
 

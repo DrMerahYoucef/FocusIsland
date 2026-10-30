@@ -67,20 +67,33 @@ class AppBlockerViewModel(application: Application) : AndroidViewModel(applicati
         }.getOrDefault(emptyList())
     }
 
-    fun toggleNotifBlock(pkg: String, appName: String, block: Boolean) = update(pkg, appName) {
-        it.copy(blockNotifications = block)
+    fun toggleNotifBlock(pkg: String, appName: String, block: Boolean) = update(pkg, appName) { current, isNew ->
+        // When a user adds an app to the App Blocker list for the first time, block opening by default as well
+        current.copy(
+            blockNotifications = block,
+            blockLaunch = if (isNew && block) true else current.blockLaunch
+        )
     }
 
-    fun toggleLaunchBlock(pkg: String, appName: String, block: Boolean) = update(pkg, appName) {
-        it.copy(blockLaunch = block)
+    fun toggleLaunchBlock(pkg: String, appName: String, block: Boolean) = update(pkg, appName) { current, _ ->
+        current.copy(blockLaunch = block)
+    }
+
+    fun toggleAppBlocked(pkg: String, appName: String) = update(pkg, appName) { current, isNew ->
+        if (isNew || (!current.blockLaunch && !current.blockNotifications)) {
+            current.copy(blockNotifications = true, blockLaunch = true)
+        } else {
+            current.copy(blockNotifications = false, blockLaunch = false)
+        }
     }
 
     /** Running services observe the table, so changes apply to an ongoing session immediately. */
-    private fun update(pkg: String, appName: String, change: (BlockedAppEntity) -> BlockedAppEntity) {
+    private fun update(pkg: String, appName: String, change: (BlockedAppEntity, Boolean) -> BlockedAppEntity) {
         viewModelScope.launch {
-            val current = blockedApps.value.find { it.packageName == pkg }
+            val existing = blockedApps.value.find { it.packageName == pkg }
+            val current = existing
                 ?: BlockedAppEntity(pkg, appName, appIconBase64 = "", blockNotifications = false, blockLaunch = false)
-            val updated = change(current)
+            val updated = change(current, existing == null)
             if (!updated.blockNotifications && !updated.blockLaunch) repository.deleteByPackage(pkg)
             else repository.upsert(updated)
         }

@@ -133,6 +133,10 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
         friendRepo.acknowledgeCelebration(challengeId)
     }
 
+    fun dismissNudgeBanner() {
+        friendRepo.dismissNudgeBanner()
+    }
+
     private fun finish(result: ChallengeResult): Challenge? {
         val done = store.finish(result) ?: return null
         ChallengeAlarmReceiver.cancel(getApplication())

@@ -1256,5 +1256,31 @@
     <string name="island_ms_11_desc">Ajoute portes sacrées, statues gardiennes, jardins fleuris et bosquets denses.</string>
     <string name="island_ms_12_title">Feux d\'Artifice Royaux</string>
     <string name="island_ms_12_desc">Illumine le ciel de feux d\'artifice étincelants, de bannières royales et des 28 arbres.</string>
+
+    <!-- Floating Return to Focus Bubble, Nudge Banner, Break Status & Challenge Podium -->
+    <string name="floating_focus_paused_title">Pomodoro en pause · %1$s restant</string>
+    <string name="floating_focus_paused_subtitle">Touchez pour revenir au focus · Glissez pour déplacer</string>
+    <string name="floating_focus_return_cta">Retour au focus</string>
+    <string name="nudge_banner_title">%1$s vous demande de revenir au focus !</string>
+    <string name="nudge_banner_message">Revenez vous concentrer et reprenez votre minuteur Pomodoro avec le groupe.</string>
+    <string name="nudge_banner_return_button">Retour au focus</string>
+    <string name="study_group_status_on_break">Pause du cycle</string>
+    <string name="study_group_status_not_focusing">Pas en focus</string>
+    <string name="challenge_podium_title">Résultats et Podium du Défi</string>
+    <string name="challenge_podium_subtitle_open">%1$s · Défi journée ouverte</string>
+    <string name="challenge_podium_subtitle_target">%1$s · Objectif cible : %2$s</string>
+    <string name="challenge_podium_first">1re Place</string>
+    <string name="challenge_podium_second">2e Place</string>
+    <string name="challenge_podium_third">3e Place</string>
+    <string name="challenge_podium_winner_badge">Gagnant</string>
+    <string name="challenge_podium_other_participants">Autres participants</string>
+    <string name="challenge_podium_tap_hint">Touchez pour voir le podium et le classement</string>
+    <string name="personal_challenge_summary_title">Résumé du défi personnel</string>
+    <string name="community_challenges_won">Défis gagnés</string>
+    <plurals name="community_challenges_won_badge">
+        <item quantity="one">%d défi gagné</item>
+        <item quantity="many">%d défis gagnés</item>
+        <item quantity="other">%d défis gagnés</item>
+    </plurals>
 </resources>
 

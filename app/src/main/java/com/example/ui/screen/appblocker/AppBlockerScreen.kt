@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -172,6 +173,7 @@ fun AppBlockerScreen(
                         AppRow(
                             app = app,
                             rule = byPackage[app.packageName],
+                            onRowClick = { viewModel.toggleAppBlocked(app.packageName, app.appName) },
                             onNotifications = { viewModel.toggleNotifBlock(app.packageName, app.appName, it) },
                             onLaunch = { viewModel.toggleLaunchBlock(app.packageName, app.appName, it) }
                         )
@@ -221,11 +223,13 @@ private fun AppRow(
     app: InstalledAppInfo,
     rule: BlockedAppEntity?,
     onNotifications: (Boolean) -> Unit,
-    onLaunch: (Boolean) -> Unit
+    onLaunch: (Boolean) -> Unit,
+    onRowClick: () -> Unit = {}
 ) {
     val notif = rule?.blockNotifications == true
     val launch = rule?.blockLaunch == true
     ListItem(
+        modifier = Modifier.clickable(onClick = onRowClick),
         leadingContent = {
             val icon = app.icon
             if (icon != null) Image(icon, contentDescription = null, modifier = Modifier.size(Spacing.xl + Spacing.xs))

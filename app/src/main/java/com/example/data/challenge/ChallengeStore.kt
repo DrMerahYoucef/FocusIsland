@@ -1,6 +1,11 @@
 package com.example.data.challenge
 
 import android.content.Context
+import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.auth
+import com.google.firebase.firestore.SetOptions
+import com.google.firebase.firestore.firestore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,7 +32,8 @@ data class ChallengeState(val active: Challenge? = null, val history: List<Chall
 }
 
 /**
- * Challenges live in their own small preferences file as JSON (no database change):
+ * Challenges live in their own small preferences file as JSON and sync to Firebase Firestore
+ * on `/users/{uid}` (`personalActiveChallengeJson`, `personalChallengeHistoryJson`) when signed in:
  * at most one active challenge and the history, newest first.
  */
 class ChallengeStore(context: Context, private val clock: () -> Long = System::currentTimeMillis) {
@@ -35,6 +41,77 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
     private val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(load())
     val state: StateFlow<ChallengeState> = _state.asStateFlow()
+
+    init {
+        observeFirestoreSync()
+    }
+
+    private fun observeFirestoreSync() {
+        runCatching {
+            Firebase.auth.addAuthStateListener(FirebaseAuth.AuthStateListener { auth ->
+                val uid = auth.currentUser?.takeIf { !it.isAnonymous }?.uid.orEmpty()
+                if (uid.isNotEmpty()) {
+                    pullFromFirestoreAndSync(uid)
+                }
+            })
+            val initialUid = Firebase.auth.currentUser?.takeIf { !it.isAnonymous }?.uid.orEmpty()
+            if (initialUid.isNotEmpty()) {
+                pullFromFirestoreAndSync(initialUid)
+            }
+        }
+    }
+
+    private fun pullFromFirestoreAndSync(uid: String) {
+        runCatching {
+            Firebase.firestore.collection("users").document(uid).get()
+                .addOnSuccessListener { snap ->
+                    if (snap == null || !snap.exists()) {
+                        pushToFirestore(uid, _state.value)
+                        return@addOnSuccessListener
+                    }
+                    val remoteHistoryRaw = snap.getString("personalChallengeHistoryJson")
+                    val remoteHistory = if (!remoteHistoryRaw.isNullOrBlank()) {
+                        runCatching {
+                            val arr = JSONArray(remoteHistoryRaw)
+                            (0 until arr.length()).mapNotNull { i ->
+                                runCatching { challengeFromJson(arr.getJSONObject(i)) }.getOrNull()
+                            }
+                        }.getOrDefault(emptyList())
+                    } else emptyList()
+
+                    val mergedHistory = (_state.value.history + remoteHistory)
+                        .distinctBy { it.id }
+                        .sortedByDescending { it.finishedAt ?: it.startAt }
+                        .take(MAX_HISTORY)
+
+                    if (mergedHistory != _state.value.history) {
+                        val nextState = _state.value.copy(history = mergedHistory)
+                        _state.value = nextState
+                        prefs.edit()
+                            .putString(KEY_HISTORY, JSONArray(mergedHistory.map { it.toJson() }).toString())
+                            .apply()
+                    }
+                    pushToFirestore(uid, _state.value)
+                }
+        }
+    }
+
+    private fun pushToFirestore(uid: String, state: ChallengeState) {
+        if (uid.isEmpty()) return
+        runCatching {
+            val activeJson = state.active?.toJson()?.toString().orEmpty()
+            val historyJson = JSONArray(state.history.take(MAX_HISTORY).map { it.toJson() }).toString()
+            Firebase.firestore.collection("users").document(uid)
+                .set(
+                    mapOf(
+                        "personalActiveChallengeJson" to activeJson,
+                        "personalChallengeHistoryJson" to historyJson,
+                        "personalChallengesDoneCount" to state.doneCount
+                    ),
+                    SetOptions.merge()
+                )
+        }
+    }
 
     @Synchronized
     fun start(goal: String, endAt: Long): Challenge {
@@ -100,6 +177,10 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
             .putString(KEY_ACTIVE, state.active?.toJson()?.toString())
             .putString(KEY_HISTORY, JSONArray(state.history.map { it.toJson() }).toString())
             .apply()
+        val uid = runCatching { Firebase.auth.currentUser?.takeIf { !it.isAnonymous }?.uid.orEmpty() }.getOrDefault("")
+        if (uid.isNotEmpty()) {
+            pushToFirestore(uid, state)
+        }
     }
 
     private fun load(): ChallengeState = runCatching {

@@ -68,12 +68,14 @@ enum class FriendChallengeStatus {
 
 enum class StudyMemberTimerState {
     FOCUSING,
+    ON_BREAK,
     PAUSED,
     IDLE;
 
     companion object {
         fun from(raw: String?): StudyMemberTimerState = when (raw?.lowercase()) {
             "focusing", "running" -> FOCUSING
+            "on_break", "break", "short_break", "long_break" -> ON_BREAK
             "paused" -> PAUSED
             else -> IDLE
         }
@@ -106,7 +108,8 @@ data class StudyGroupMember(
     val updatedAt: Long = 0L
 ) {
     val isFocusing: Boolean get() = timerState == StudyMemberTimerState.FOCUSING
-    val isPausedOrIdle: Boolean get() = timerState != StudyMemberTimerState.FOCUSING
+    val isOnBreak: Boolean get() = timerState == StudyMemberTimerState.ON_BREAK
+    val isPausedOrIdle: Boolean get() = timerState == StudyMemberTimerState.PAUSED || timerState == StudyMemberTimerState.IDLE
 
     fun effectiveInvitedAt(challengeCreatedAt: Long = 0L): Long = when {
         invitedAt > 0L -> invitedAt
@@ -312,6 +315,31 @@ data class FriendChallenge(
 
     fun didFriendSurrender(myUid: String): Boolean =
         status == FriendChallengeStatus.SURRENDERED && !surrenderedByUid.isNullOrEmpty() && surrenderedByUid != myUid
+
+    /**
+     * Returns all challenge participants ordered by final rank (1st, 2nd, 3rd, and the rest).
+     * Non-surrendered active participants rank above surrendered/declined participants, ordered by
+     * explicit winner first, then highest focus minutes, then earliest completion timestamp.
+     */
+    fun rankedParticipants(): List<StudyGroupMember> {
+        val list = allMembers()
+        if (list.isEmpty()) return emptyList()
+        val explicitWinner = winnerUid?.takeIf { it.isNotBlank() && it != "tie" && it != "none" }
+        return list.sortedWith(
+            compareBy<StudyGroupMember> { m ->
+                when {
+                    explicitWinner != null && m.uid == explicitWinner -> 0
+                    m.roleStatus == StudyMemberRoleStatus.ACTIVE -> 1
+                    m.roleStatus == StudyMemberRoleStatus.INVITED -> 2
+                    m.roleStatus == StudyMemberRoleStatus.SURRENDERED -> 3
+                    else -> 4
+                }
+            }
+                .thenByDescending { it.minutes }
+                .thenBy { if (it.updatedAt > 0L) it.updatedAt else Long.MAX_VALUE }
+                .thenBy { it.name.lowercase() }
+        )
+    }
 }
 
 data class FriendChallengeState(
@@ -325,7 +353,9 @@ data class FriendChallengeState(
     val history: List<FriendChallenge> = emptyList(),
     val uncelebratedWin: FriendChallenge? = null,
     val availableFriends: List<StudyFriendOption> = emptyList(),
-    val nudgeCooldownUntil: Map<String, Long> = emptyMap()
+    val nudgeCooldownUntil: Map<String, Long> = emptyMap(),
+    val activeNudgeBanner: StudyGroupNudge? = null,
+    val challengesWonCount: Int = 0
 )
 
 class FriendChallengeRepository(
@@ -431,7 +461,7 @@ class FriendChallengeRepository(
             val db = Firebase.firestore
             val users = db.collection(USERS_COLLECTION)
 
-            // 0. Listen to my own user profile to get my username and my friends list
+            // 0. Listen to my own user profile to get my username, my friends list, and cloud-saved challenge history
             listenerRegistrations += users.document(uid)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null || snapshot == null) return@addSnapshotListener
@@ -442,6 +472,18 @@ class FriendChallengeRepository(
                         ?.filter { it.isNotBlank() && it != uid }
                         .orEmpty()
                     myFriendIds = friendIds.toSet()
+                    val remoteHistoryJson = snapshot.getString("challengeHistoryJson")
+                    if (!remoteHistoryJson.isNullOrBlank()) {
+                        runCatching {
+                            val arr = JSONArray(remoteHistoryJson)
+                            for (i in 0 until arr.length()) {
+                                val ch = runCatching { challengeFromJson(arr.getJSONObject(i)) }.getOrNull()
+                                if (ch != null && ch.status != FriendChallengeStatus.CANCELLED && ch.id !in abandonedIds) {
+                                    remoteCollectionDuels[ch.id] = remoteCollectionDuels[ch.id]?.let { mergeChallenges(it, ch) } ?: ch
+                                }
+                            }
+                        }
+                    }
                     ensureFriendProfileListeners(uid, friendIds)
                     handleIncomingUserDuelSnapshot(snapshot)
                     onRemoteUpdated(uid)
@@ -753,6 +795,8 @@ class FriendChallengeRepository(
                 } else 0
                 val status = when {
                     timer.isRunning && timer.phase == Phase.FOCUS -> StudyMemberTimerState.FOCUSING
+                    (timer.phase == Phase.SHORT_BREAK || timer.phase == Phase.LONG_BREAK) &&
+                        (timer.isRunning || !timer.isUntouched) -> StudyMemberTimerState.ON_BREAK
                     !timer.isRunning && !timer.isUntouched -> StudyMemberTimerState.PAUSED
                     else -> StudyMemberTimerState.IDLE
                 }
@@ -929,6 +973,13 @@ class FriendChallengeRepository(
             .filter { it.uid in myFriendIds }
             .sortedBy { it.username.lowercase() }
 
+        val winsCount = history.count { ch ->
+            effectiveUid.isNotEmpty() && ch.didIWin(effectiveUid)
+        }
+        val prevWinsCount = _state.value.challengesWonCount
+        val prevHistoryIds = _state.value.history.map { "${it.id}_${it.status}_${it.winnerUid}" }
+        val newHistoryIds = history.map { "${it.id}_${it.status}_${it.winnerUid}" }
+
         _state.value = _state.value.copy(
             myUid = effectiveUid,
             myName = myResolvedUsername.ifBlank { _state.value.myName },
@@ -939,8 +990,65 @@ class FriendChallengeRepository(
             activeDuel = active,
             history = history,
             uncelebratedWin = uncelebrated,
-            availableFriends = friendsList
+            availableFriends = friendsList,
+            challengesWonCount = winsCount
         )
+
+        if (effectiveUid.isNotEmpty() && effectiveUid != "local_user" &&
+            (winsCount != prevWinsCount || newHistoryIds != prevHistoryIds)
+        ) {
+            syncHistoryAndWinsToFirestoreAsync(effectiveUid, history, winsCount)
+        }
+    }
+
+    private fun syncHistoryAndWinsToFirestoreAsync(
+        uid: String,
+        history: List<FriendChallenge>,
+        winsCount: Int
+    ) {
+        if (uid.isEmpty() || uid == "local_user") return
+        appScope.launch {
+            val historyJson = runCatching {
+                JSONArray(history.take(40).map { it.toJson() }).toString()
+            }.getOrDefault("[]")
+            runCatching {
+                Firebase.firestore.collection(USERS_COLLECTION)
+                    .document(uid)
+                    .set(
+                        mapOf(
+                            "challengesWon" to winsCount,
+                            "challengeHistoryJson" to historyJson
+                        ),
+                        SetOptions.merge()
+                    )
+                    .await()
+            }
+            runCatching {
+                Firebase.firestore.collection("leaderboard")
+                    .document(uid)
+                    .set(
+                        mapOf(
+                            "uid" to uid,
+                            "challengesWon" to winsCount
+                        ),
+                        SetOptions.merge()
+                    )
+                    .await()
+            }
+            // Also make sure each completed challenge is saved to the friend_challenges collection
+            history.take(15).forEach { completed ->
+                if (completed.challengerUid.isNotBlank() && completed.opponentUid.isNotBlank() &&
+                    completed.challengerUid != completed.opponentUid
+                ) {
+                    runCatching {
+                        Firebase.firestore.collection(COLLECTION)
+                            .document(completed.id)
+                            .set(completed.toFirestoreMap(), SetOptions.merge())
+                            .await()
+                    }
+                }
+            }
+        }
     }
 
     private fun startPomodoroForActiveChallenge() {
@@ -1004,6 +1112,11 @@ class FriendChallengeRepository(
         if (_state.value.uncelebratedWin?.id == challengeId) {
             _state.value = _state.value.copy(uncelebratedWin = null)
         }
+    }
+
+    fun dismissNudgeBanner() {
+        _state.value = _state.value.copy(activeNudgeBanner = null)
+        com.example.service.FloatingFocusBubbleManager.hideNudgeBanner(context)
     }
 
     /**
@@ -1778,6 +1891,27 @@ class FriendChallengeRepository(
      * when a Study Group friend nudges the user to start/resume focusing.
      */
     internal fun triggerIncomingNudgeNotification(fromFriendName: String) {
+        val now = clock()
+        val bannerNudge = StudyGroupNudge(
+            id = "nudge_${now}",
+            challengeId = _state.value.activeDuel?.id.orEmpty(),
+            fromUid = "",
+            fromName = fromFriendName,
+            toUid = _state.value.myUid,
+            toName = _state.value.myName,
+            createdAt = now
+        )
+        _state.value = _state.value.copy(activeNudgeBanner = bannerNudge)
+        com.example.service.FloatingFocusBubbleManager.showNudgeBanner(
+            context = context,
+            fromFriendName = fromFriendName,
+            onReturnClicked = {
+                if (_state.value.activeNudgeBanner?.id == bannerNudge.id) {
+                    _state.value = _state.value.copy(activeNudgeBanner = null)
+                }
+            }
+        )
+
         runCatching {
             // 1. Vibrate device and play notification sound immediately
             vibrateAndPlayAlertSound(longArrayOf(0, 280, 120, 380))

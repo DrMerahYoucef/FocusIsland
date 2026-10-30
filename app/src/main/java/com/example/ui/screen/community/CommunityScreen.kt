@@ -235,9 +235,7 @@ fun CommunityScreen(
                     onAcceptDuel = viewModel::acceptFriendChallenge,
                     onDeclineDuel = viewModel::declineFriendChallenge,
                     onEntryClick = { entry ->
-                        if (entry.uid != viewModel.currentUid) {
-                            selectedFriendId = entry.uid
-                        }
+                        selectedFriendId = entry.uid
                     }
                 )
                 else -> FriendsPane(
@@ -277,9 +275,10 @@ fun CommunityScreen(
         )
     }
 
-    val selectedProfile = remember(selectedFriendId, friends, leaderboard.entries) {
+    val selectedProfile = remember(selectedFriendId, friends, leaderboard.entries, myProfile, friendChallengeState.challengesWonCount) {
         val id = selectedFriendId ?: return@remember null
-        friends.firstOrNull { it.uid == id }
+        val base = myProfile?.takeIf { it.uid == id }
+            ?: friends.firstOrNull { it.uid == id }
             ?: leaderboard.entries.firstOrNull { it.uid == id }?.let {
                 UserProfile(
                     uid = it.uid,
@@ -287,9 +286,15 @@ fun CommunityScreen(
                     treeCount = it.treeCount,
                     totalMinutes = it.totalMinutes,
                     points = it.points,
-                    currentStreak = it.currentStreak
+                    currentStreak = it.currentStreak,
+                    challengesWon = it.challengesWon
                 )
             }
+        if (base != null && base.uid == viewModel.currentUid) {
+            base.copy(challengesWon = maxOf(base.challengesWon, friendChallengeState.challengesWonCount))
+        } else {
+            base
+        }
     }
 
     selectedProfile?.let { friend ->
@@ -470,16 +475,12 @@ private fun LeaderboardRow(
     val name = entry.username.ifBlank { stringResource(R.string.community_unnamed) }
     val streak = pluralStringResource(R.plurals.community_streak_days, entry.currentStreak, entry.currentStreak)
     ListItem(
-        modifier = if (!isMe) {
-            Modifier
-                .clickable(
-                    onClickLabel = if (relation == Relation.FRIEND) stringResource(R.string.friend_duel_challenge_short) else null,
-                    onClick = onClick
-                )
-                .testTag("leaderboard_row_${entry.uid}")
-        } else {
-            Modifier.testTag("leaderboard_row_me")
-        },
+        modifier = Modifier
+            .clickable(
+                onClickLabel = stringResource(R.string.community_open_profile),
+                onClick = onClick
+            )
+            .testTag(if (isMe) "leaderboard_row_me" else "leaderboard_row_${entry.uid}"),
         colors = ListItemDefaults.colors(
             containerColor = if (isMe) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
         ),
@@ -490,12 +491,43 @@ private fun LeaderboardRow(
             }
         },
         headlineContent = {
-            Text(
-                text = if (isMe) stringResource(R.string.community_you_suffix, name) else name,
-                fontWeight = if (isMe) FontWeight.SemiBold else null,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+            ) {
+                Text(
+                    text = if (isMe) stringResource(R.string.community_you_suffix, name) else name,
+                    fontWeight = if (isMe) FontWeight.SemiBold else null,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                if (entry.challengesWon > 0) {
+                    Surface(
+                        color = androidx.compose.ui.graphics.Color(0xFFFFD54F).copy(alpha = 0.22f),
+                        shape = CircleShape
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.EmojiEvents,
+                                contentDescription = null,
+                                tint = androidx.compose.ui.graphics.Color(0xFFF59E0B),
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = entry.challengesWon.toString(),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = androidx.compose.ui.graphics.Color(0xFFD97706)
+                            )
+                        }
+                    }
+                }
+            }
         },
         supportingContent = {
             Text(
@@ -984,7 +1016,37 @@ private fun FriendSheet(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IslandThumb(friend.treeCount, friend.points)
                 Spacer(Modifier.size(Spacing.md))
-                Text(name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Text(name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
+                    Surface(
+                        color = androidx.compose.ui.graphics.Color(0xFFFFD54F).copy(alpha = 0.24f),
+                        shape = CircleShape,
+                        modifier = Modifier.testTag("user_challenges_won_badge")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.EmojiEvents,
+                                contentDescription = null,
+                                tint = androidx.compose.ui.graphics.Color(0xFFF59E0B),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = pluralStringResource(
+                                    R.plurals.community_challenges_won_badge,
+                                    friend.challengesWon,
+                                    friend.challengesWon
+                                ),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = androidx.compose.ui.graphics.Color(0xFFD97706)
+                            )
+                        }
+                    }
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 StatTile(stringResource(R.string.community_sort_points), formatInt(friend.points), Icons.Rounded.Star, Modifier.weight(1f))
@@ -998,6 +1060,15 @@ private fun FriendSheet(
                     Icons.Rounded.LocalFireDepartment,
                     Modifier.weight(1f),
                     tint = MaterialTheme.colorScheme.secondary
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                StatTile(
+                    stringResource(R.string.community_challenges_won),
+                    formatInt(friend.challengesWon),
+                    Icons.Rounded.EmojiEvents,
+                    Modifier.fillMaxWidth(),
+                    tint = androidx.compose.ui.graphics.Color(0xFFF59E0B)
                 )
             }
             if (friend.currentRadio.isNotBlank()) {
