@@ -447,6 +447,77 @@ class StudyGroupChallengeTest {
         )
         assertEquals("creator", after180m.findTargetReachedWinnerUid())
     }
+
+    @Test
+    fun `participants start at zero minutes and only post-creation focus minutes count`() {
+        val t0 = 9_000_000L
+        // Creator already had 90m today before starting the challenge; friend had 50m today
+        val creator = StudyGroupMember(
+            uid = "creator",
+            name = "Youcef",
+            minutes = 0,
+            baselineMinutes = 90,
+            timerState = StudyMemberTimerState.FOCUSING,
+            roleStatus = StudyMemberRoleStatus.ACTIVE,
+            invitedAt = t0,
+            updatedAt = t0
+        )
+        val friend = StudyGroupMember(
+            uid = "friend1",
+            name = "Amine",
+            minutes = 0,
+            baselineMinutes = 50,
+            timerState = StudyMemberTimerState.IDLE,
+            roleStatus = StudyMemberRoleStatus.INVITED,
+            invitedAt = t0,
+            updatedAt = t0
+        )
+
+        val challenge = FriendChallenge(
+            id = "2026-10-30_creator_$t0",
+            challengerUid = "creator",
+            challengerName = "Youcef",
+            challengerMinutes = 0,
+            opponentUid = "friend1",
+            opponentName = "Amine",
+            opponentMinutes = 0,
+            dayKey = "2026-10-30",
+            createdAt = t0,
+            acceptedAt = t0,
+            endAt = t0 + 86_400_000L,
+            status = FriendChallengeStatus.ACTIVE,
+            members = listOf(creator, friend)
+        )
+
+        // At challenge start, both have 0 challenge minutes even though daily totals are 90m and 50m
+        assertEquals(0, creator.challengeMinutesFromToday(90))
+        assertEquals(0, friend.challengeMinutesFromToday(50))
+        assertEquals(0, challenge.myMinutes("creator"))
+        assertEquals(0, challenge.friendMinutes("creator"))
+
+        // After focusing 25m in the challenge (daily total = 115m for creator, 80m for friend = 30m in challenge)
+        assertEquals(25, creator.challengeMinutesFromToday(115))
+        assertEquals(30, friend.challengeMinutesFromToday(80))
+
+        // JSON serialization and mergeChallenges preserve baselineMinutes
+        val roundTrip = challengeFromJson(challenge.toJson())
+        assertEquals(90, roundTrip.allMembers().first { it.uid == "creator" }.baselineMinutes)
+        assertEquals(50, roundTrip.allMembers().first { it.uid == "friend1" }.baselineMinutes)
+
+        val progressed = challenge.copy(
+            challengerMinutes = 25,
+            opponentMinutes = 30,
+            members = listOf(
+                creator.copy(minutes = 25, updatedAt = t0 + 25 * 60_000L),
+                friend.copy(minutes = 30, roleStatus = StudyMemberRoleStatus.ACTIVE, updatedAt = t0 + 30 * 60_000L)
+            )
+        )
+        val merged = mergeChallenges(challenge, progressed)
+        assertEquals(25, merged.myMinutes("creator"))
+        assertEquals(30, merged.friendMinutes("creator"))
+        assertEquals(90, merged.allMembers().first { it.uid == "creator" }.baselineMinutes)
+        assertEquals(50, merged.allMembers().first { it.uid == "friend1" }.baselineMinutes)
+    }
 }
 
 

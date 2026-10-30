@@ -1275,6 +1275,8 @@
     <string name="challenge_podium_winner_badge">Gagnant</string>
     <string name="challenge_podium_other_participants">Autres participants</string>
     <string name="challenge_podium_tap_hint">Touchez pour voir le podium et le classement</string>
+    <string name="challenge_podium_participant_focused_time">Focus : %1$s</string>
+    <string name="friend_duel_history_score_formatted">Vous %1$s · %2$s %3$s</string>
     <string name="personal_challenge_summary_title">Résumé du défi personnel</string>
     <string name="community_challenges_won">Défis gagnés</string>
     <plurals name="community_challenges_won_badge">

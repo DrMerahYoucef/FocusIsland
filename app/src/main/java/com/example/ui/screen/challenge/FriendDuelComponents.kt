@@ -2324,8 +2324,10 @@ fun FriendDuelHistoryRow(
             },
             supportingContent = {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    val formattedMyTime = formatStudyMinutesText(myMins)
+                    val formattedFriendTime = formatStudyMinutesText(friendMins)
                     Text(
-                        text = "$dayText · $modePrefix · ${stringResource(R.string.friend_duel_history_score, myMins, friendName, friendMins)}",
+                        text = "$dayText · $modePrefix · ${stringResource(R.string.friend_duel_history_score_formatted, formattedMyTime, friendName, formattedFriendTime)}",
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -2740,17 +2742,57 @@ private fun PodiumStandingRow(
                     )
                 }
 
-                if (participant.roleStatus == StudyMemberRoleStatus.SURRENDERED) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                ) {
+                    if (participant.roleStatus == StudyMemberRoleStatus.SURRENDERED) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        ) {
+                            Text(
+                                text = stringResource(R.string.friend_duel_badge_surrendered),
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
                     Surface(
                         shape = CircleShape,
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        color = if (isMe) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.secondaryContainer
+                        },
+                        contentColor = if (isMe) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        },
+                        modifier = Modifier.testTag("podium_standing_focused_time_$place")
                     ) {
-                        Text(
-                            text = stringResource(R.string.friend_duel_badge_surrendered),
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Schedule,
+                                contentDescription = null,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                text = stringResource(
+                                    R.string.challenge_podium_participant_focused_time,
+                                    formatStudyMinutesText(participant.minutes)
+                                ),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -2765,8 +2807,9 @@ private fun PodiumStandingRow(
 }
 
 /**
- * Interactive on-screen toast banner displayed over any screen when a friend in a challenge
- * sends a "Return to Focus" nudge, featuring a button to immediately return to focus.
+ * Sleek, compact pill-shaped toast banner displayed at the top of the screen when a friend
+ * in a challenge sends a "Return to Focus" nudge. Tapping the toast returns to focus;
+ * auto-dismisses after 4.5 seconds.
  */
 @Composable
 fun NudgeToastBanner(
@@ -2775,76 +2818,63 @@ fun NudgeToastBanner(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    LaunchedEffect(nudge.id) {
+        delay(4_500L)
+        onDismiss()
+    }
     val friendName = nudge.fromName.ifBlank { stringResource(R.string.community_unnamed) }
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
+    val colorScheme = MaterialTheme.colorScheme
+    Surface(
+        onClick = onReturnToFocus,
+        shape = CircleShape,
+        color = colorScheme.surfaceContainerHigh,
+        contentColor = colorScheme.onSurface,
+        tonalElevation = 6.dp,
+        shadowElevation = 8.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, colorScheme.primary.copy(alpha = 0.55f)),
         modifier = modifier
-            .fillMaxWidth()
-            .widthIn(max = 520.dp)
-            .padding(horizontal = Spacing.md, vertical = Spacing.sm)
+            .padding(horizontal = Spacing.md, vertical = Spacing.xs)
+            .widthIn(max = 320.dp)
             .testTag("nudge_toast_banner")
     ) {
-        Column(
-            modifier = Modifier.padding(Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+            Surface(
+                shape = CircleShape,
+                color = colorScheme.primaryContainer,
+                contentColor = colorScheme.onPrimaryContainer,
+                modifier = Modifier.size(28.dp)
             ) {
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Rounded.NotificationsActive,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Rounded.NotificationsActive,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp)
+                    )
                 }
+            }
+            Column(
+                modifier = Modifier.weight(1f, fill = false),
+                verticalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
                 Text(
                     text = stringResource(R.string.nudge_banner_title, friendName),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f)
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-            }
-            Text(
-                text = stringResource(R.string.nudge_banner_message),
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.xs, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.testTag("nudge_banner_dismiss_button")
-                ) {
-                    Text(stringResource(R.string.challenge_dismiss))
-                }
-                Button(
-                    onClick = onReturnToFocus,
-                    modifier = Modifier.testTag("nudge_banner_return_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.PlayCircle,
-                        contentDescription = null,
-                        modifier = Modifier.size(ButtonDefaults.IconSize)
-                    )
-                    Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                    Text(stringResource(R.string.nudge_banner_return_button))
-                }
+                Text(
+                    text = stringResource(R.string.nudge_banner_message),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

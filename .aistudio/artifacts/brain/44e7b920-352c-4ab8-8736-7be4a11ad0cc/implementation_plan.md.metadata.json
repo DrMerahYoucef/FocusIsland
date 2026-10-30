@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for enforcing app blocking while keeping the Pomodoro running, adding a draggable floating Return to Focus bubble when switching to non-blocked apps, syncing challenges to Firebase with a 1st/2nd/3rd podium detail view and leaderboard win badges, showing an interactive Return to Focus toast banner on friend nudges, and distinguishing session break turns from paused/idle states in challenges.",
-  "updatedAt":  "2026-10-30T01:18:52.471708401Z",
+  "summary":  "Implementation plan to initialize all challenge participants at zero focused minutes (tracking per-participant baseline minutes from challenge creation) and display each participant's challenge-specific focused time in saved challenge details.",
+  "updatedAt":  "2026-10-30T02:42:39.215920571Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

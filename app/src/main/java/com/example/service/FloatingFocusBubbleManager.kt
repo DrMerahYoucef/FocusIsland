@@ -3,7 +3,7 @@ package com.example.service
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
+import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -22,24 +22,31 @@ import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.compose.material3.ColorScheme
+import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.R
+import com.example.ui.theme.AppStyle
+import com.example.ui.theme.FocusStyles
+import com.example.ui.theme.ThemeMode
 import kotlin.math.abs
 
 /**
  * Manages system-level floating ("volant") overlays drawn over other apps when `SYSTEM_ALERT_WINDOW`
  * ("Display over other apps") is granted:
  *
- * 1. **Draggable Return-to-Focus Volant Bubble**: Appears when the Pomodoro timer is auto-paused because
+ * 1. **Draggable Return-to-Focus Volant Capsule**: Appears when the Pomodoro timer is auto-paused because
  *    the user switched to a non-blocked app. Can be freely dragged anywhere on the screen with a finger
  *    and stays visible until the user taps it to return to Focus Island or opens Focus Island directly.
- * 2. **Friend Focus Nudge Toast Banner**: Appears over any screen when a friend in a Study Group / Challenge
- *    sends a "Return to Focus" nudge, complete with a "Return to Focus" action button.
+ * 2. **Friend Focus Nudge Toast Capsule**: Appears over any screen when a friend in a Study Group / Challenge
+ *    sends a "Return to Focus" nudge. Tapping anywhere on the capsule returns to focus.
  */
 object FloatingFocusBubbleManager {
 
     private const val TAG = "FloatingFocusBubble"
+    private const val PREFS_NAME = "focusflow_prefs"
+    private const val KEY_THEME_MODE = "theme_mode"
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @Volatile
@@ -50,6 +57,7 @@ object FloatingFocusBubbleManager {
     @Volatile
     private var nudgeBannerView: View? = null
     private var nudgeParams: WindowManager.LayoutParams? = null
+    private var nudgeAutoHideRunnable: Runnable? = null
 
     val isPausedBubbleShowing: Boolean
         get() = pausedBubbleView != null
@@ -57,8 +65,24 @@ object FloatingFocusBubbleManager {
     val isNudgeBannerShowing: Boolean
         get() = nudgeBannerView != null
 
+    private fun resolveActiveColorScheme(context: Context): ColorScheme {
+        val style = AppStyle.read(context)
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val themeMode = ThemeMode.from(prefs.getString(KEY_THEME_MODE, null))
+        val isDark = when (themeMode) {
+            ThemeMode.DARK -> true
+            ThemeMode.LIGHT -> false
+            ThemeMode.SYSTEM -> {
+                val nightMask = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+                nightMask == Configuration.UI_MODE_NIGHT_YES
+            }
+        }
+        return FocusStyles.of(style).colors(isDark)
+    }
+
     /**
-     * Shows or updates the draggable floating ("volant") Return-to-Focus notification bubble.
+     * Shows or updates the sleek, buttonless draggable floating ("volant") Return-to-Focus capsule
+     * styled with the user's active [AppStyle] colors.
      */
     fun showPausedBubble(context: Context, remainingClockText: String) {
         val appContext = context.applicationContext
@@ -75,6 +99,7 @@ object FloatingFocusBubbleManager {
 
                 val density = appContext.resources.displayMetrics.density
                 fun dp(value: Int): Int = (value * density).toInt()
+                val scheme = resolveActiveColorScheme(appContext)
 
                 val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -92,80 +117,73 @@ object FloatingFocusBubbleManager {
                         WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                     PixelFormat.TRANSLUCENT
                 ).apply {
-                    gravity = Gravity.TOP or Gravity.START
-                    x = dp(16)
-                    y = dp(110)
+                    gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                    x = 0
+                    y = dp(48)
                 }
 
                 val root = LinearLayout(appContext).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(14), dp(10), dp(14), dp(10))
+                    setPadding(dp(12), dp(7), dp(14), dp(7))
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.RECTANGLE
-                        cornerRadius = dp(28).toFloat()
-                        setColor(Color.parseColor("#EE132A2E"))
-                        setStroke(dp(2), Color.parseColor("#FF2DD4BF"))
+                        cornerRadius = dp(999).toFloat()
+                        setColor(scheme.surfaceContainerHigh.toArgb())
+                        setStroke(dp(1), scheme.primary.copy(alpha = 0.55f).toArgb())
                     }
-                    elevation = dp(10).toFloat()
+                    elevation = dp(8).toFloat()
+                }
+
+                val iconBadge = LinearLayout(appContext).apply {
+                    gravity = Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+                        marginEnd = dp(10)
+                    }
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(scheme.primaryContainer.toArgb())
+                    }
                 }
 
                 val iconView = ImageView(appContext).apply {
                     setImageResource(R.drawable.ic_widget_flame)
-                    setColorFilter(Color.parseColor("#FF2DD4BF"))
-                    layoutParams = LinearLayout.LayoutParams(dp(26), dp(26)).apply {
-                        marginEnd = dp(10)
-                    }
+                    setColorFilter(scheme.onPrimaryContainer.toArgb())
+                    layoutParams = LinearLayout.LayoutParams(dp(15), dp(15))
                 }
-                root.addView(iconView)
+                iconBadge.addView(iconView)
+                root.addView(iconBadge)
 
                 val textColumn = LinearLayout(appContext).apply {
                     orientation = LinearLayout.VERTICAL
                     layoutParams = LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.WRAP_CONTENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        marginEnd = dp(12)
-                    }
+                    )
                 }
 
                 val titleTv = TextView(appContext).apply {
                     text = appContext.getString(R.string.floating_focus_paused_title, remainingClockText)
-                    setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                    setTextColor(scheme.onSurface.toArgb())
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
                     typeface = Typeface.DEFAULT_BOLD
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
+                    maxWidth = dp(240)
                 }
                 pausedTitleView = titleTv
                 textColumn.addView(titleTv)
 
                 val subtitleTv = TextView(appContext).apply {
                     text = appContext.getString(R.string.floating_focus_paused_subtitle)
-                    setTextColor(Color.parseColor("#B8E2F2"))
+                    setTextColor(scheme.onSurfaceVariant.toArgb())
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
+                    maxWidth = dp(240)
                 }
                 textColumn.addView(subtitleTv)
                 root.addView(textColumn)
-
-                val ctaTv = TextView(appContext).apply {
-                    text = appContext.getString(R.string.floating_focus_return_cta)
-                    setTextColor(Color.parseColor("#082026"))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    typeface = Typeface.DEFAULT_BOLD
-                    setPadding(dp(12), dp(6), dp(12), dp(6))
-                    background = GradientDrawable().apply {
-                        shape = GradientDrawable.RECTANGLE
-                        cornerRadius = dp(18).toFloat()
-                        setColor(Color.parseColor("#FF2DD4BF"))
-                    }
-                    setOnClickListener {
-                        returnToFocusApp(appContext)
-                    }
-                }
-                root.addView(ctaTv)
 
                 attachDragAndTapListener(
                     view = root,
@@ -200,7 +218,8 @@ object FloatingFocusBubbleManager {
     }
 
     /**
-     * Shows an interactive floating toast banner over any screen when a friend sends a "Return to Focus" nudge.
+     * Shows a sleek, compact pill-shaped toast banner over any screen when a friend sends a "Return to Focus" nudge,
+     * styled with the user's active [AppStyle] colors.
      */
     fun showNudgeBanner(
         context: Context,
@@ -213,6 +232,9 @@ object FloatingFocusBubbleManager {
                 if (!Settings.canDrawOverlays(appContext)) return@post
                 val wm = appContext.getSystemService(WindowManager::class.java) ?: return@post
 
+                nudgeAutoHideRunnable?.let { mainHandler.removeCallbacks(it) }
+                nudgeAutoHideRunnable = null
+
                 // Remove any previous nudge banner before showing the fresh one
                 nudgeBannerView?.let { old ->
                     runCatching { wm.removeViewImmediate(old) }
@@ -222,7 +244,7 @@ object FloatingFocusBubbleManager {
 
                 val density = appContext.resources.displayMetrics.density
                 fun dp(value: Int): Int = (value * density).toInt()
-                val screenWidth = appContext.resources.displayMetrics.widthPixels
+                val scheme = resolveActiveColorScheme(appContext)
 
                 val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -231,9 +253,8 @@ object FloatingFocusBubbleManager {
                     WindowManager.LayoutParams.TYPE_PHONE
                 }
 
-                val bannerWidth = (screenWidth - dp(24)).coerceAtMost(dp(420))
                 val params = WindowManager.LayoutParams(
-                    bannerWidth,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
                     WindowManager.LayoutParams.WRAP_CONTENT,
                     overlayType,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -243,98 +264,70 @@ object FloatingFocusBubbleManager {
                 ).apply {
                     gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
                     x = 0
-                    y = dp(48)
+                    y = dp(44)
                 }
 
                 val root = LinearLayout(appContext).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(dp(16), dp(14), dp(16), dp(14))
-                    background = GradientDrawable().apply {
-                        shape = GradientDrawable.RECTANGLE
-                        cornerRadius = dp(22).toFloat()
-                        setColor(Color.parseColor("#F2162930"))
-                        setStroke(dp(2), Color.parseColor("#FFF59E0B"))
-                    }
-                    elevation = dp(12).toFloat()
-                }
-
-                val topRow = LinearLayout(appContext).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(12), dp(7), dp(14), dp(7))
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(999).toFloat()
+                        setColor(scheme.surfaceContainerHigh.toArgb())
+                        setStroke(dp(1), scheme.primary.copy(alpha = 0.55f).toArgb())
+                    }
+                    elevation = dp(8).toFloat()
+                }
+
+                val iconBadge = LinearLayout(appContext).apply {
+                    gravity = Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+                        marginEnd = dp(10)
+                    }
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(scheme.primaryContainer.toArgb())
+                    }
                 }
 
                 val iconView = ImageView(appContext).apply {
                     setImageResource(R.drawable.ic_widget_flame)
-                    setColorFilter(Color.parseColor("#FFF59E0B"))
-                    layoutParams = LinearLayout.LayoutParams(dp(24), dp(24)).apply {
-                        marginEnd = dp(10)
-                    }
+                    setColorFilter(scheme.onPrimaryContainer.toArgb())
+                    layoutParams = LinearLayout.LayoutParams(dp(15), dp(15))
                 }
-                topRow.addView(iconView)
+                iconBadge.addView(iconView)
+                root.addView(iconBadge)
 
                 val textCol = LinearLayout(appContext).apply {
                     orientation = LinearLayout.VERTICAL
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
                 }
 
                 val titleTv = TextView(appContext).apply {
                     text = appContext.getString(R.string.nudge_banner_title, fromFriendName)
-                    setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                    setTextColor(scheme.onSurface.toArgb())
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
                     typeface = Typeface.DEFAULT_BOLD
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    maxWidth = dp(230)
                 }
                 textCol.addView(titleTv)
 
                 val bodyTv = TextView(appContext).apply {
                     text = appContext.getString(R.string.nudge_banner_message)
-                    setTextColor(Color.parseColor("#D5E8EE"))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    setTextColor(scheme.onSurfaceVariant.toArgb())
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    maxWidth = dp(230)
                 }
                 textCol.addView(bodyTv)
-                topRow.addView(textCol)
-
-                val closeTv = TextView(appContext).apply {
-                    text = "✕"
-                    setTextColor(Color.parseColor("#99FFFFFF"))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                    setPadding(dp(8), dp(4), dp(4), dp(4))
-                    setOnClickListener {
-                        hideNudgeBanner(appContext)
-                    }
-                }
-                topRow.addView(closeTv)
-                root.addView(topRow)
-
-                val actionRow = LinearLayout(appContext).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.END
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        topMargin = dp(10)
-                    }
-                }
-
-                val returnBtn = TextView(appContext).apply {
-                    text = appContext.getString(R.string.nudge_banner_return_button)
-                    setTextColor(Color.parseColor("#1A1300"))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    typeface = Typeface.DEFAULT_BOLD
-                    setPadding(dp(16), dp(8), dp(16), dp(8))
-                    background = GradientDrawable().apply {
-                        shape = GradientDrawable.RECTANGLE
-                        cornerRadius = dp(18).toFloat()
-                        setColor(Color.parseColor("#FFF59E0B"))
-                    }
-                    setOnClickListener {
-                        hideNudgeBanner(appContext)
-                        onReturnClicked?.invoke()
-                        returnToFocusAndStartTimer(appContext)
-                    }
-                }
-                actionRow.addView(returnBtn)
-                root.addView(actionRow)
+                root.addView(textCol)
 
                 attachDragAndTapListener(
                     view = root,
@@ -350,6 +343,13 @@ object FloatingFocusBubbleManager {
                 wm.addView(root, params)
                 nudgeBannerView = root
                 nudgeParams = params
+
+                val autoHide = Runnable {
+                    hideNudgeBanner(appContext)
+                    onReturnClicked?.invoke()
+                }
+                nudgeAutoHideRunnable = autoHide
+                mainHandler.postDelayed(autoHide, 4_500L)
             }.onFailure {
                 Log.w(TAG, "Could not show floating nudge banner: ${it.message}")
             }
@@ -359,6 +359,8 @@ object FloatingFocusBubbleManager {
     fun hideNudgeBanner(context: Context) {
         val appContext = context.applicationContext
         mainHandler.post {
+            nudgeAutoHideRunnable?.let { mainHandler.removeCallbacks(it) }
+            nudgeAutoHideRunnable = null
             val view = nudgeBannerView ?: return@post
             nudgeBannerView = null
             nudgeParams = null

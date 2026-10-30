@@ -61,6 +61,9 @@ class FocusFlowApplication : Application() {
     private var startedActivitiesCount = 0
     private var autoPauseJob: kotlinx.coroutines.Job? = null
 
+    val isAppInForeground: Boolean
+        get() = startedActivitiesCount > 0
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -104,6 +107,7 @@ class FocusFlowApplication : Application() {
                 autoPauseJob?.cancel()
                 autoPauseJob = null
                 com.example.service.FloatingFocusBubbleManager.hidePausedBubble(this@FocusFlowApplication)
+                com.example.service.FloatingFocusBubbleManager.hideNudgeBanner(this@FocusFlowApplication)
                 if (activity is FocusOverlayActivity) {
                     if (PomodoroTimerService.state.value.isAutoPausedByAppSwitch) {
                         runCatching {
