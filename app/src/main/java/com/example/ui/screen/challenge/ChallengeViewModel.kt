@@ -58,13 +58,22 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun clearHistory() = store.clearHistory()
 
-    fun startOrInviteStudyGroup(friends: List<StudyFriendOption>, targetMinutes: Int = 0) {
+    fun startOrInviteStudyGroup(
+        friends: List<StudyFriendOption>,
+        targetMinutes: Int = 0,
+        customEndAtMs: Long = 0L,
+        customEndHourLabel: String = "",
+        startFromZero: Boolean = true
+    ) {
         if (friends.isEmpty()) return
         viewModelScope.launch {
             friendRepo.startOrInviteToStudyGroup(
                 challengerName = friendState.value.myName.ifBlank { "You" },
                 friendsToInvite = friends,
-                targetMinutes = targetMinutes
+                targetMinutes = targetMinutes,
+                customEndAtMs = customEndAtMs,
+                customEndHourLabel = customEndHourLabel,
+                startFromZero = startFromZero
             )
         }
     }
@@ -135,6 +144,14 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun dismissNudgeBanner() {
         friendRepo.dismissNudgeBanner()
+    }
+
+    fun hideInviteBanner(challengeId: String) {
+        friendRepo.hideInviteBanner(challengeId)
+    }
+
+    fun dismissFocusInviteBanner(challengeId: String) {
+        friendRepo.dismissFocusInviteBanner(challengeId)
     }
 
     private fun finish(result: ChallengeResult): Challenge? {

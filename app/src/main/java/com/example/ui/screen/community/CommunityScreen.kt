@@ -102,14 +102,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.Color
 import com.example.R
 import com.example.data.challenge.FriendChallenge
 import com.example.data.challenge.FriendChallengeState
+import com.example.data.challenge.StudyMemberTimerState
 import com.example.ui.designsystem.ConfirmDialog
+import com.example.ui.screen.challenge.ChallengeDurationMode
+import com.example.ui.screen.challenge.ChallengeInitConfig
 import com.example.ui.screen.challenge.ChallengeInviteModeSelector
 import com.example.ui.screen.challenge.ChallengeTime
 import com.example.ui.screen.challenge.FriendDuelIncomingCard
 import com.example.ui.screen.challenge.FriendDuelVictoryCelebration
+import java.time.LocalTime
 import com.example.ui.designsystem.EmptyState
 import com.example.ui.designsystem.LoadingState
 import com.example.ui.designsystem.SectionHeader
@@ -280,18 +287,22 @@ fun CommunityScreen(
         val base = myProfile?.takeIf { it.uid == id }
             ?: friends.firstOrNull { it.uid == id }
             ?: leaderboard.entries.firstOrNull { it.uid == id }?.let {
-                UserProfile(
-                    uid = it.uid,
-                    username = it.username,
-                    treeCount = it.treeCount,
-                    totalMinutes = it.totalMinutes,
-                    points = it.points,
-                    currentStreak = it.currentStreak,
-                    challengesWon = it.challengesWon
-                )
-            }
+                    UserProfile(
+                        uid = it.uid,
+                        username = it.username,
+                        treeCount = it.treeCount,
+                        totalMinutes = it.totalMinutes,
+                        points = it.points,
+                        currentStreak = it.currentStreak,
+                        challengesWon = it.challengesWon,
+                        timerState = it.timerState
+                    )
+                }
         if (base != null && base.uid == viewModel.currentUid) {
-            base.copy(challengesWon = maxOf(base.challengesWon, friendChallengeState.challengesWonCount))
+            base.copy(
+                challengesWon = maxOf(base.challengesWon, friendChallengeState.challengesWonCount),
+                timerState = friendChallengeState.myTimerState
+            )
         } else {
             base
         }
@@ -312,8 +323,15 @@ fun CommunityScreen(
             hasActiveDuel = isAlreadyInGroup,
             canAddToStudyGroup = canAddToExistingGroup,
             isPendingChallenge = isPendingChallenge,
-            onChallenge = { targetMinutes ->
-                viewModel.challengeFriend(friend.uid, friend.username, targetMinutes)
+            onChallenge = { config ->
+                viewModel.challengeFriend(
+                    opponentUid = friend.uid,
+                    opponentName = friend.username,
+                    targetMinutes = config.targetMinutes,
+                    customEndAtMs = config.customEndAtMs,
+                    customEndHourLabel = config.customEndHourLabel,
+                    startFromZero = config.startFromZero
+                )
                 selectedFriendId = null
             },
             onRemove = {
@@ -487,7 +505,11 @@ private fun LeaderboardRow(
         leadingContent = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 RankLabel(rank)
-                Avatar(name)
+                Avatar(
+                    name = name,
+                    status = if (relation == Relation.FRIEND || isMe) entry.timerState else null,
+                    uidTag = entry.uid
+                )
             }
         },
         headlineContent = {
@@ -502,6 +524,12 @@ private fun LeaderboardRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false)
                 )
+                if (relation == Relation.FRIEND) {
+                    FriendStatusDot(
+                        status = entry.timerState,
+                        modifier = Modifier.testTag("leaderboard_friend_status_dot_${entry.uid}")
+                    )
+                }
                 if (entry.challengesWon > 0) {
                     Surface(
                         color = androidx.compose.ui.graphics.Color(0xFFFFD54F).copy(alpha = 0.22f),
@@ -710,9 +738,33 @@ private fun RequestCard(request: FriendRequest, actions: CommunityActions) {
 private fun FriendRow(friend: UserProfile, onClick: () -> Unit) {
     val name = friend.username.ifBlank { stringResource(R.string.community_unnamed) }
     ListItem(
-        modifier = Modifier.clickable(onClickLabel = stringResource(R.string.community_open_profile), onClick = onClick),
-        leadingContent = { Avatar(name) },
-        headlineContent = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        modifier = Modifier
+            .clickable(onClickLabel = stringResource(R.string.community_open_profile), onClick = onClick)
+            .testTag("friend_row_${friend.uid}"),
+        leadingContent = {
+            Avatar(
+                name = name,
+                status = friend.timerState,
+                uidTag = friend.uid
+            )
+        },
+        headlineContent = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+            ) {
+                Text(
+                    text = name,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                FriendStatusChip(
+                    status = friend.timerState,
+                    modifier = Modifier.testTag("friend_row_status_${friend.uid}")
+                )
+            }
+        },
         supportingContent = {
             if (friend.currentRadio.isNotBlank()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -844,17 +896,53 @@ internal fun ArchipelagoCard(me: UserProfile?, friends: List<UserProfile>, onFri
                     // Wave marks move with the view, so the sea feels endless.
                     drawSeaMarks(horizon, cam * (z * unit), ARCHIPELAGO_SPACING * 0.5f * z * unit, colors)
                 }
+                data class IslandPerson(
+                    val spot: Offset,
+                    val baseDp: Float,
+                    val sessionsCount: Int,
+                    val pointsCount: Int,
+                    val name: String,
+                    val statusColor: Color?
+                )
                 val people = buildList {
-                    add(Triple(spots[0], Triple(MY_ISLAND_DP, me?.treeCount ?: 0, me?.points ?: 0), me?.username.orEmpty()))
-                    friends.forEachIndexed { i, f -> add(Triple(spots[i + 1], Triple(FRIEND_ISLAND_DP, f.treeCount, f.points), f.username)) }
-                }.sortedBy { it.first.y }
-                people.forEach { (spot, metrics, name) ->
-                    val (baseDp, sessionsCount, pointsCount) = metrics
-                    val center = toScreen(spot, z, cam)
-                    val r = IslandRenderer.radius(baseDp * z * unit, sessionsCount, pointsCount)
+                    add(
+                        IslandPerson(
+                            spot = spots[0],
+                            baseDp = MY_ISLAND_DP,
+                            sessionsCount = me?.treeCount ?: 0,
+                            pointsCount = me?.points ?: 0,
+                            name = me?.username.orEmpty(),
+                            statusColor = null
+                        )
+                    )
+                    friends.forEachIndexed { i, f ->
+                        add(
+                            IslandPerson(
+                                spot = spots[i + 1],
+                                baseDp = FRIEND_ISLAND_DP,
+                                sessionsCount = f.treeCount,
+                                pointsCount = f.points,
+                                name = f.username,
+                                statusColor = friendStatusColor(f.timerState)
+                            )
+                        )
+                    }
+                }.sortedBy { it.spot.y }
+                people.forEach { person ->
+                    val center = toScreen(person.spot, z, cam)
+                    val r = IslandRenderer.radius(person.baseDp * z * unit, person.sessionsCount, person.pointsCount)
                     // Skip islands far outside the card.
                     if (center.x + r * 1.5f < 0f || center.x - r * 1.5f > this.size.width || center.y - r * 1.6f > this.size.height || center.y + r < 0f) return@forEach
-                    drawIslandWithLabel(center, r, sessionsCount, pointsCount, name, labelSize, colors)
+                    drawIslandWithLabel(
+                        center = center,
+                        r = r,
+                        sessions = person.sessionsCount,
+                        points = person.pointsCount,
+                        label = person.name,
+                        labelPx = labelSize,
+                        colors = colors,
+                        statusDotColor = person.statusColor
+                    )
                 }
             }
             Text(
@@ -894,23 +982,29 @@ private fun DrawScope.drawIslandWithLabel(
     points: Int,
     label: String,
     labelPx: Float,
-    colors: IslandColors
+    colors: IslandColors,
+    statusDotColor: Color? = null
 ) {
     with(IslandRenderer) { drawIsland(center, r, sessions, colors, points) }
     if (label.isBlank() || labelPx <= 0f) return
-    drawContext.canvas.nativeCanvas.drawText(
-        label.take(14),
-        center.x,
-        center.y - IslandRenderer.crownHeight(r, sessions, points) - 6f,
-        android.graphics.Paint().apply {
-            isAntiAlias = true
-            color = colors.label.toArgb()
-            textSize = labelPx
-            textAlign = android.graphics.Paint.Align.CENTER
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setShadowLayer(4f, 1f, 1f, colors.labelShadow.toArgb())
-        }
-    )
+    val trimmed = label.take(14)
+    val labelY = center.y - IslandRenderer.crownHeight(r, sessions, points) - 6f
+    val paint = android.graphics.Paint().apply {
+        isAntiAlias = true
+        color = colors.label.toArgb()
+        textSize = labelPx
+        textAlign = android.graphics.Paint.Align.CENTER
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        setShadowLayer(4f, 1f, 1f, colors.labelShadow.toArgb())
+    }
+    drawContext.canvas.nativeCanvas.drawText(trimmed, center.x, labelY, paint)
+    if (statusDotColor != null) {
+        val textHalfWidth = paint.measureText(trimmed) / 2f
+        val dotRadius = (labelPx * 0.34f).coerceAtLeast(3.5f)
+        val dotCenter = Offset(center.x - textHalfWidth - dotRadius * 2.1f, labelY - labelPx * 0.34f)
+        drawCircle(color = colors.labelShadow.copy(alpha = 0.75f), radius = dotRadius + 1.5f, center = dotCenter)
+        drawCircle(color = statusDotColor, radius = dotRadius, center = dotCenter)
+    }
 }
 
 // ====================================================================== Sheets
@@ -987,17 +1081,25 @@ private fun FriendSheet(
     hasActiveDuel: Boolean = false,
     canAddToStudyGroup: Boolean = false,
     isPendingChallenge: Boolean = false,
-    onChallenge: (Int) -> Unit = {},
+    onChallenge: (ChallengeInitConfig) -> Unit = {},
     onRemove: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var confirmRemove by remember { mutableStateOf(false) }
-    var isTargetMode by rememberSaveable(friend.uid) { mutableStateOf(false) }
+    var durationMode by rememberSaveable(friend.uid) { mutableStateOf(ChallengeDurationMode.ALL_DAY) }
     var hoursInput by rememberSaveable(friend.uid) { mutableStateOf("2") }
     var minutesInput by rememberSaveable(friend.uid) { mutableStateOf("0") }
+    var untilHour by rememberSaveable(friend.uid) {
+        mutableIntStateOf((LocalTime.now().hour + 2).coerceIn(1, 23))
+    }
+    var untilMinute by rememberSaveable(friend.uid) { mutableIntStateOf(0) }
+    var startFromZero by rememberSaveable(friend.uid) { mutableStateOf(true) }
+
     val targetTotalMinutes = (hoursInput.toIntOrNull() ?: 0) * 60 + (minutesInput.toIntOrNull() ?: 0)
     val showModeSelector = isFriend && !canAddToStudyGroup && !hasActiveDuel && !isPendingChallenge
-    val durationValid = !showModeSelector || !isTargetMode || targetTotalMinutes in 1..ChallengeTime.MAX_MINUTES
+    val durationValid = !showModeSelector ||
+        durationMode != ChallengeDurationMode.TARGET_HOURS ||
+        targetTotalMinutes in 1..ChallengeTime.MAX_MINUTES
     val name = friend.username.ifBlank { stringResource(R.string.community_unnamed) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -1017,7 +1119,18 @@ private fun FriendSheet(
                 IslandThumb(friend.treeCount, friend.points)
                 Spacer(Modifier.size(Spacing.md))
                 Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                    Text(name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                    ) {
+                        Text(name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
+                        if (isFriend) {
+                            FriendStatusChip(
+                                status = friend.timerState,
+                                modifier = Modifier.testTag("friend_sheet_status_${friend.uid}")
+                            )
+                        }
+                    }
                     Surface(
                         color = androidx.compose.ui.graphics.Color(0xFFFFD54F).copy(alpha = 0.24f),
                         shape = CircleShape,
@@ -1081,18 +1194,45 @@ private fun FriendSheet(
             if (isFriend) {
                 if (showModeSelector) {
                     ChallengeInviteModeSelector(
-                        isTargetMode = isTargetMode,
-                        onModeChange = { isTargetMode = it },
+                        isTargetMode = durationMode == ChallengeDurationMode.TARGET_HOURS,
+                        onModeChange = {},
                         hoursInput = hoursInput,
                         onHoursChange = { hoursInput = it },
                         minutesInput = minutesInput,
-                        onMinutesChange = { minutesInput = it }
+                        onMinutesChange = { minutesInput = it },
+                        durationMode = durationMode,
+                        onDurationModeChange = { durationMode = it },
+                        untilHour = untilHour,
+                        untilMinute = untilMinute,
+                        onUntilTimeChange = { h, m ->
+                            untilHour = h
+                            untilMinute = m
+                        },
+                        startFromZero = startFromZero,
+                        onStartFromZeroChange = { startFromZero = it }
                     )
                 }
                 Button(
                     onClick = {
-                        val chosenTarget = if (showModeSelector && isTargetMode) targetTotalMinutes else 0
-                        onChallenge(chosenTarget)
+                        val nowMs = System.currentTimeMillis()
+                        val chosenTarget = if (showModeSelector && durationMode == ChallengeDurationMode.TARGET_HOURS) {
+                            targetTotalMinutes
+                        } else 0
+                        val customEndMs = if (showModeSelector && durationMode == ChallengeDurationMode.UNTIL_HOUR) {
+                            ChallengeTime.endAtClock(nowMs, LocalTime.of(untilHour, untilMinute))
+                        } else 0L
+                        val customHourLabel = if (showModeSelector && durationMode == ChallengeDurationMode.UNTIL_HOUR) {
+                            "%02d:%02d".format(untilHour, untilMinute)
+                        } else ""
+                        onChallenge(
+                            ChallengeInitConfig(
+                                durationMode = durationMode,
+                                targetMinutes = chosenTarget,
+                                customEndAtMs = customEndMs,
+                                customEndHourLabel = customHourLabel,
+                                startFromZero = startFromZero
+                            )
+                        )
                     },
                     enabled = !hasActiveDuel && !isPendingChallenge && durationValid,
                     modifier = Modifier
@@ -1145,17 +1285,117 @@ private fun FriendSheet(
 
 // ====================================================================== Small pieces
 
-/** Initial-letter avatar; decorative (the name is always next to it). */
+/**
+ * Returns the status indicator color for a friend's timer state:
+ * - Green (`#22C55E`) when focusing (`FOCUSING`)
+ * - Orange (`#F59E0B`) when on pause or break (`PAUSED` / `ON_BREAK`)
+ * - Red (`#EF4444`) when offline / idle (`IDLE`)
+ */
+internal fun friendStatusColor(status: StudyMemberTimerState): Color = when (status) {
+    StudyMemberTimerState.FOCUSING -> Color(0xFF22C55E)
+    StudyMemberTimerState.PAUSED, StudyMemberTimerState.ON_BREAK -> Color(0xFFF59E0B)
+    StudyMemberTimerState.IDLE -> Color(0xFFEF4444)
+}
+
+internal fun friendStatusKey(status: StudyMemberTimerState): String = when (status) {
+    StudyMemberTimerState.FOCUSING -> "focusing"
+    StudyMemberTimerState.PAUSED, StudyMemberTimerState.ON_BREAK -> "paused"
+    StudyMemberTimerState.IDLE -> "offline"
+}
+
 @Composable
-private fun Avatar(name: String) {
+internal fun friendStatusLabel(status: StudyMemberTimerState): String = stringResource(
+    when (status) {
+        StudyMemberTimerState.FOCUSING -> R.string.community_friend_status_focusing
+        StudyMemberTimerState.PAUSED, StudyMemberTimerState.ON_BREAK -> R.string.community_friend_status_paused
+        StudyMemberTimerState.IDLE -> R.string.community_friend_status_offline
+    }
+)
+
+@Composable
+internal fun FriendStatusDot(
+    status: StudyMemberTimerState,
+    modifier: Modifier = Modifier,
+    sizeDp: androidx.compose.ui.unit.Dp = 10.dp
+) {
+    val dotColor = friendStatusColor(status)
+    val label = friendStatusLabel(status)
+    Box(
+        modifier = modifier
+            .size(sizeDp)
+            .clip(CircleShape)
+            .background(dotColor)
+            .semantics { contentDescription = label }
+    )
+}
+
+@Composable
+internal fun FriendStatusChip(
+    status: StudyMemberTimerState,
+    modifier: Modifier = Modifier
+) {
+    val dotColor = friendStatusColor(status)
+    val label = friendStatusLabel(status)
     Surface(
         shape = CircleShape,
-        color = MaterialTheme.colorScheme.tertiaryContainer,
-        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-        modifier = Modifier.size(Spacing.avatar)
+        color = dotColor.copy(alpha = 0.14f),
+        modifier = modifier
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(name.trim().take(1).uppercase(), style = MaterialTheme.typography.titleMedium)
+        Row(
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(dotColor)
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = dotColor,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+/** Initial-letter avatar with optional live status indicator dot (green/orange/red). */
+@Composable
+private fun Avatar(
+    name: String,
+    status: StudyMemberTimerState? = null,
+    uidTag: String = ""
+) {
+    Box(modifier = Modifier.size(Spacing.avatar)) {
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.tertiaryContainer,
+            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(name.trim().take(1).uppercase(), style = MaterialTheme.typography.titleMedium)
+            }
+        }
+        if (status != null) {
+            val dotColor = friendStatusColor(status)
+            val key = friendStatusKey(status)
+            val tagSuffix = if (uidTag.isNotEmpty()) "${uidTag}_$key" else key
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(13.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(2.dp)
+                    .clip(CircleShape)
+                    .background(dotColor)
+                    .testTag("friend_status_dot_$tagSuffix")
+            )
         }
     }
 }

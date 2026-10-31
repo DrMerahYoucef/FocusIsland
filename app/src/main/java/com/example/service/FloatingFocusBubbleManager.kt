@@ -59,11 +59,18 @@ object FloatingFocusBubbleManager {
     private var nudgeParams: WindowManager.LayoutParams? = null
     private var nudgeAutoHideRunnable: Runnable? = null
 
+    @Volatile
+    private var inviteBannerView: View? = null
+    private var inviteParams: WindowManager.LayoutParams? = null
+
     val isPausedBubbleShowing: Boolean
         get() = pausedBubbleView != null
 
     val isNudgeBannerShowing: Boolean
         get() = nudgeBannerView != null
+
+    val isInviteBannerShowing: Boolean
+        get() = inviteBannerView != null
 
     private fun resolveActiveColorScheme(context: Context): ColorScheme {
         val style = AppStyle.read(context)
@@ -364,6 +371,240 @@ object FloatingFocusBubbleManager {
             val view = nudgeBannerView ?: return@post
             nudgeBannerView = null
             nudgeParams = null
+            runCatching {
+                appContext.getSystemService(WindowManager::class.java)?.removeViewImmediate(view)
+            }
+        }
+    }
+
+    /**
+     * Shows a sleek floating capsule over any screen when a friend sends a challenge invitation,
+     * styled with the user's active [AppStyle] colors and featuring Accept, Deny, and Hide actions.
+     */
+    fun showInviteCapsule(
+        context: Context,
+        fromFriendName: String,
+        subtitleText: String,
+        onAcceptClicked: () -> Unit,
+        onDenyClicked: () -> Unit,
+        onHideClicked: () -> Unit
+    ) {
+        val appContext = context.applicationContext
+        mainHandler.post {
+            runCatching {
+                if (!Settings.canDrawOverlays(appContext)) return@post
+                val wm = appContext.getSystemService(WindowManager::class.java) ?: return@post
+
+                inviteBannerView?.let { old ->
+                    runCatching { wm.removeViewImmediate(old) }
+                    inviteBannerView = null
+                    inviteParams = null
+                }
+
+                val density = appContext.resources.displayMetrics.density
+                fun dp(value: Int): Int = (value * density).toInt()
+                val scheme = resolveActiveColorScheme(appContext)
+
+                val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                } else {
+                    @Suppress("DEPRECATION")
+                    WindowManager.LayoutParams.TYPE_PHONE
+                }
+
+                val params = WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    overlayType,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    PixelFormat.TRANSLUCENT
+                ).apply {
+                    gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                    x = 0
+                    y = dp(44)
+                }
+
+                val root = LinearLayout(appContext).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(14), dp(9), dp(14), dp(9))
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(24).toFloat()
+                        setColor(scheme.surfaceContainerHigh.toArgb())
+                        setStroke(dp(1), scheme.primary.copy(alpha = 0.6f).toArgb())
+                    }
+                    elevation = dp(8).toFloat()
+                }
+
+                val topRow = LinearLayout(appContext).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+
+                val iconBadge = LinearLayout(appContext).apply {
+                    gravity = Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+                        marginEnd = dp(10)
+                    }
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(scheme.primaryContainer.toArgb())
+                    }
+                }
+
+                val iconView = ImageView(appContext).apply {
+                    setImageResource(R.drawable.ic_widget_flame)
+                    setColorFilter(scheme.onPrimaryContainer.toArgb())
+                    layoutParams = LinearLayout.LayoutParams(dp(15), dp(15))
+                }
+                iconBadge.addView(iconView)
+                topRow.addView(iconBadge)
+
+                val textCol = LinearLayout(appContext).apply {
+                    orientation = LinearLayout.VERTICAL
+                }
+
+                val titleTv = TextView(appContext).apply {
+                    text = appContext.getString(R.string.invite_capsule_title, fromFriendName)
+                    setTextColor(scheme.onSurface.toArgb())
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                    typeface = Typeface.DEFAULT_BOLD
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    maxWidth = dp(245)
+                }
+                textCol.addView(titleTv)
+
+                val bodyTv = TextView(appContext).apply {
+                    text = subtitleText
+                    setTextColor(scheme.onSurfaceVariant.toArgb())
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    maxWidth = dp(245)
+                }
+                textCol.addView(bodyTv)
+                topRow.addView(textCol)
+                root.addView(topRow)
+
+                val actionsRow = LinearLayout(appContext).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        topMargin = dp(6)
+                    }
+                }
+
+                fun createActionPill(
+                    label: String,
+                    bgColor: Int,
+                    textColor: Int,
+                    strokeColor: Int? = null,
+                    onClick: () -> Unit
+                ): TextView {
+                    return TextView(appContext).apply {
+                        text = label
+                        setTextColor(textColor)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                        typeface = Typeface.DEFAULT_BOLD
+                        gravity = Gravity.CENTER
+                        setPadding(dp(12), dp(5), dp(12), dp(5))
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply {
+                            marginStart = dp(6)
+                        }
+                        background = GradientDrawable().apply {
+                            shape = GradientDrawable.RECTANGLE
+                            cornerRadius = dp(999).toFloat()
+                            setColor(bgColor)
+                            if (strokeColor != null) {
+                                setStroke(dp(1), strokeColor)
+                            }
+                        }
+                        setOnClickListener { onClick() }
+                    }
+                }
+
+                val hideBtn = createActionPill(
+                    label = appContext.getString(R.string.invite_capsule_hide),
+                    bgColor = scheme.surfaceContainer.toArgb(),
+                    textColor = scheme.onSurfaceVariant.toArgb(),
+                    strokeColor = scheme.outlineVariant.copy(alpha = 0.5f).toArgb(),
+                    onClick = {
+                        hideInviteCapsule(appContext)
+                        onHideClicked()
+                    }
+                )
+                val denyBtn = createActionPill(
+                    label = appContext.getString(R.string.invite_capsule_deny),
+                    bgColor = scheme.errorContainer.toArgb(),
+                    textColor = scheme.onErrorContainer.toArgb(),
+                    onClick = {
+                        hideInviteCapsule(appContext)
+                        onDenyClicked()
+                    }
+                )
+                val acceptBtn = createActionPill(
+                    label = appContext.getString(R.string.invite_capsule_accept),
+                    bgColor = scheme.primary.toArgb(),
+                    textColor = scheme.onPrimary.toArgb(),
+                    onClick = {
+                        hideInviteCapsule(appContext)
+                        onAcceptClicked()
+                        runCatching {
+                            val openAppIntent = Intent(appContext, MainActivity::class.java).apply {
+                                putExtra(MainActivity.EXTRA_TARGET_SCREEN, "challenges")
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            }
+                            appContext.startActivity(openAppIntent)
+                        }
+                    }
+                )
+
+                actionsRow.addView(hideBtn)
+                actionsRow.addView(denyBtn)
+                actionsRow.addView(acceptBtn)
+                root.addView(actionsRow)
+
+                attachDragAndTapListener(
+                    view = root,
+                    params = params,
+                    windowManager = wm,
+                    onTap = {
+                        hideInviteCapsule(appContext)
+                        runCatching {
+                            val openAppIntent = Intent(appContext, MainActivity::class.java).apply {
+                                putExtra(MainActivity.EXTRA_TARGET_SCREEN, "challenges")
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            }
+                            appContext.startActivity(openAppIntent)
+                        }
+                    }
+                )
+
+                wm.addView(root, params)
+                inviteBannerView = root
+                inviteParams = params
+            }.onFailure {
+                Log.w(TAG, "Could not show floating invite capsule: ${it.message}")
+            }
+        }
+    }
+
+    fun hideInviteCapsule(context: Context) {
+        val appContext = context.applicationContext
+        mainHandler.post {
+            val view = inviteBannerView ?: return@post
+            inviteBannerView = null
+            inviteParams = null
             runCatching {
                 appContext.getSystemService(WindowManager::class.java)?.removeViewImmediate(view)
             }

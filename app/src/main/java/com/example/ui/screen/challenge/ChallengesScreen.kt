@@ -39,6 +39,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -48,6 +49,7 @@ import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.HourglassBottom
 import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -57,12 +59,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -150,7 +152,11 @@ private const val COUNTDOWN_FROM = 5
  * - Tab 1 (Study Group): Full-screen Messenger-style group study chat room with collapsible horloge leaderboard, emoji reactions, and focus nudges.
  */
 @Composable
-fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifier) {
+fun ChallengesScreen(
+    viewModel: ChallengeViewModel,
+    modifier: Modifier = Modifier,
+    onOpenSettings: (() -> Unit)? = null
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val friendState by viewModel.friendState.collectAsStateWithLifecycle()
     var showNew by rememberSaveable { mutableStateOf(false) }
@@ -213,7 +219,8 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
                 val newTargetFmt = formatMinutesForNotice(context, newTarget)
                 val notice = context.getString(R.string.study_group_add_time_chat_notice, addedFmt, newTargetFmt)
                 viewModel.addStudyGroupTime(duel, addedMinutes, notice)
-            }
+            },
+            onOpenSettings = onOpenSettings
         )
         Celebration(trigger = celebrated?.id)
         FriendDuelVictoryCelebration(
@@ -254,9 +261,15 @@ fun ChallengesScreen(viewModel: ChallengeViewModel, modifier: Modifier = Modifie
             friends = friendState.availableFriends,
             alreadyInGroupUids = existingUids,
             isAddingToExisting = friendState.activeDuel != null,
-            onConfirmSelection = { chosen, targetMinutes ->
+            onConfirmConfig = { chosen, config ->
                 showStudyGroupSheet = false
-                viewModel.startOrInviteStudyGroup(chosen, targetMinutes)
+                viewModel.startOrInviteStudyGroup(
+                    friends = chosen,
+                    targetMinutes = config.targetMinutes,
+                    customEndAtMs = config.customEndAtMs,
+                    customEndHourLabel = config.customEndHourLabel,
+                    startFromZero = config.startFromZero
+                )
             },
             onDismiss = { showStudyGroupSheet = false }
         )
@@ -312,7 +325,8 @@ internal fun ChallengesContent(
     onClearStudyGroupMessages: (FriendChallenge) -> Unit = {},
     onDeleteStudyGroupChallenge: (FriendChallenge) -> Unit = {},
     onResendStudyGroupInvite: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
-    onAddStudyGroupTime: (FriendChallenge, Int) -> Unit = { _, _ -> }
+    onAddStudyGroupTime: (FriendChallenge, Int) -> Unit = { _, _ -> },
+    onOpenSettings: (() -> Unit)? = null
 ) {
     val hasActiveOrInviteGroup = friendState.activeDuel != null || friendState.incomingPending.isNotEmpty()
     val isImeVisible = WindowInsets.isImeVisible
@@ -344,70 +358,133 @@ internal fun ChallengesContent(
             enter = expandVertically() + fadeIn(),
             exit = shrinkVertically() + fadeOut()
         ) {
-            PrimaryTabRow(
-                selectedTabIndex = selectedTab,
-                modifier = Modifier.fillMaxWidth()
+            // Sleek merged compact top bar: Personal / Study Group segmented pill tabs + Settings action
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Spacing.sm, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
             ) {
-                Tab(
-                    selected = selectedTab == TAB_PERSONAL,
-                    onClick = { selectedTab = TAB_PERSONAL },
-                    modifier = Modifier.testTag("challenges_tab_personal"),
-                    text = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val personalSelected = selectedTab == TAB_PERSONAL
+                        Surface(
+                            onClick = { selectedTab = TAB_PERSONAL },
+                            shape = CircleShape,
+                            color = if (personalSelected) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                androidx.compose.ui.graphics.Color.Transparent
+                            },
+                            contentColor = if (personalSelected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 36.dp)
+                                .testTag("challenges_tab_personal")
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Flag,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                text = stringResource(R.string.challenges_tab_personal),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (state.active != null) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.primary)
+                            Row(
+                                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Flag,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
                                 )
+                                Text(
+                                    text = stringResource(R.string.challenges_tab_personal),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = if (personalSelected) FontWeight.Bold else FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (state.active != null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(7.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary)
+                                    )
+                                }
+                            }
+                        }
+
+                        val groupSelected = selectedTab == TAB_STUDY_GROUP
+                        Surface(
+                            onClick = { selectedTab = TAB_STUDY_GROUP },
+                            shape = CircleShape,
+                            color = if (groupSelected) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                androidx.compose.ui.graphics.Color.Transparent
+                            },
+                            contentColor = if (groupSelected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 36.dp)
+                                .testTag("challenges_tab_study_group")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Groups,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = stringResource(R.string.challenges_tab_study_group),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = if (groupSelected) FontWeight.Bold else FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (hasActiveOrInviteGroup) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(7.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.extendedColors.success)
+                                    )
+                                }
                             }
                         }
                     }
-                )
-                Tab(
-                    selected = selectedTab == TAB_STUDY_GROUP,
-                    onClick = { selectedTab = TAB_STUDY_GROUP },
-                    modifier = Modifier.testTag("challenges_tab_study_group"),
-                    text = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Groups,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                text = stringResource(R.string.challenges_tab_study_group),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (hasActiveOrInviteGroup) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.extendedColors.success)
-                                )
-                            }
-                        }
+                }
+
+                if (onOpenSettings != null) {
+                    IconButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Settings,
+                            contentDescription = stringResource(R.string.nav_settings)
+                        )
                     }
-                )
+                }
             }
         }
 

@@ -1,25 +1,43 @@
 package com.example
 
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.example.data.challenge.FriendChallenge
 import com.example.data.challenge.FriendChallengeRepository
 import com.example.data.challenge.FriendChallengeRepository.Companion.challengeFromJson
 import com.example.data.challenge.FriendChallengeRepository.Companion.mergeChallenges
 import com.example.data.challenge.FriendChallengeRepository.Companion.toJson
 import com.example.data.challenge.FriendChallengeStatus
+import com.example.data.challenge.StudyFriendOption
 import com.example.data.challenge.StudyGroupMember
 import com.example.data.challenge.StudyGroupMessage
 import com.example.data.challenge.StudyGroupNudge
 import com.example.data.challenge.StudyMemberRoleStatus
 import com.example.data.challenge.StudyMemberTimerState
+import com.example.ui.screen.challenge.ChallengeDurationMode
+import com.example.ui.screen.challenge.ChallengeInitConfig
+import com.example.ui.screen.challenge.StudyGroupFriendsSheet
+import com.example.ui.theme.FocusIslandTheme
+import com.example.ui.theme.ThemeMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class StudyGroupChallengeTest {
+
+    @get:Rule
+    val composeRule = createComposeRule()
 
     @Test
     fun `multi-friend study group serializes and merges members, messages and nudges`() {
@@ -518,6 +536,134 @@ class StudyGroupChallengeTest {
         assertEquals(90, merged.allMembers().first { it.uid == "creator" }.baselineMinutes)
         assertEquals(50, merged.allMembers().first { it.uid == "friend1" }.baselineMinutes)
     }
+
+    @Test
+    fun `until defined hour challenge and keep day progress mode serialize and merge accurately`() {
+        val t0 = 10_000_000L
+        val endAt2100 = t0 + 3 * 3_600_000L
+        val creator = StudyGroupMember(
+            uid = "creator",
+            name = "Youcef",
+            minutes = 75, // Kept 75m day progress because startFromZero = false (baselineMinutes = 0)
+            baselineMinutes = 0,
+            timerState = StudyMemberTimerState.FOCUSING,
+            roleStatus = StudyMemberRoleStatus.ACTIVE,
+            invitedAt = t0,
+            updatedAt = t0
+        )
+        val friend = StudyGroupMember(
+            uid = "friend1",
+            name = "Salmi",
+            minutes = 60, // Kept 60m day progress
+            baselineMinutes = 0,
+            timerState = StudyMemberTimerState.FOCUSING,
+            roleStatus = StudyMemberRoleStatus.ACTIVE,
+            invitedAt = t0,
+            updatedAt = t0
+        )
+
+        val untilHourChallenge = FriendChallenge(
+            id = "2026-10-31_creator_$t0",
+            challengerUid = "creator",
+            challengerName = "Youcef",
+            challengerMinutes = 75,
+            opponentUid = "friend1",
+            opponentName = "Salmi",
+            opponentMinutes = 60,
+            dayKey = "2026-10-31",
+            createdAt = t0,
+            acceptedAt = t0,
+            endAt = endAt2100,
+            targetMinutes = 0,
+            startFromZero = false,
+            customEndHourLabel = "21:00",
+            status = FriendChallengeStatus.ACTIVE,
+            members = listOf(creator, friend)
+        )
+
+        assertTrue(untilHourChallenge.isUntilDefinedHourChallenge)
+        assertFalse(untilHourChallenge.isTargetHoursChallenge)
+        assertFalse(untilHourChallenge.startFromZero)
+        assertEquals("21:00", untilHourChallenge.customEndHourLabel)
+        assertEquals(75, creator.challengeMinutesFromToday(75))
+        assertEquals(105, creator.challengeMinutesFromToday(105))
+
+        val roundTrip = challengeFromJson(untilHourChallenge.toJson())
+        assertTrue(roundTrip.isUntilDefinedHourChallenge)
+        assertFalse(roundTrip.startFromZero)
+        assertEquals("21:00", roundTrip.customEndHourLabel)
+        assertEquals(endAt2100, roundTrip.endAt)
+
+        val updated = untilHourChallenge.copy(
+            challengerMinutes = 105,
+            opponentMinutes = 120,
+            members = listOf(
+                creator.copy(minutes = 105, updatedAt = t0 + 1800_000L),
+                friend.copy(minutes = 120, updatedAt = t0 + 1800_000L)
+            )
+        )
+        val merged = mergeChallenges(untilHourChallenge, updated)
+        assertTrue(merged.isUntilDefinedHourChallenge)
+        assertFalse(merged.startFromZero)
+        assertEquals("21:00", merged.customEndHourLabel)
+        assertEquals(105, merged.myMinutes("creator"))
+        assertEquals(120, merged.friendMinutes("creator"))
+    }
+
+    @Test
+    fun `tapping Until Hour button in StudyGroupFriendsSheet switches mode and submits custom end hour`() {
+        var submittedConfig: ChallengeInitConfig? = null
+        var submittedFriends: List<StudyFriendOption> = emptyList()
+
+        composeRule.setContent {
+            FocusIslandTheme(themeMode = ThemeMode.DARK) {
+                StudyGroupFriendsSheet(
+                    friends = listOf(
+                        StudyFriendOption(
+                            uid = "friend1",
+                            username = "Salmi",
+                            todayMinutes = 40,
+                            timerState = StudyMemberTimerState.FOCUSING
+                        )
+                    ),
+                    onConfirmConfig = { chosen, config ->
+                        submittedFriends = chosen
+                        submittedConfig = config
+                    },
+                    onDismiss = {}
+                )
+            }
+        }
+
+        // Tap "Until Hour" segmented button
+        composeRule.onNodeWithTag("invite_mode_until_hour_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("invite_mode_until_hour_button").assertIsSelected()
+
+        // Verify quick hour chips and picker button appear, and tap "22:00"
+        composeRule.onNodeWithTag("quick_until_hour_chip_22_0").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        // Also toggle "Keep day progress"
+        composeRule.onNodeWithTag("progress_mode_keep_day_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("progress_mode_keep_day_button").assertIsSelected()
+
+        // Select friend Salmi and confirm challenge launch
+        composeRule.onNodeWithText("Salmi").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("confirm_study_group_friends_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+
+        assertEquals(1, submittedFriends.size)
+        assertNotNull(submittedConfig)
+        assertEquals(ChallengeDurationMode.UNTIL_HOUR, submittedConfig!!.durationMode)
+        assertEquals(0, submittedConfig!!.targetMinutes)
+        assertEquals("22:00", submittedConfig!!.customEndHourLabel)
+        assertTrue(submittedConfig!!.customEndAtMs > 0L)
+        assertFalse(submittedConfig!!.startFromZero)
+    }
 }
+
 
 

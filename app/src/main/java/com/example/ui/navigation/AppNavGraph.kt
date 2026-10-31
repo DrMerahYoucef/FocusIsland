@@ -39,6 +39,8 @@ import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Style
 import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -68,6 +70,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -90,6 +93,7 @@ import com.example.ui.screen.appblocker.AppBlockerScreen
 import com.example.service.PomodoroTimerService
 import com.example.ui.screen.auth.AuthMode
 import com.example.ui.screen.auth.AuthScreen
+import com.example.ui.screen.challenge.ChallengeInviteFloatingCapsule
 import com.example.ui.screen.challenge.ChallengeViewModel
 import com.example.ui.screen.challenge.ChallengesScreen
 import com.example.ui.screen.challenge.NudgeToastBanner
@@ -369,38 +373,71 @@ fun AppNavGraph(
     }
 
     val activeNudge = friendChallengeState.activeNudgeBanner
-    AnimatedVisibility(
-        visible = activeNudge != null,
-        enter = slideInVertically { -it } + fadeIn(),
-        exit = slideOutVertically { -it } + fadeOut(),
+    val activeInvite = friendChallengeState.activeInviteBanner
+    Column(
         modifier = Modifier
             .align(Alignment.TopCenter)
-            .statusBarsPadding()
+            .statusBarsPadding(),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        if (activeNudge != null) {
-            NudgeToastBanner(
-                nudge = activeNudge,
-                onReturnToFocus = {
-                    challengeViewModel.dismissNudgeBanner()
-                    runCatching {
-                        val serviceIntent = Intent(context, PomodoroTimerService::class.java).apply {
-                            action = PomodoroTimerService.ACTION_START
+        AnimatedVisibility(
+            visible = activeInvite != null,
+            enter = slideInVertically { -it } + fadeIn(),
+            exit = slideOutVertically { -it } + fadeOut()
+        ) {
+            if (activeInvite != null) {
+                ChallengeInviteFloatingCapsule(
+                    challenge = activeInvite,
+                    myUid = friendChallengeState.myUid,
+                    onAccept = { invite ->
+                        challengeViewModel.acceptFriendChallenge(invite)
+                        if (navController.currentDestination?.route != Routes.MAIN) {
+                            if (!navController.popBackStack(Routes.MAIN, inclusive = false)) {
+                                navController.navigate(Routes.MAIN) { launchSingleTop = true }
+                            }
                         }
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                            context.startForegroundService(serviceIntent)
-                        } else {
-                            context.startService(serviceIntent)
-                        }
+                        localNavRequest = NavRequest(tab = TopLevel.CHALLENGES)
+                    },
+                    onDecline = { invite ->
+                        challengeViewModel.declineFriendChallenge(invite)
+                    },
+                    onHide = { invite ->
+                        challengeViewModel.hideInviteBanner(invite.id)
                     }
-                    if (navController.currentDestination?.route != Routes.MAIN) {
-                        if (!navController.popBackStack(Routes.MAIN, inclusive = false)) {
-                            navController.navigate(Routes.MAIN) { launchSingleTop = true }
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = activeNudge != null,
+            enter = slideInVertically { -it } + fadeIn(),
+            exit = slideOutVertically { -it } + fadeOut()
+        ) {
+            if (activeNudge != null) {
+                NudgeToastBanner(
+                    nudge = activeNudge,
+                    onReturnToFocus = {
+                        challengeViewModel.dismissNudgeBanner()
+                        runCatching {
+                            val serviceIntent = Intent(context, PomodoroTimerService::class.java).apply {
+                                action = PomodoroTimerService.ACTION_START
+                            }
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                context.startForegroundService(serviceIntent)
+                            } else {
+                                context.startService(serviceIntent)
+                            }
                         }
-                    }
-                    localNavRequest = NavRequest(tab = TopLevel.FOCUS)
-                },
-                onDismiss = challengeViewModel::dismissNudgeBanner
-            )
+                        if (navController.currentDestination?.route != Routes.MAIN) {
+                            if (!navController.popBackStack(Routes.MAIN, inclusive = false)) {
+                                navController.navigate(Routes.MAIN) { launchSingleTop = true }
+                            }
+                        }
+                        localNavRequest = NavRequest(tab = TopLevel.FOCUS)
+                    },
+                    onDismiss = challengeViewModel::dismissNudgeBanner
+                )
+            }
         }
     }
     }
@@ -421,6 +458,8 @@ private fun MainShell(
     challengeViewModel: ChallengeViewModel
 ) {
     val settings by settingsViewModel.state.collectAsState()
+    val friendChallengeState by challengeViewModel.friendState.collectAsStateWithLifecycle()
+    val pendingInviteCount = friendChallengeState.incomingPending.size
     val tabs = TopLevel.entries
     val pagerState = rememberPagerState(pageCount = { tabs.size })
     val scope = rememberCoroutineScope()
@@ -450,7 +489,21 @@ private fun MainShell(
                     NavigationRailItem(
                         selected = tab == current,
                         onClick = { select(tab) },
-                        icon = { Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null) },
+                        icon = {
+                            if (tab == TopLevel.CHALLENGES && pendingInviteCount > 0) {
+                                BadgedBox(
+                                    badge = {
+                                        Badge(modifier = Modifier.testTag("challenges_nav_invite_badge")) {
+                                            Text(pendingInviteCount.toString())
+                                        }
+                                    }
+                                ) {
+                                    Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null)
+                                }
+                            } else {
+                                Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null)
+                            }
+                        },
                         label = { Text(stringResource(tab.label)) }
                     )
                 }
@@ -460,7 +513,8 @@ private fun MainShell(
             modifier = Modifier.weight(1f),
             containerColor = MaterialTheme.colorScheme.background,
             topBar = {
-                if (!(isImeVisible && current == TopLevel.CHALLENGES)) {
+                // Challenges tab merges its title, Personal/Study Group tabs, and Settings action into one compact bar
+                if (current != TopLevel.CHALLENGES) {
                     androidx.compose.material3.TopAppBar(
                         title = { Text(stringResource(current.label)) },
                         colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
@@ -482,7 +536,21 @@ private fun MainShell(
                             NavigationBarItem(
                                 selected = tab == current,
                                 onClick = { select(tab) },
-                                icon = { Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null) },
+                                icon = {
+                                    if (tab == TopLevel.CHALLENGES && pendingInviteCount > 0) {
+                                        BadgedBox(
+                                            badge = {
+                                                Badge(modifier = Modifier.testTag("challenges_nav_invite_badge")) {
+                                                    Text(pendingInviteCount.toString())
+                                                }
+                                            }
+                                        ) {
+                                            Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null)
+                                        }
+                                    } else {
+                                        Icon(if (tab == current) tab.selectedIcon else tab.icon, contentDescription = null)
+                                    }
+                                },
                                 label = { Text(stringResource(tab.label)) }
                             )
                         }
@@ -534,7 +602,14 @@ private fun MainShell(
                                     onNoteClick = { navController.navigate(Routes.note(it)) },
                                     onStartSessionClick = { navController.navigate(Routes.session(it)) }
                                 )
-                                TopLevel.CHALLENGES -> ChallengesScreen(viewModel = challengeViewModel)
+                                TopLevel.CHALLENGES -> ChallengesScreen(
+                                    viewModel = challengeViewModel,
+                                    onOpenSettings = if (current == TopLevel.CHALLENGES) {
+                                        { navController.navigate(Routes.SETTINGS) }
+                                    } else {
+                                        null
+                                    }
+                                )
                                 TopLevel.PROGRESS -> ProgressTab(
                                     selected = progressTab,
                                     onSelect = { progressTab = it },

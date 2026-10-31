@@ -1299,5 +1299,41 @@
         <item quantity="one">%d challenge won</item>
         <item quantity="other">%d challenges won</item>
     </plurals>
+
+    <!-- Floating Challenge Invite Capsule, Duration Modes & Progress Modes -->
+    <string name="invite_capsule_title">%1$s invited you to a challenge!</string>
+    <string name="invite_capsule_accept">Accept</string>
+    <string name="invite_capsule_deny">Deny</string>
+    <string name="invite_capsule_hide">Hide</string>
+    <string name="invite_focus_banner_dismiss_a11y">Dismiss invite banner on Focus screen</string>
+    <string name="challenge_invite_mode_until_hour">Until Hour</string>
+    <string name="challenge_invite_until_hour_desc">Challenge ends at %1$s — whoever accumulates the most focus time when that hour arrives wins.</string>
+    <string name="challenge_invite_pick_end_hour">End hour: %1$s</string>
+    <string name="challenge_invite_change_hour">Pick hour</string>
+    <string name="challenge_progress_mode_label">Starting progress</string>
+    <string name="challenge_progress_from_zero">Start from 0m</string>
+    <string name="challenge_progress_keep_day">Keep day progress</string>
+    <string name="challenge_progress_from_zero_desc">Everyone starts at 0m — only focus time after launching counts.</string>
+    <string name="challenge_progress_keep_day_desc">Focus time already completed earlier today is counted in the challenge.</string>
+    <string name="study_group_mode_badge_until_hour">Until %1$s</string>
+    <string name="study_group_progress_badge_zero">From 0m</string>
+    <string name="study_group_progress_badge_day">Day total</string>
+    <string name="friend_duel_incoming_body_until_hour">Ends at %1$s — whoever accumulates the most focus time by %1$s wins!</string>
+    <string name="study_group_pending_invite_until_hour_from">Invited by %1$s · Ends at %2$s</string>
+    <string name="study_group_invite_notif_body_until_hour">Challenge until %1$s — most focus time when that hour arrives wins! Accept within 30m.</string>
+    <string name="study_group_compact_chat_toggle_expand">Expand chat</string>
+    <string name="study_group_compact_chat_toggle_show_members">Members (%1$d)</string>
+    <string name="study_group_progress_badge_from_zero">From 0m</string>
+    <string name="study_group_progress_badge_keep_day">Day total</string>
+    <string name="challenge_invite_until_hour_pick">Pick hour (%1$s)</string>
+    <string name="challenge_progress_start_zero">Start from 0m</string>
+    <string name="invite_capsule_subtitle_open">Whole day · Ends at midnight</string>
+    <string name="invite_capsule_subtitle_target">First to %1$s</string>
+    <string name="invite_capsule_subtitle_until_hour">Ends at %1$s</string>
+    <string name="community_friend_status_focusing">Focusing</string>
+    <string name="community_friend_status_paused">On pause</string>
+    <string name="community_friend_status_offline">Offline</string>
 </resources>
+
+
 

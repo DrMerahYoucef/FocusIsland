@@ -8,7 +8,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.FocusFlowApplication
 import com.example.data.challenge.FriendChallenge
 import com.example.data.challenge.FriendChallengeState
+import com.example.data.challenge.StudyMemberTimerState
 import com.google.firebase.Firebase
+import java.time.LocalDate
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldPath
@@ -44,7 +46,8 @@ data class UserProfile(
     val currentStreak: Int = 0,
     val currentRadio: String = "",
     val friends: List<String> = emptyList(),
-    val challengesWon: Int = 0
+    val challengesWon: Int = 0,
+    val timerState: StudyMemberTimerState = StudyMemberTimerState.IDLE
 )
 
 data class LeaderboardEntry(
@@ -54,7 +57,8 @@ data class LeaderboardEntry(
     val totalMinutes: Int = 0,
     val points: Int = 0,
     val currentStreak: Int = 0,
-    val challengesWon: Int = 0
+    val challengesWon: Int = 0,
+    val timerState: StudyMemberTimerState = StudyMemberTimerState.IDLE
 )
 
 data class FriendRequest(
@@ -83,7 +87,16 @@ data class LeaderboardState(
     val failed: Boolean = false
 )
 
-private fun UserProfile.toEntry() = LeaderboardEntry(uid, username, treeCount, totalMinutes, points, currentStreak, challengesWon)
+private fun UserProfile.toEntry() = LeaderboardEntry(
+    uid = uid,
+    username = username,
+    treeCount = treeCount,
+    totalMinutes = totalMinutes,
+    points = points,
+    currentStreak = currentStreak,
+    challengesWon = challengesWon,
+    timerState = timerState
+)
 
 /**
  * The ranked top list plus [people] (me and my friends, always shown with their live profile),
@@ -133,12 +146,23 @@ class CommunityViewModel(application: Application) : AndroidViewModel(applicatio
     val myProfile: StateFlow<UserProfile?> = documentFlow(currentUid)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT), null)
 
-    /** Friend profiles, live; re-queried whenever my friends list changes. */
-    val friends: StateFlow<List<UserProfile>> = myProfile
-        .map { it?.friends.orEmpty() }
-        .distinctUntilChanged()
-        .flatMapLatest { ids -> profilesFlow(ids) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT), emptyList())
+    /** Friend profiles, live; re-queried whenever my friends list changes, enriched with live challenge timer states. */
+    val friends: StateFlow<List<UserProfile>> = combine(
+        myProfile
+            .map { it?.friends.orEmpty() }
+            .distinctUntilChanged()
+            .flatMapLatest { ids -> profilesFlow(ids) },
+        friendChallengeState
+    ) { rawFriends, challengeState ->
+        val liveByUid = challengeState.availableFriends.associateBy { it.uid }
+        val activeMembersByUid = challengeState.activeDuel?.allMembers()?.associateBy { it.uid }.orEmpty()
+        rawFriends.map { profile ->
+            val liveTimer = activeMembersByUid[profile.uid]?.timerState
+                ?: liveByUid[profile.uid]?.timerState
+                ?: profile.timerState
+            profile.copy(timerState = liveTimer)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT), emptyList())
 
     val pendingRequests: StateFlow<List<FriendRequest>> =
         requestsFlow(requests.whereEqualTo("toUid", currentUid).whereEqualTo("status", "pending"))
@@ -167,7 +191,10 @@ class CommunityViewModel(application: Application) : AndroidViewModel(applicatio
     ) { ranked, me, friends, sort, challengeState ->
         if (ranked.loading || ranked.failed) ranked
         else {
-            val enrichedMe = me?.copy(challengesWon = maxOf(me.challengesWon, challengeState.challengesWonCount))
+            val enrichedMe = me?.copy(
+                challengesWon = maxOf(me.challengesWon, challengeState.challengesWonCount),
+                timerState = challengeState.myTimerState
+            )
             ranked.copy(entries = mergeRanking(ranked.entries, friends + listOfNotNull(enrichedMe), sort))
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT), LeaderboardState())
@@ -280,7 +307,14 @@ class CommunityViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun challengeFriend(opponentUid: String, opponentName: String, targetMinutes: Int = 0) {
+    fun challengeFriend(
+        opponentUid: String,
+        opponentName: String,
+        targetMinutes: Int = 0,
+        customEndAtMs: Long = 0L,
+        customEndHourLabel: String = "",
+        startFromZero: Boolean = true
+    ) {
         if (opponentUid.isEmpty() || opponentUid == currentUid) return
         viewModelScope.launch {
             val isFriend = friends.value.any { it.uid == opponentUid } ||
@@ -295,7 +329,10 @@ class CommunityViewModel(application: Application) : AndroidViewModel(applicatio
                 challengerName = myName.ifBlank { "You" },
                 opponentUid = opponentUid,
                 opponentName = opponentName,
-                targetMinutes = targetMinutes
+                targetMinutes = targetMinutes,
+                customEndAtMs = customEndAtMs,
+                customEndHourLabel = customEndHourLabel,
+                startFromZero = startFromZero
             )
             if (result.isSuccess) {
                 _messages.send(CommunityMessage.ChallengeSent(opponentName))
@@ -444,6 +481,13 @@ class CommunityViewModel(application: Application) : AndroidViewModel(applicatio
     private fun DocumentSnapshot.int(field: String) = (getLong(field) ?: 0L).toInt()
 
     private fun DocumentSnapshot.toProfile(): UserProfile? = runCatching {
+        val todayKey = LocalDate.now().toString()
+        val docDayKey = getString("studyTodayDayKey").orEmpty()
+        val parsedTimerState = if (docDayKey == todayKey) {
+            StudyMemberTimerState.from(getString("studyTimerStatus"))
+        } else {
+            StudyMemberTimerState.IDLE
+        }
         UserProfile(
             uid = getString("uid") ?: id,
             username = getString("username").orEmpty(),
@@ -453,7 +497,8 @@ class CommunityViewModel(application: Application) : AndroidViewModel(applicatio
             currentStreak = int("currentStreak"),
             currentRadio = getString("currentRadio").orEmpty(),
             friends = (get("friends") as? List<*>).orEmpty().mapNotNull { it?.toString() },
-            challengesWon = int("challengesWon")
+            challengesWon = int("challengesWon"),
+            timerState = parsedTimerState
         )
     }.getOrNull()
 

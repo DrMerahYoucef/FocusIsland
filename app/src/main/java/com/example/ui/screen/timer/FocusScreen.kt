@@ -20,6 +20,7 @@ import com.example.data.challenge.FriendChallenge
 import com.example.data.challenge.FriendChallengeState
 import com.example.ui.screen.challenge.ChallengeTime
 import com.example.ui.screen.challenge.ChallengeViewModel
+import com.example.ui.screen.challenge.FocusScreenInviteBanner
 import com.example.ui.screen.challenge.FriendDuelIncomingCard
 import com.example.ui.screen.challenge.FriendDuelLiveCard
 import com.example.ui.screen.challenge.FriendDuelVictoryCelebration
@@ -253,8 +254,14 @@ fun TimerScreen(
         onDismissStyleTip = settingsViewModel::dismissStyleTip,
         friendState = friendState,
         showAutoResumeBanner = showAutoResumeBanner,
-        onAcceptFriendChallenge = challengeViewModel::acceptFriendChallenge,
+        onAcceptFriendChallenge = { duel ->
+            challengeViewModel.acceptFriendChallenge(duel)
+            onNavigateToChallenges()
+        },
         onDeclineFriendChallenge = challengeViewModel::declineFriendChallenge,
+        onDismissFocusInviteBanner = { duel ->
+            challengeViewModel.dismissFocusInviteBanner(duel.id)
+        },
         onSurrenderFriendChallenge = challengeViewModel::surrenderFriendChallenge,
         modifier = Modifier.pointerInput(Unit) {
             awaitPointerEventScope {
@@ -391,6 +398,7 @@ fun FocusContent(
     showAutoResumeBanner: Boolean = false,
     onAcceptFriendChallenge: (FriendChallenge) -> Unit = {},
     onDeclineFriendChallenge: (FriendChallenge) -> Unit = {},
+    onDismissFocusInviteBanner: (FriendChallenge) -> Unit = {},
     onSurrenderFriendChallenge: (FriendChallenge) -> Unit = {}
 ) {
     val view = LocalView.current
@@ -449,7 +457,29 @@ fun FocusContent(
     val extras = @Composable {
         FocusExtras(today, nextExam, sound, onOpenSounds, onToggleSound)
     }
+    val focusInvite = remember(
+        friendState.incomingPending,
+        friendState.dismissedFocusScreenInviteIds,
+        friendState.activeInviteBanner?.id,
+        friendState.myUid
+    ) {
+        val nowMs = System.currentTimeMillis()
+        friendState.incomingPending.firstOrNull { ch ->
+            ch.id !in friendState.dismissedFocusScreenInviteIds &&
+                ch.id != friendState.activeInviteBanner?.id &&
+                !ch.isDeclinedOfferFor(friendState.myUid, nowMs)
+        }
+    }
     val banner = @Composable {
+        if (focusInvite != null) {
+            FocusScreenInviteBanner(
+                challenge = focusInvite,
+                myUid = friendState.myUid,
+                onAccept = onAcceptFriendChallenge,
+                onDecline = onDeclineFriendChallenge,
+                onDismiss = onDismissFocusInviteBanner
+            )
+        }
         when {
             state.isAutoPausedByAppSwitch -> {
                 InfoBanner(

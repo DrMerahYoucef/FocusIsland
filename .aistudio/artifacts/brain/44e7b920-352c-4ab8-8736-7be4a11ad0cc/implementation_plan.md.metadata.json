@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan to initialize all challenge participants at zero focused minutes (tracking per-participant baseline minutes from challenge creation) and display each participant's challenge-specific focused time in saved challenge details.",
-  "updatedAt":  "2026-10-30T02:42:39.215920571Z",
+  "summary":  "Implementation plan for the floating challenge invitation capsule (with Accept, Deny, Hide, Focus screen dismissible overlay, and nav bar notification badge), challenge initialization options (Whole Day, Preset Hours, Defined Day Hour, and Start from Zero vs. Keep Day Progress), and Challenges screen compact header + collapsible room header redesign to maximize chat space.",
+  "updatedAt":  "2026-10-31T14:20:26.459485573Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

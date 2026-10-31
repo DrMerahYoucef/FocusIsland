@@ -39,6 +39,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.EmojiEvents
@@ -84,10 +85,13 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -118,6 +122,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.challenge.FriendChallenge
+import com.example.data.challenge.FriendChallengeRepository
 import com.example.data.challenge.StudyFriendOption
 import com.example.data.challenge.StudyGroupMember
 import com.example.data.challenge.StudyGroupMessage
@@ -132,6 +137,7 @@ import com.example.ui.theme.Spacing
 import com.example.ui.theme.extendedColors
 import kotlinx.coroutines.delay
 import java.time.Instant
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.cos
@@ -176,6 +182,7 @@ fun FriendDuelIncomingCard(
     val challenger = challenge.challengerName.ifBlank { stringResource(R.string.community_unnamed) }
     val isDeclinedOffer = inviteMember?.roleStatus == StudyMemberRoleStatus.DECLINED
     val targetLabel = if (challenge.isTargetHoursChallenge) durationText(challenge.targetMinutes) else null
+    val untilHourLabel = challenge.customEndHourLabel.takeIf { challenge.isUntilDefinedHourChallenge }
 
     if (isDeclinedOffer) {
         // Compact Pending Invite row with live 30m countdown so the user can still accept after declining
@@ -206,10 +213,13 @@ fun FriendDuelIncomingCard(
                     )
                     Column {
                         Text(
-                            text = if (targetLabel != null) {
-                                stringResource(R.string.study_group_pending_invite_target_from, challenger, targetLabel)
-                            } else {
-                                stringResource(R.string.study_group_pending_invite_open_from, challenger)
+                            text = when {
+                                targetLabel != null ->
+                                    stringResource(R.string.study_group_pending_invite_target_from, challenger, targetLabel)
+                                untilHourLabel != null ->
+                                    stringResource(R.string.study_group_pending_invite_until_hour_from, challenger, untilHourLabel)
+                                else ->
+                                    stringResource(R.string.study_group_pending_invite_open_from, challenger)
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
@@ -295,29 +305,52 @@ fun FriendDuelIncomingCard(
                 }
             }
             Text(
-                text = if (targetLabel != null) {
-                    stringResource(R.string.friend_duel_incoming_body_target, targetLabel)
-                } else {
-                    stringResource(R.string.friend_duel_incoming_body_open)
+                text = when {
+                    targetLabel != null ->
+                        stringResource(R.string.friend_duel_incoming_body_target, targetLabel)
+                    untilHourLabel != null ->
+                        stringResource(R.string.friend_duel_incoming_body_until_hour, untilHourLabel)
+                    else ->
+                        stringResource(R.string.friend_duel_incoming_body_open)
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSecondaryContainer
             )
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = Spacing.xxs),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.xs, Alignment.End)
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                TextButton(
-                    onClick = { onDecline(challenge) },
-                    modifier = Modifier.testTag("decline_friend_duel_button")
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+                    contentColor = MaterialTheme.colorScheme.onSurface
                 ) {
-                    Text(stringResource(R.string.friend_duel_decline))
+                    Text(
+                        text = stringResource(
+                            if (challenge.startFromZero) R.string.study_group_progress_badge_from_zero
+                            else R.string.study_group_progress_badge_keep_day
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = Spacing.xs, vertical = 2.dp)
+                    )
                 }
-                Button(
-                    onClick = { onAccept(challenge) },
-                    modifier = Modifier.testTag("accept_friend_duel_button")
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs, Alignment.End)
                 ) {
-                    Text(stringResource(R.string.friend_duel_accept_start))
+                    TextButton(
+                        onClick = { onDecline(challenge) },
+                        modifier = Modifier.testTag("decline_friend_duel_button")
+                    ) {
+                        Text(stringResource(R.string.friend_duel_decline))
+                    }
+                    Button(
+                        onClick = { onAccept(challenge) },
+                        modifier = Modifier.testTag("accept_friend_duel_button")
+                    ) {
+                        Text(stringResource(R.string.friend_duel_accept_start))
+                    }
                 }
             }
         }
@@ -415,26 +448,29 @@ fun FriendDuelLiveCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(if (fullScreenChat) Modifier.fillMaxHeight() else Modifier)
-                .padding(if (compact || fullScreenChat) Spacing.xs else Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.xxs)
+                .padding(
+                    horizontal = if (compact || fullScreenChat) 6.dp else Spacing.md,
+                    vertical = if (compact || fullScreenChat) 4.dp else Spacing.md
+                ),
+            verticalArrangement = Arrangement.spacedBy(if (fullScreenChat) 3.dp else Spacing.xxs)
         ) {
             // Unified Compact Top Bar: Avatar cluster + Title/Horloge Summary Toggle + Add Friends + Overflow Menu
             Surface(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceContainer,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = Spacing.xs, vertical = 6.dp),
+                        .padding(horizontal = 6.dp, vertical = if (fullScreenChat) 3.dp else 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     // Left/Center clickable area toggles the collapsible Horloge member leaderboard
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(10.dp))
@@ -448,7 +484,7 @@ fun FriendDuelLiveCard(
                                     MessengerMemberAvatar(
                                         name = member.name,
                                         isFocusing = member.isFocusing,
-                                        sizeDp = 28
+                                        sizeDp = if (fullScreenChat) 24 else 28
                                     )
                                 }
                             }
@@ -457,25 +493,25 @@ fun FriendDuelLiveCard(
                                 Icons.Rounded.Groups,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
 
                         Column(modifier = Modifier.weight(1f)) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
                                 Text(
                                     text = stringResource(R.string.study_group_title),
-                                    style = MaterialTheme.typography.titleSmall,
+                                    style = if (fullScreenChat) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleSmall,
                                     color = MaterialTheme.colorScheme.primary,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false)
                                 )
-                                if (isCreator) {
+                                if (isCreator && !fullScreenChat) {
                                     Surface(
                                         shape = CircleShape,
                                         color = MaterialTheme.colorScheme.primaryContainer,
@@ -511,16 +547,33 @@ fun FriendDuelLiveCard(
                                         )
                                         .testTag("study_group_target_badge_button")
                                 ) {
-                                    val baseBadgeLabel = if (duel.isTargetHoursChallenge) {
-                                        stringResource(R.string.study_group_mode_badge_target, durationText(duel.targetMinutes))
-                                    } else {
-                                        stringResource(R.string.study_group_mode_badge_open)
+                                    val baseBadgeLabel = when {
+                                        duel.isTargetHoursChallenge ->
+                                            stringResource(R.string.study_group_mode_badge_target, durationText(duel.targetMinutes))
+                                        duel.isUntilDefinedHourChallenge ->
+                                            stringResource(R.string.study_group_mode_badge_until_hour, duel.customEndHourLabel)
+                                        else ->
+                                            stringResource(R.string.study_group_mode_badge_open)
                                     }
                                     Text(
                                         text = if (isCreator && !compact) "$baseBadgeLabel +" else baseBadgeLabel,
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold,
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                    )
+                                }
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                ) {
+                                    Text(
+                                        text = stringResource(
+                                            if (duel.startFromZero) R.string.study_group_progress_badge_from_zero
+                                            else R.string.study_group_progress_badge_keep_day
+                                        ),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                                     )
                                 }
                                 if (!isImeVisible) {
@@ -541,7 +594,7 @@ fun FriendDuelLiveCard(
                                     imageVector = Icons.Rounded.Schedule,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(13.dp)
+                                    modifier = Modifier.size(12.dp)
                                 )
                                 Text(
                                     text = if (leaderboardExpanded) {
@@ -566,7 +619,7 @@ fun FriendDuelLiveCard(
                                             stringResource(R.string.study_group_leaderboard_toggle_show, members.size)
                                         },
                                         tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(15.dp)
                                     )
                                 }
                             }
@@ -1717,12 +1770,36 @@ fun HorlogeFractionIcon(
     }
 }
 
-private val QUICK_TARGET_HOURS_MINUTES = listOf(60, 120, 180, 240, 360)
+private val QUICK_TARGET_HOURS_MINUTES = listOf(30, 60, 120, 180, 240)
+private val QUICK_UNTIL_HOURS = listOf(18 to 0, 20 to 0, 22 to 0, 23 to 0)
 
 /**
- * Reusable selector for choosing between an Open Whole-Day Challenge (`targetMinutes == 0`)
- * and a Target-Hours Race (`targetMinutes > 0`) with quick hour chips (1h, 2h, 3h, 4h, 6h)
- * plus custom hours & minutes inputs.
+ * Duration / End Mode when initializing a Study Group or Friend Challenge:
+ * - [ALL_DAY]: Open whole-day race until midnight (most focus time accumulated by midnight wins).
+ * - [TARGET_HOURS]: Race to a target focus duration (first to reach `targetMinutes` wins).
+ * - [UNTIL_HOUR]: Race until a defined clock hour today (most focus time accumulated when that hour arrives wins).
+ */
+enum class ChallengeDurationMode {
+    ALL_DAY,
+    TARGET_HOURS,
+    UNTIL_HOUR
+}
+
+/**
+ * Complete configuration chosen by the creator when initializing a challenge.
+ */
+data class ChallengeInitConfig(
+    val durationMode: ChallengeDurationMode = ChallengeDurationMode.ALL_DAY,
+    val targetMinutes: Int = 0,
+    val customEndAtMs: Long = 0L,
+    val customEndHourLabel: String = "",
+    val startFromZero: Boolean = true
+)
+
+/**
+ * Reusable selector for choosing:
+ * 1. Challenge Duration / End Mode (`Whole Day` | `Target Hours` | `Until Hour`)
+ * 2. Starting Progress Mode (`Start from 0m` | `Keep day progress`)
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -1733,10 +1810,27 @@ fun ChallengeInviteModeSelector(
     onHoursChange: (String) -> Unit,
     minutesInput: String,
     onMinutesChange: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    durationMode: ChallengeDurationMode = if (isTargetMode) ChallengeDurationMode.TARGET_HOURS else ChallengeDurationMode.ALL_DAY,
+    onDurationModeChange: ((ChallengeDurationMode) -> Unit)? = null,
+    untilHour: Int = 20,
+    untilMinute: Int = 0,
+    onUntilTimeChange: (Int, Int) -> Unit = { _, _ -> },
+    startFromZero: Boolean = true,
+    onStartFromZeroChange: (Boolean) -> Unit = {}
 ) {
     val totalMinutes = (hoursInput.toIntOrNull() ?: 0) * 60 + (minutesInput.toIntOrNull() ?: 0)
     val durationValid = totalMinutes in 1..ChallengeTime.MAX_MINUTES
+    val untilHourFormatted = remember(untilHour, untilMinute) { "%02d:%02d".format(untilHour, untilMinute) }
+    var showUntilTimePicker by rememberSaveable { mutableStateOf(false) }
+
+    val selectMode: (ChallengeDurationMode) -> Unit = { mode ->
+        if (onDurationModeChange != null) {
+            onDurationModeChange(mode)
+        } else {
+            onModeChange(mode == ChallengeDurationMode.TARGET_HOURS)
+        }
+    }
 
     Surface(
         shape = MaterialTheme.shapes.medium,
@@ -1756,33 +1850,48 @@ fun ChallengeInviteModeSelector(
             )
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 SegmentedButton(
-                    selected = !isTargetMode,
-                    onClick = { onModeChange(false) },
-                    shape = SegmentedButtonDefaults.itemShape(0, 2),
+                    selected = durationMode == ChallengeDurationMode.ALL_DAY,
+                    onClick = { selectMode(ChallengeDurationMode.ALL_DAY) },
+                    shape = SegmentedButtonDefaults.itemShape(0, 3),
                     modifier = Modifier.testTag("invite_mode_open_button")
                 ) {
                     Text(
                         text = stringResource(R.string.challenge_invite_mode_open),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelMedium
                     )
                 }
                 SegmentedButton(
-                    selected = isTargetMode,
-                    onClick = { onModeChange(true) },
-                    shape = SegmentedButtonDefaults.itemShape(1, 2),
+                    selected = durationMode == ChallengeDurationMode.TARGET_HOURS,
+                    onClick = { selectMode(ChallengeDurationMode.TARGET_HOURS) },
+                    shape = SegmentedButtonDefaults.itemShape(1, 3),
                     modifier = Modifier.testTag("invite_mode_target_button")
                 ) {
                     Text(
                         text = stringResource(R.string.challenge_invite_mode_target),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+                SegmentedButton(
+                    selected = durationMode == ChallengeDurationMode.UNTIL_HOUR,
+                    onClick = { selectMode(ChallengeDurationMode.UNTIL_HOUR) },
+                    shape = SegmentedButtonDefaults.itemShape(2, 3),
+                    modifier = Modifier.testTag("invite_mode_until_hour_button")
+                ) {
+                    Text(
+                        text = stringResource(R.string.challenge_invite_mode_until_hour),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelMedium
                     )
                 }
             }
 
             AnimatedVisibility(
-                visible = isTargetMode,
+                visible = durationMode == ChallengeDurationMode.TARGET_HOURS,
                 enter = expandVertically() + fadeIn(),
                 exit = shrinkVertically() + fadeOut()
             ) {
@@ -1832,16 +1941,138 @@ fun ChallengeInviteModeSelector(
                 }
             }
 
+            AnimatedVisibility(
+                visible = durationMode == ChallengeDurationMode.UNTIL_HOUR,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xxs)
+                    ) {
+                        QUICK_UNTIL_HOURS.forEach { (h, m) ->
+                            val label = "%02d:%02d".format(h, m)
+                            FilterChip(
+                                selected = untilHour == h && untilMinute == m,
+                                onClick = { onUntilTimeChange(h, m) },
+                                label = { Text(label) },
+                                modifier = Modifier.testTag("quick_until_hour_chip_${h}_$m")
+                            )
+                        }
+                        FilterChip(
+                            selected = QUICK_UNTIL_HOURS.none { it.first == untilHour && it.second == untilMinute },
+                            onClick = { showUntilTimePicker = true },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Rounded.Schedule,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            label = {
+                                Text(
+                                    stringResource(
+                                        R.string.challenge_invite_until_hour_pick,
+                                        untilHourFormatted
+                                    )
+                                )
+                            },
+                            modifier = Modifier.testTag("until_hour_picker_button")
+                        )
+                    }
+                }
+            }
+
             Text(
-                text = if (isTargetMode && durationValid) {
-                    stringResource(R.string.challenge_invite_target_desc, durationText(totalMinutes))
-                } else {
-                    stringResource(R.string.challenge_invite_open_desc)
+                text = when (durationMode) {
+                    ChallengeDurationMode.TARGET_HOURS ->
+                        if (durationValid) stringResource(R.string.challenge_invite_target_desc, durationText(totalMinutes))
+                        else stringResource(R.string.challenge_duration_invalid)
+                    ChallengeDurationMode.UNTIL_HOUR ->
+                        stringResource(R.string.challenge_invite_until_hour_desc, untilHourFormatted)
+                    ChallengeDurationMode.ALL_DAY ->
+                        stringResource(R.string.challenge_invite_open_desc)
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+            // Starting Progress Selector: Start from 0m vs Keep Day Progress
+            Text(
+                text = stringResource(R.string.challenge_progress_mode_label),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = startFromZero,
+                    onClick = { onStartFromZeroChange(true) },
+                    shape = SegmentedButtonDefaults.itemShape(0, 2),
+                    modifier = Modifier.testTag("progress_mode_from_zero_button")
+                ) {
+                    Text(
+                        text = stringResource(R.string.challenge_progress_start_zero),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+                SegmentedButton(
+                    selected = !startFromZero,
+                    onClick = { onStartFromZeroChange(false) },
+                    shape = SegmentedButtonDefaults.itemShape(1, 2),
+                    modifier = Modifier.testTag("progress_mode_keep_day_button")
+                ) {
+                    Text(
+                        text = stringResource(R.string.challenge_progress_keep_day),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+            Text(
+                text = stringResource(
+                    if (startFromZero) R.string.challenge_progress_from_zero_desc
+                    else R.string.challenge_progress_keep_day_desc
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
+    }
+
+    if (showUntilTimePicker) {
+        val pickerState = rememberTimePickerState(
+            initialHour = untilHour,
+            initialMinute = untilMinute,
+            is24Hour = true
+        )
+        AlertDialog(
+            onDismissRequest = { showUntilTimePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onUntilTimeChange(pickerState.hour, pickerState.minute)
+                        showUntilTimePicker = false
+                    },
+                    modifier = Modifier.testTag("confirm_until_hour_picker_button")
+                ) {
+                    Text(stringResource(R.string.save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUntilTimePicker = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+            text = {
+                TimePicker(state = pickerState)
+            }
+        )
     }
 }
 
@@ -1855,18 +2086,27 @@ fun StudyGroupFriendsSheet(
     friends: List<StudyFriendOption>,
     alreadyInGroupUids: Set<String> = emptySet(),
     isAddingToExisting: Boolean = false,
-    onConfirmSelection: (List<StudyFriendOption>, Int) -> Unit,
+    onConfirmSelection: (List<StudyFriendOption>, Int) -> Unit = { _, _ -> },
+    onConfirmConfig: ((List<StudyFriendOption>, ChallengeInitConfig) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val selectableFriends = remember(friends, alreadyInGroupUids) {
         friends.filter { it.uid !in alreadyInGroupUids }
     }
     val selectedUids = remember { mutableStateListOf<String>() }
-    var isTargetMode by rememberSaveable { mutableStateOf(false) }
+    var durationMode by rememberSaveable { mutableStateOf(ChallengeDurationMode.ALL_DAY) }
     var hoursInput by rememberSaveable { mutableStateOf("2") }
     var minutesInput by rememberSaveable { mutableStateOf("0") }
+    var untilHour by rememberSaveable {
+        mutableIntStateOf((LocalTime.now().hour + 2).coerceIn(1, 23))
+    }
+    var untilMinute by rememberSaveable { mutableIntStateOf(0) }
+    var startFromZero by rememberSaveable { mutableStateOf(true) }
+
     val targetTotalMinutes = (hoursInput.toIntOrNull() ?: 0) * 60 + (minutesInput.toIntOrNull() ?: 0)
-    val durationValid = !isTargetMode || targetTotalMinutes in 1..ChallengeTime.MAX_MINUTES
+    val durationValid = isAddingToExisting ||
+        durationMode != ChallengeDurationMode.TARGET_HOURS ||
+        targetTotalMinutes in 1..ChallengeTime.MAX_MINUTES
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1895,12 +2135,22 @@ fun StudyGroupFriendsSheet(
 
             if (!isAddingToExisting) {
                 ChallengeInviteModeSelector(
-                    isTargetMode = isTargetMode,
-                    onModeChange = { isTargetMode = it },
+                    isTargetMode = durationMode == ChallengeDurationMode.TARGET_HOURS,
+                    onModeChange = {},
                     hoursInput = hoursInput,
                     onHoursChange = { hoursInput = it },
                     minutesInput = minutesInput,
-                    onMinutesChange = { minutesInput = it }
+                    onMinutesChange = { minutesInput = it },
+                    durationMode = durationMode,
+                    onDurationModeChange = { durationMode = it },
+                    untilHour = untilHour,
+                    untilMinute = untilMinute,
+                    onUntilTimeChange = { h, m ->
+                        untilHour = h
+                        untilMinute = m
+                    },
+                    startFromZero = startFromZero,
+                    onStartFromZeroChange = { startFromZero = it }
                 )
             }
 
@@ -1941,16 +2191,33 @@ fun StudyGroupFriendsSheet(
                                 )
                             },
                             headlineContent = {
-                                Text(name, fontWeight = FontWeight.Medium)
+                                val dotColor = when (friend.timerState) {
+                                    StudyMemberTimerState.FOCUSING -> Color(0xFF22C55E)
+                                    StudyMemberTimerState.PAUSED, StudyMemberTimerState.ON_BREAK -> Color(0xFFF59E0B)
+                                    StudyMemberTimerState.IDLE -> Color(0xFFEF4444)
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(name, fontWeight = FontWeight.Medium)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(9.dp)
+                                            .clip(CircleShape)
+                                            .background(dotColor)
+                                            .testTag("study_group_sheet_friend_dot_${friend.uid}")
+                                    )
+                                }
                             },
                             supportingContent = {
                                 Text(
                                     text = stringResource(R.string.friend_duel_minutes_fmt, friend.todayMinutes) +
                                         " · " + stringResource(
                                             when (friend.timerState) {
-                                                StudyMemberTimerState.FOCUSING -> R.string.study_group_status_focusing
-                                                StudyMemberTimerState.ON_BREAK -> R.string.study_group_status_on_break
-                                                StudyMemberTimerState.PAUSED, StudyMemberTimerState.IDLE -> R.string.study_group_status_not_focusing
+                                                StudyMemberTimerState.FOCUSING -> R.string.community_friend_status_focusing
+                                                StudyMemberTimerState.PAUSED, StudyMemberTimerState.ON_BREAK -> R.string.community_friend_status_paused
+                                                StudyMemberTimerState.IDLE -> R.string.community_friend_status_offline
                                             }
                                         )
                                 )
@@ -1964,7 +2231,28 @@ fun StudyGroupFriendsSheet(
                 onClick = {
                     val chosen = selectableFriends.filter { it.uid in selectedUids }
                     if (chosen.isNotEmpty() && durationValid) {
-                        onConfirmSelection(chosen, if (!isAddingToExisting && isTargetMode) targetTotalMinutes else 0)
+                        val nowMs = System.currentTimeMillis()
+                        val chosenTarget = if (!isAddingToExisting && durationMode == ChallengeDurationMode.TARGET_HOURS) {
+                            targetTotalMinutes
+                        } else 0
+                        val customEndMs = if (!isAddingToExisting && durationMode == ChallengeDurationMode.UNTIL_HOUR) {
+                            ChallengeTime.endAtClock(nowMs, LocalTime.of(untilHour, untilMinute))
+                        } else 0L
+                        val customHourLabel = if (!isAddingToExisting && durationMode == ChallengeDurationMode.UNTIL_HOUR) {
+                            "%02d:%02d".format(untilHour, untilMinute)
+                        } else ""
+                        val config = ChallengeInitConfig(
+                            durationMode = durationMode,
+                            targetMinutes = chosenTarget,
+                            customEndAtMs = customEndMs,
+                            customEndHourLabel = customHourLabel,
+                            startFromZero = startFromZero
+                        )
+                        if (onConfirmConfig != null) {
+                            onConfirmConfig(chosen, config)
+                        } else {
+                            onConfirmSelection(chosen, chosenTarget)
+                        }
                     }
                 },
                 enabled = selectedUids.isNotEmpty() && durationValid,
@@ -2277,10 +2565,13 @@ fun FriendDuelHistoryRow(
         )
     }
 
-    val modePrefix = if (duel.isTargetHoursChallenge) {
-        stringResource(R.string.study_group_mode_badge_target, durationText(duel.targetMinutes))
-    } else {
-        stringResource(R.string.study_group_mode_badge_open)
+    val modePrefix = when {
+        duel.isTargetHoursChallenge ->
+            stringResource(R.string.study_group_mode_badge_target, durationText(duel.targetMinutes))
+        duel.isUntilDefinedHourChallenge ->
+            stringResource(R.string.study_group_mode_badge_until_hour, duel.customEndHourLabel)
+        else ->
+            stringResource(R.string.study_group_mode_badge_open)
     }
 
     Card(
@@ -2874,6 +3165,323 @@ fun NudgeToastBanner(
                     color = colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Floating capsule banner displayed at the top of the screen when a friend sends a challenge invitation.
+ * Styled with the active AppStyle tonal surface and primary accent border, featuring Accept, Deny, and Hide actions.
+ */
+@Composable
+fun ChallengeInviteFloatingCapsule(
+    challenge: FriendChallenge,
+    myUid: String = "",
+    onAccept: (FriendChallenge) -> Unit,
+    onDecline: (FriendChallenge) -> Unit,
+    onHide: (FriendChallenge) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val now by produceState(System.currentTimeMillis(), challenge.id) {
+        while (true) {
+            value = System.currentTimeMillis()
+            delay(1_000L - value % 1_000L)
+        }
+    }
+    val inviteMember = remember(challenge.members, myUid, challenge.challengerUid, challenge.opponentUid) {
+        val all = challenge.allMembers()
+        if (myUid.isNotEmpty()) {
+            all.firstOrNull { it.uid == myUid }
+        } else {
+            all.firstOrNull { it.uid != challenge.challengerUid }
+        }
+    }
+    val remainingMs = inviteMember?.inviteRemainingMs(now, challenge.createdAt)
+        ?: (FriendChallengeRepository.INVITE_EXPIRY_MS - (now - challenge.createdAt)).coerceAtLeast(0L)
+    if (remainingMs <= 0L) return
+
+    val countdownText = ChallengeTime.clock(remainingMs)
+    val challenger = challenge.challengerName.ifBlank { stringResource(R.string.community_unnamed) }
+    val targetLabel = if (challenge.isTargetHoursChallenge) durationText(challenge.targetMinutes) else null
+    val untilHourLabel = challenge.customEndHourLabel.takeIf { challenge.isUntilDefinedHourChallenge }
+    val subtitleText = when {
+        targetLabel != null -> stringResource(R.string.invite_capsule_subtitle_target, targetLabel)
+        untilHourLabel != null -> stringResource(R.string.invite_capsule_subtitle_until_hour, untilHourLabel)
+        else -> stringResource(R.string.invite_capsule_subtitle_open)
+    }
+    val colorScheme = MaterialTheme.colorScheme
+
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = colorScheme.surfaceContainerHigh,
+        contentColor = colorScheme.onSurface,
+        tonalElevation = 6.dp,
+        shadowElevation = 10.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, colorScheme.primary.copy(alpha = 0.6f)),
+        modifier = modifier
+            .padding(horizontal = Spacing.md, vertical = Spacing.xs)
+            .widthIn(max = 380.dp)
+            .testTag("challenge_invite_floating_capsule")
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = colorScheme.primaryContainer,
+                    contentColor = colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Rounded.EmojiEvents,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.invite_capsule_title, challenger),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "$subtitleText · ${stringResource(if (challenge.startFromZero) R.string.study_group_progress_badge_from_zero else R.string.study_group_progress_badge_keep_day)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Surface(
+                    shape = CircleShape,
+                    color = colorScheme.primaryContainer.copy(alpha = 0.65f),
+                    contentColor = colorScheme.onPrimaryContainer
+                ) {
+                    Text(
+                        text = countdownText,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    onClick = { onHide(challenge) },
+                    shape = CircleShape,
+                    color = colorScheme.surfaceContainerHighest,
+                    contentColor = colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .heightIn(min = 32.dp)
+                        .testTag("invite_capsule_hide_button")
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.invite_capsule_hide),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                Surface(
+                    onClick = { onDecline(challenge) },
+                    shape = CircleShape,
+                    color = colorScheme.errorContainer.copy(alpha = 0.85f),
+                    contentColor = colorScheme.onErrorContainer,
+                    modifier = Modifier
+                        .heightIn(min = 32.dp)
+                        .testTag("invite_capsule_deny_button")
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.invite_capsule_deny),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                Surface(
+                    onClick = { onAccept(challenge) },
+                    shape = CircleShape,
+                    color = colorScheme.primary,
+                    contentColor = colorScheme.onPrimary,
+                    modifier = Modifier
+                        .heightIn(min = 32.dp)
+                        .testTag("invite_capsule_accept_button")
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.invite_capsule_accept),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Compact incoming challenge invitation overlay banner shown on the Focus screen when an invitation
+ * is pending (including after tapping Hide on the floating capsule), with its own Dismiss button.
+ */
+@Composable
+fun FocusScreenInviteBanner(
+    challenge: FriendChallenge,
+    myUid: String = "",
+    onAccept: (FriendChallenge) -> Unit,
+    onDecline: (FriendChallenge) -> Unit,
+    onDismiss: (FriendChallenge) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val now by produceState(System.currentTimeMillis(), challenge.id) {
+        while (true) {
+            value = System.currentTimeMillis()
+            delay(1_000L - value % 1_000L)
+        }
+    }
+    val inviteMember = remember(challenge.members, myUid, challenge.challengerUid, challenge.opponentUid) {
+        val all = challenge.allMembers()
+        if (myUid.isNotEmpty()) {
+            all.firstOrNull { it.uid == myUid }
+        } else {
+            all.firstOrNull { it.uid != challenge.challengerUid }
+        }
+    }
+    val remainingMs = inviteMember?.inviteRemainingMs(now, challenge.createdAt)
+        ?: (FriendChallengeRepository.INVITE_EXPIRY_MS - (now - challenge.createdAt)).coerceAtLeast(0L)
+    if (remainingMs <= 0L) return
+
+    val countdownText = ChallengeTime.clock(remainingMs)
+    val challenger = challenge.challengerName.ifBlank { stringResource(R.string.community_unnamed) }
+    val targetLabel = if (challenge.isTargetHoursChallenge) durationText(challenge.targetMinutes) else null
+    val untilHourLabel = challenge.customEndHourLabel.takeIf { challenge.isUntilDefinedHourChallenge }
+    val subtitleText = when {
+        targetLabel != null -> stringResource(R.string.invite_capsule_subtitle_target, targetLabel)
+        untilHourLabel != null -> stringResource(R.string.invite_capsule_subtitle_until_hour, untilHourLabel)
+        else -> stringResource(R.string.invite_capsule_subtitle_open)
+    }
+    val colorScheme = MaterialTheme.colorScheme
+
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = colorScheme.surfaceContainerHigh,
+        contentColor = colorScheme.onSurface,
+        tonalElevation = 4.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, colorScheme.primary.copy(alpha = 0.5f)),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("focus_screen_invite_banner")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = colorScheme.primaryContainer,
+                contentColor = colorScheme.onPrimaryContainer,
+                modifier = Modifier.size(28.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Rounded.EmojiEvents,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.invite_capsule_title, challenger),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "$subtitleText · $countdownText",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Surface(
+                onClick = { onDecline(challenge) },
+                shape = CircleShape,
+                color = colorScheme.errorContainer.copy(alpha = 0.85f),
+                contentColor = colorScheme.onErrorContainer,
+                modifier = Modifier.testTag("focus_invite_banner_deny_button")
+            ) {
+                Text(
+                    text = stringResource(R.string.invite_capsule_deny),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                )
+            }
+            Surface(
+                onClick = { onAccept(challenge) },
+                shape = CircleShape,
+                color = colorScheme.primary,
+                contentColor = colorScheme.onPrimary,
+                modifier = Modifier.testTag("focus_invite_banner_accept_button")
+            ) {
+                Text(
+                    text = stringResource(R.string.invite_capsule_accept),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                )
+            }
+            IconButton(
+                onClick = { onDismiss(challenge) },
+                modifier = Modifier
+                    .size(32.dp)
+                    .testTag("focus_invite_banner_dismiss_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = stringResource(R.string.invite_focus_banner_dismiss_a11y),
+                    modifier = Modifier.size(16.dp),
+                    tint = colorScheme.onSurfaceVariant
                 )
             }
         }

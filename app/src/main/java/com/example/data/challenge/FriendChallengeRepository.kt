@@ -184,9 +184,12 @@ data class FriendChallenge(
     val messages: List<StudyGroupMessage> = emptyList(),
     val nudges: List<StudyGroupNudge> = emptyList(),
     val messagesClearedAt: Long = 0L,
-    val targetMinutes: Int = 0
+    val targetMinutes: Int = 0,
+    val startFromZero: Boolean = true,
+    val customEndHourLabel: String = ""
 ) {
     val isTargetHoursChallenge: Boolean get() = targetMinutes > 0
+    val isUntilDefinedHourChallenge: Boolean get() = targetMinutes <= 0 && customEndHourLabel.isNotBlank()
 
     /**
      * In a Target-Hours Race (`targetMinutes > 0`), returns the UID of the accepted participant
@@ -359,6 +362,9 @@ data class FriendChallengeState(
     val availableFriends: List<StudyFriendOption> = emptyList(),
     val nudgeCooldownUntil: Map<String, Long> = emptyMap(),
     val activeNudgeBanner: StudyGroupNudge? = null,
+    val activeInviteBanner: FriendChallenge? = null,
+    val hiddenOverlayInviteIds: Set<String> = emptySet(),
+    val dismissedFocusScreenInviteIds: Set<String> = emptySet(),
     val challengesWonCount: Int = 0
 )
 
@@ -411,6 +417,12 @@ class FriendChallengeRepository(
     )
     private val handledMessageIds: MutableSet<String> = java.util.Collections.synchronizedSet(
         (prefs.getStringSet(KEY_HANDLED_MESSAGE_IDS, emptySet()) ?: emptySet()).toMutableSet()
+    )
+    private val hiddenOverlayInviteIds: MutableSet<String> = java.util.Collections.synchronizedSet(
+        (prefs.getStringSet(KEY_HIDDEN_OVERLAY_INVITE_IDS, emptySet()) ?: emptySet()).toMutableSet()
+    )
+    private val dismissedFocusInviteIds: MutableSet<String> = java.util.Collections.synchronizedSet(
+        (prefs.getStringSet(KEY_DISMISSED_FOCUS_INVITE_IDS, emptySet()) ?: emptySet()).toMutableSet()
     )
 
     init {
@@ -715,7 +727,18 @@ class FriendChallengeRepository(
                         val inviteKey = "${ch.id}_${myMember.effectiveInvitedAt(ch.createdAt)}"
                         if (inviteKey !in handledInviteIds) {
                             markInviteHandled(inviteKey)
+                            synchronized(hiddenOverlayInviteIds) {
+                                if (hiddenOverlayInviteIds.remove(ch.id)) {
+                                    prefs.edit().putStringSet(KEY_HIDDEN_OVERLAY_INVITE_IDS, hiddenOverlayInviteIds.toSet()).apply()
+                                }
+                            }
+                            synchronized(dismissedFocusInviteIds) {
+                                if (dismissedFocusInviteIds.remove(ch.id)) {
+                                    prefs.edit().putStringSet(KEY_DISMISSED_FOCUS_INVITE_IDS, dismissedFocusInviteIds.toSet()).apply()
+                                }
+                            }
                             triggerIncomingInviteNotification(
+                                challenge = ch,
                                 fromFriendName = ch.challengerName.ifBlank { "Friend" },
                                 targetMinutes = ch.targetMinutes
                             )
@@ -769,7 +792,11 @@ class FriendChallengeRepository(
         val currentMembers = ch.allMembers()
         val updatedMembers = currentMembers.map { m ->
             if (m.uid == myUid && myUid.isNotEmpty()) {
-                val effectiveBaseline = maxOf(m.baselineMinutes, getPreChallengeMinutes(ch.createdAt))
+                val effectiveBaseline = if (ch.startFromZero) {
+                    maxOf(m.baselineMinutes, getPreChallengeMinutes(ch.createdAt))
+                } else {
+                    0
+                }
                 val myChallengeMins = (_state.value.myLiveMinutesToday - effectiveBaseline).coerceAtLeast(0)
                 m.copy(
                     name = myResolvedUsername.ifBlank { m.name },
@@ -781,7 +808,11 @@ class FriendChallengeRepository(
             } else {
                 val live = liveFriendProfiles[m.uid]
                 if (live != null) {
-                    val friendChallengeMins = m.challengeMinutesFromToday(live.todayMinutes)
+                    val friendChallengeMins = if (ch.startFromZero) {
+                        m.challengeMinutesFromToday(live.todayMinutes)
+                    } else {
+                        live.todayMinutes.coerceAtLeast(0)
+                    }
                     m.copy(
                         name = live.username.ifBlank { m.name },
                         minutes = maxOf(m.minutes, friendChallengeMins),
@@ -839,7 +870,11 @@ class FriendChallengeRepository(
                 val active = _state.value.activeDuel ?: return@collectLatest
                 if (uid.isNotEmpty()) {
                     val myMember = active.allMembers().firstOrNull { it.uid == uid }
-                    val effectiveBaseline = maxOf(myMember?.baselineMinutes ?: 0, getPreChallengeMinutes(active.createdAt))
+                    val effectiveBaseline = if (active.startFromZero) {
+                        maxOf(myMember?.baselineMinutes ?: 0, getPreChallengeMinutes(active.createdAt))
+                    } else {
+                        0
+                    }
                     val myChallengeMinutes = (totalTodayMinutes - effectiveBaseline).coerceAtLeast(0)
                     if (active.myMinutes(uid) != myChallengeMinutes || myMember?.timerState != timerStatus) {
                         pushMyStateToActiveChallenge(active, uid, myChallengeMinutes, timerStatus)
@@ -937,7 +972,11 @@ class FriendChallengeRepository(
             if (effectiveUid.isNotEmpty()) {
                 val updatedMembers = duel.allMembers().map { m ->
                     if (m.uid == effectiveUid) {
-                        val effectiveBaseline = maxOf(m.baselineMinutes, getPreChallengeMinutes(duel.createdAt))
+                        val effectiveBaseline = if (duel.startFromZero) {
+                            maxOf(m.baselineMinutes, getPreChallengeMinutes(duel.createdAt))
+                        } else {
+                            0
+                        }
                         val myChallengeMins = (liveMinutes - effectiveBaseline).coerceAtLeast(0)
                         m.copy(
                             minutes = maxOf(m.minutes, myChallengeMins),
@@ -947,7 +986,11 @@ class FriendChallengeRepository(
                     } else {
                         val liveFriend = liveFriendProfiles[m.uid]
                         if (liveFriend != null) {
-                            val friendChallengeMins = m.challengeMinutesFromToday(liveFriend.todayMinutes)
+                            val friendChallengeMins = if (duel.startFromZero) {
+                                m.challengeMinutesFromToday(liveFriend.todayMinutes)
+                            } else {
+                                liveFriend.todayMinutes.coerceAtLeast(0)
+                            }
                             m.copy(
                                 name = liveFriend.username.ifBlank { m.name },
                                 minutes = maxOf(m.minutes, friendChallengeMins),
@@ -1005,17 +1048,30 @@ class FriendChallengeRepository(
         val prevHistoryIds = _state.value.history.map { "${it.id}_${it.status}_${it.winnerUid}" }
         val newHistoryIds = history.map { "${it.id}_${it.status}_${it.winnerUid}" }
 
+        val filteredIncoming = incoming.filter { it.id != active?.id }
+        val hiddenSnapshot = synchronized(hiddenOverlayInviteIds) { hiddenOverlayInviteIds.toSet() }
+        val dismissedFocusSnapshot = synchronized(dismissedFocusInviteIds) { dismissedFocusInviteIds.toSet() }
+        val bannerCandidate = filteredIncoming.firstOrNull { ch ->
+            ch.id !in hiddenSnapshot && ch.isFreshInviteFor(effectiveUid, now)
+        }
+        if (bannerCandidate == null) {
+            com.example.service.FloatingFocusBubbleManager.hideInviteCapsule(context)
+        }
+
         _state.value = _state.value.copy(
             myUid = effectiveUid,
             myName = myResolvedUsername.ifBlank { _state.value.myName },
             myLiveMinutesToday = liveMinutes,
             myTimerState = myTimerSt,
-            incomingPending = incoming.filter { it.id != active?.id },
+            incomingPending = filteredIncoming,
             outgoingPending = outgoing,
             activeDuel = active,
             history = history,
             uncelebratedWin = uncelebrated,
             availableFriends = friendsList,
+            activeInviteBanner = bannerCandidate,
+            hiddenOverlayInviteIds = hiddenSnapshot,
+            dismissedFocusScreenInviteIds = dismissedFocusSnapshot,
             challengesWonCount = winsCount
         )
 
@@ -1145,6 +1201,41 @@ class FriendChallengeRepository(
     }
 
     /**
+     * Hides the floating challenge invite capsule overlay while keeping the invitation active
+     * in the Challenges tab, on the Focus screen (until dismissed there), and in the nav bar badge.
+     */
+    fun hideInviteBanner(challengeId: String) {
+        if (challengeId.isBlank()) return
+        val snapshot = synchronized(hiddenOverlayInviteIds) {
+            hiddenOverlayInviteIds.add(challengeId)
+            hiddenOverlayInviteIds.toSet()
+        }
+        prefs.edit().putStringSet(KEY_HIDDEN_OVERLAY_INVITE_IDS, snapshot).apply()
+        val nextBanner = _state.value.incomingPending.firstOrNull { ch ->
+            ch.id !in snapshot && ch.isFreshInviteFor(_state.value.myUid, clock())
+        }
+        _state.value = _state.value.copy(
+            activeInviteBanner = nextBanner,
+            hiddenOverlayInviteIds = snapshot
+        )
+        com.example.service.FloatingFocusBubbleManager.hideInviteCapsule(context)
+    }
+
+    /**
+     * Dismisses the incoming challenge invite overlay specifically on the Focus screen while keeping
+     * the invitation available in the Challenges tab and nav bar badge.
+     */
+    fun dismissFocusInviteBanner(challengeId: String) {
+        if (challengeId.isBlank()) return
+        val snapshot = synchronized(dismissedFocusInviteIds) {
+            dismissedFocusInviteIds.add(challengeId)
+            dismissedFocusInviteIds.toSet()
+        }
+        prefs.edit().putStringSet(KEY_DISMISSED_FOCUS_INVITE_IDS, snapshot).apply()
+        _state.value = _state.value.copy(dismissedFocusScreenInviteIds = snapshot)
+    }
+
+    /**
      * Publishes our Study Group / duel state to `/users/{myUid}` and `/friend_challenges/{id}`.
      */
     private fun syncChallengeToFirestoreAsync(challenge: FriendChallenge) {
@@ -1196,7 +1287,10 @@ class FriendChallengeRepository(
     suspend fun startOrInviteToStudyGroup(
         challengerName: String,
         friendsToInvite: List<StudyFriendOption>,
-        targetMinutes: Int = 0
+        targetMinutes: Int = 0,
+        customEndAtMs: Long = 0L,
+        customEndHourLabel: String = "",
+        startFromZero: Boolean = true
     ): Result<FriendChallenge> = runCatching {
         require(friendsToInvite.isNotEmpty()) { "At least one friend is required" }
         val myUid = currentUid().ifEmpty { "local_user" }
@@ -1213,6 +1307,7 @@ class FriendChallengeRepository(
         if (existingActive != null && existingActive.id !in abandonedIds && now < existingActive.endAt) {
             // Invite newly selected or expired/declined friends into the existing active Study Group
             val currentMembers = existingActive.allMembers().toMutableList()
+            val groupStartFromZero = existingActive.startFromZero
             allowedFriendsToInvite.forEach { friend ->
                 val idx = currentMembers.indexOfFirst { it.uid == friend.uid }
                 val existingMember = if (idx >= 0) currentMembers[idx] else null
@@ -1223,9 +1318,15 @@ class FriendChallengeRepository(
                     StudyMemberRoleStatus.INVITED
                 }
                 val friendTodayTotal = maxOf(friend.todayMinutes, liveFriend?.todayMinutes ?: 0).coerceAtLeast(0)
-                val preservedBaseline = existingMember?.baselineMinutes?.takeIf { it > 0 } ?: friendTodayTotal
+                val preservedBaseline = if (groupStartFromZero) {
+                    existingMember?.baselineMinutes?.takeIf { it > 0 } ?: friendTodayTotal
+                } else {
+                    0
+                }
                 val computedMinutes = if (existingMember != null) {
                     maxOf(existingMember.minutes, (friendTodayTotal - preservedBaseline).coerceAtLeast(0))
+                } else if (!groupStartFromZero) {
+                    friendTodayTotal
                 } else {
                     0
                 }
@@ -1258,31 +1359,41 @@ class FriendChallengeRepository(
         val today = LocalDate.now(zone)
         val dayKey = today.toString()
         val midnight = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val effectiveEndAt = if (customEndAtMs > now && normalizedTargetMinutes <= 0) customEndAtMs else midnight
+        val effectiveEndHourLabel = if (customEndAtMs > now && normalizedTargetMinutes <= 0) customEndHourLabel.trim() else ""
         // Unique ID using current timestamp so abandoning a challenge never blocks creating a new one!
         val id = "${dayKey}_${myUid}_${now}"
         val primaryOpponent = allowedFriendsToInvite.first()
+
+        val myInitialMinutes = if (startFromZero) 0 else myMins.coerceAtLeast(0)
+        val myBaselineMinutes = if (startFromZero) myMins.coerceAtLeast(0) else 0
+        val primaryOpponentLive = liveFriendProfiles[primaryOpponent.uid]
+        val primaryOpponentToday = maxOf(primaryOpponent.todayMinutes, primaryOpponentLive?.todayMinutes ?: 0).coerceAtLeast(0)
+        val primaryOpponentInitial = if (startFromZero) 0 else primaryOpponentToday
 
         val initialMembers = buildList {
             add(
                 StudyGroupMember(
                     uid = myUid,
                     name = effectiveMyName,
-                    minutes = 0,
+                    minutes = myInitialMinutes,
                     timerState = myTimerSt,
                     roleStatus = StudyMemberRoleStatus.ACTIVE,
                     invitedAt = now,
                     updatedAt = now,
-                    baselineMinutes = myMins.coerceAtLeast(0)
+                    baselineMinutes = myBaselineMinutes
                 )
             )
             allowedFriendsToInvite.distinctBy { it.uid }.filter { it.uid != myUid }.forEach { f ->
                 val liveFriend = liveFriendProfiles[f.uid]
-                val friendBaseline = maxOf(f.todayMinutes, liveFriend?.todayMinutes ?: 0).coerceAtLeast(0)
+                val friendTodayTotal = maxOf(f.todayMinutes, liveFriend?.todayMinutes ?: 0).coerceAtLeast(0)
+                val friendBaseline = if (startFromZero) friendTodayTotal else 0
+                val friendInitialMins = if (startFromZero) 0 else friendTodayTotal
                 add(
                     StudyGroupMember(
                         uid = f.uid,
                         name = f.username.ifBlank { liveFriend?.username ?: "Friend" },
-                        minutes = 0,
+                        minutes = friendInitialMins,
                         timerState = liveFriend?.timerState ?: f.timerState,
                         roleStatus = StudyMemberRoleStatus.INVITED,
                         invitedAt = now,
@@ -1297,20 +1408,22 @@ class FriendChallengeRepository(
             id = id,
             challengerUid = myUid,
             challengerName = effectiveMyName,
-            challengerMinutes = 0,
+            challengerMinutes = myInitialMinutes,
             opponentUid = primaryOpponent.uid,
             opponentName = primaryOpponent.username.ifBlank { "Friend" },
-            opponentMinutes = 0,
+            opponentMinutes = primaryOpponentInitial,
             dayKey = dayKey,
             createdAt = now,
             acceptedAt = now,
-            endAt = midnight,
+            endAt = effectiveEndAt,
             finishedAt = null,
             status = FriendChallengeStatus.ACTIVE,
             members = initialMembers,
             messages = emptyList(),
             nudges = emptyList(),
-            targetMinutes = normalizedTargetMinutes
+            targetMinutes = normalizedTargetMinutes,
+            startFromZero = startFromZero,
+            customEndHourLabel = effectiveEndHourLabel
         )
 
         upsertLocalCache(challenge)
@@ -1335,7 +1448,11 @@ class FriendChallengeRepository(
         val idx = currentMembers.indexOfFirst { it.uid == friendUid }
         val existing = if (idx >= 0) currentMembers[idx] else null
         val friendTodayTotal = (liveFriend?.todayMinutes ?: 0).coerceAtLeast(0)
-        val preservedBaseline = existing?.baselineMinutes?.takeIf { it > 0 } ?: friendTodayTotal
+        val preservedBaseline = if (challenge.startFromZero) {
+            existing?.baselineMinutes?.takeIf { it > 0 } ?: friendTodayTotal
+        } else {
+            0
+        }
         val refreshedMember = StudyGroupMember(
             uid = friendUid,
             name = friendName.ifBlank { existing?.name ?: liveFriend?.username ?: "Friend" },
@@ -1365,7 +1482,10 @@ class FriendChallengeRepository(
         opponentUid: String,
         opponentName: String,
         opponentInitialMinutes: Int = 0,
-        targetMinutes: Int = 0
+        targetMinutes: Int = 0,
+        customEndAtMs: Long = 0L,
+        customEndHourLabel: String = "",
+        startFromZero: Boolean = true
     ): Result<FriendChallenge> {
         val liveFriend = liveFriendProfiles[opponentUid]
         return startOrInviteToStudyGroup(
@@ -1378,7 +1498,10 @@ class FriendChallengeRepository(
                     timerState = liveFriend?.timerState ?: StudyMemberTimerState.IDLE
                 )
             ),
-            targetMinutes = targetMinutes
+            targetMinutes = targetMinutes,
+            customEndAtMs = customEndAtMs,
+            customEndHourLabel = customEndHourLabel,
+            startFromZero = startFromZero
         )
     }
 
@@ -1388,6 +1511,8 @@ class FriendChallengeRepository(
     suspend fun acceptChallenge(challenge: FriendChallenge): Result<FriendChallenge> = runCatching {
         val myUid = currentUid().ifEmpty { _state.value.myUid.ifEmpty { challenge.opponentUid } }
         val now = clock()
+        hideInviteBanner(challenge.id)
+        dismissFocusInviteBanner(challenge.id)
         synchronized(abandonedIds) {
             if (abandonedIds.remove(challenge.id)) {
                 prefs.edit().putStringSet(KEY_ABANDONED_IDS, abandonedIds.toSet()).apply()
@@ -1397,7 +1522,11 @@ class FriendChallengeRepository(
         val myTimerSt = _state.value.myTimerState
         val updatedMembers = challenge.allMembers().map { m ->
             if (m.uid == myUid) {
-                val effectiveBaseline = maxOf(m.baselineMinutes, getPreChallengeMinutes(challenge.createdAt))
+                val effectiveBaseline = if (challenge.startFromZero) {
+                    maxOf(m.baselineMinutes, getPreChallengeMinutes(challenge.createdAt))
+                } else {
+                    0
+                }
                 val myChallengeMins = (myMins - effectiveBaseline).coerceAtLeast(0)
                 m.copy(
                     minutes = maxOf(m.minutes, myChallengeMins),
@@ -1427,6 +1556,8 @@ class FriendChallengeRepository(
     suspend fun declineChallenge(challenge: FriendChallenge): Result<Unit> = runCatching {
         val myUid = currentUid().ifEmpty { _state.value.myUid.ifEmpty { challenge.opponentUid } }
         val now = clock()
+        hideInviteBanner(challenge.id)
+        dismissFocusInviteBanner(challenge.id)
         val updatedMembers = challenge.allMembers().map { m ->
             if (m.uid == myUid) {
                 m.copy(
@@ -2055,7 +2186,39 @@ class FriendChallengeRepository(
      * Plays notification sound + vibrates the device + displays a high-priority notification
      * when a friend invites the user to a Study Group or Challenge.
      */
-    internal fun triggerIncomingInviteNotification(fromFriendName: String, targetMinutes: Int = 0) {
+    internal fun triggerIncomingInviteNotification(
+        challenge: FriendChallenge? = null,
+        fromFriendName: String,
+        targetMinutes: Int = 0
+    ) {
+        val body = when {
+            targetMinutes > 0 ->
+                context.getString(R.string.study_group_invite_notif_body_target, formatTargetDurationForNotif(targetMinutes))
+            challenge?.isUntilDefinedHourChallenge == true ->
+                context.getString(R.string.study_group_invite_notif_body_until_hour, challenge.customEndHourLabel)
+            else ->
+                context.getString(R.string.study_group_invite_notif_body_open)
+        }
+        if (challenge != null) {
+            _state.value = _state.value.copy(activeInviteBanner = challenge)
+            val inForeground = runCatching { com.example.FocusFlowApplication.instance.isAppInForeground }.getOrDefault(false)
+            if (!inForeground) {
+                com.example.service.FloatingFocusBubbleManager.showInviteCapsule(
+                    context = context,
+                    fromFriendName = fromFriendName,
+                    subtitleText = body,
+                    onAcceptClicked = {
+                        appScope.launch { acceptChallenge(challenge) }
+                    },
+                    onDenyClicked = {
+                        appScope.launch { declineChallenge(challenge) }
+                    },
+                    onHideClicked = {
+                        hideInviteBanner(challenge.id)
+                    }
+                )
+            }
+        }
         runCatching {
             vibrateAndPlayAlertSound(longArrayOf(0, 220, 100, 260))
             val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
@@ -2074,11 +2237,6 @@ class FriendChallengeRepository(
             )
 
             val title = context.getString(R.string.study_group_invite_notif_title, fromFriendName)
-            val body = if (targetMinutes > 0) {
-                context.getString(R.string.study_group_invite_notif_body_target, formatTargetDurationForNotif(targetMinutes))
-            } else {
-                context.getString(R.string.study_group_invite_notif_body_open)
-            }
 
             val notification = NotificationCompat.Builder(context, INVITE_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_widget_flame)
@@ -2240,6 +2398,8 @@ class FriendChallengeRepository(
         private const val KEY_HANDLED_NUDGE_IDS = "handled_nudge_ids"
         private const val KEY_HANDLED_INVITE_IDS = "handled_invite_ids"
         private const val KEY_HANDLED_MESSAGE_IDS = "handled_message_ids"
+        private const val KEY_HIDDEN_OVERLAY_INVITE_IDS = "hidden_overlay_invite_ids"
+        private const val KEY_DISMISSED_FOCUS_INVITE_IDS = "dismissed_focus_invite_ids"
         private const val NUDGE_CHANNEL_ID = "study_group_nudge_channel"
         private const val NUDGE_NOTIFICATION_ID = 4409
         private const val INVITE_CHANNEL_ID = "study_group_invite_channel"
@@ -2327,7 +2487,9 @@ class FriendChallengeRepository(
                 messages = mergedMessages,
                 nudges = mergedNudges,
                 messagesClearedAt = maxClearedAt,
-                targetMinutes = maxOf(a.targetMinutes, b.targetMinutes)
+                targetMinutes = maxOf(a.targetMinutes, b.targetMinutes),
+                startFromZero = primary.startFromZero,
+                customEndHourLabel = b.customEndHourLabel.ifBlank { a.customEndHourLabel }
             )
         }
 
@@ -2457,7 +2619,9 @@ class FriendChallengeRepository(
                 messages = parseMessagesJson(getString("studyMessagesJson")),
                 nudges = parseNudgesJson(getString("studyNudgesJson")),
                 messagesClearedAt = getLong("studyMessagesClearedAt") ?: 0L,
-                targetMinutes = (getLong("duelTargetMinutes") ?: 0L).toInt()
+                targetMinutes = (getLong("duelTargetMinutes") ?: 0L).toInt(),
+                startFromZero = getBoolean("duelStartFromZero") ?: true,
+                customEndHourLabel = getString("duelCustomEndHourLabel").orEmpty()
             )
         }.getOrNull()
 
@@ -2483,7 +2647,9 @@ class FriendChallengeRepository(
             "studyMessagesJson" to messagesToJsonArray(messages).toString(),
             "studyNudgesJson" to nudgesToJsonArray(nudges).toString(),
             "studyMessagesClearedAt" to messagesClearedAt,
-            "duelTargetMinutes" to targetMinutes
+            "duelTargetMinutes" to targetMinutes,
+            "duelStartFromZero" to startFromZero,
+            "duelCustomEndHourLabel" to customEndHourLabel
         )
 
         private fun DocumentSnapshot.toFriendChallenge(): FriendChallenge? = runCatching {
@@ -2509,7 +2675,9 @@ class FriendChallengeRepository(
                 messages = parseMessagesJson(getString("studyMessagesJson")),
                 nudges = parseNudgesJson(getString("studyNudgesJson")),
                 messagesClearedAt = getLong("studyMessagesClearedAt") ?: 0L,
-                targetMinutes = (getLong("targetMinutes") ?: 0L).toInt()
+                targetMinutes = (getLong("targetMinutes") ?: 0L).toInt(),
+                startFromZero = getBoolean("startFromZero") ?: true,
+                customEndHourLabel = getString("customEndHourLabel").orEmpty()
             )
         }.getOrNull()
 
@@ -2533,7 +2701,9 @@ class FriendChallengeRepository(
             "studyMessagesJson" to messagesToJsonArray(messages).toString(),
             "studyNudgesJson" to nudgesToJsonArray(nudges).toString(),
             "studyMessagesClearedAt" to messagesClearedAt,
-            "targetMinutes" to targetMinutes
+            "targetMinutes" to targetMinutes,
+            "startFromZero" to startFromZero,
+            "customEndHourLabel" to customEndHourLabel
         )
 
         internal fun FriendChallenge.toJson(): JSONObject = JSONObject()
@@ -2553,6 +2723,8 @@ class FriendChallengeRepository(
             .put("studyNudgesJson", nudgesToJsonArray(nudges).toString())
             .put("studyMessagesClearedAt", messagesClearedAt)
             .put("targetMinutes", targetMinutes)
+            .put("startFromZero", startFromZero)
+            .put("customEndHourLabel", customEndHourLabel)
             .apply {
                 acceptedAt?.let { put("acceptedAt", it) }
                 finishedAt?.let { put("finishedAt", it) }
@@ -2580,7 +2752,9 @@ class FriendChallengeRepository(
             messages = parseMessagesJson(o.optString("studyMessagesJson")),
             nudges = parseNudgesJson(o.optString("studyNudgesJson")),
             messagesClearedAt = o.optLong("studyMessagesClearedAt", 0L),
-            targetMinutes = o.optInt("targetMinutes", 0)
+            targetMinutes = o.optInt("targetMinutes", 0),
+            startFromZero = o.optBoolean("startFromZero", true),
+            customEndHourLabel = o.optString("customEndHourLabel", "")
         )
     }
 }
