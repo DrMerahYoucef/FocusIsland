@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for upgrading the Lock Phone personal challenge with a persistent full-screen WindowManager TYPE_APPLICATION_OVERLAY shield and Android Screen Pinning (startLockTask) to block Recent Apps, Home, and Notification Drawer escapes, with instant re-lock on exiting allowed apps.",
-  "updatedAt":  "2026-11-01T11:05:09.426362745Z",
+  "summary":  "Updated implementation plan to automatically unpin the app (stopLockTask) when the Lock Phone timer completes and never save Lock Phone sessions to the challenge history record.",
+  "updatedAt":  "2026-11-01T14:22:54.986471782Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

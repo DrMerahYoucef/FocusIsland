@@ -672,7 +672,7 @@ class StudyGroupChallengeTest {
     }
 
     @Test
-    fun `lock phone challenge persists quote and auto-completes as DONE when timer ends`() {
+    fun `lock phone challenge persists quote while active and does not save a history record when timer ends`() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         var currentNow = 1_700_000_000_000L
         val store = ChallengeStore(context, clock = { currentNow })
@@ -689,24 +689,24 @@ class StudyGroupChallengeTest {
         assertTrue(created.quoteText.isNotBlank())
         assertTrue(created.quoteAuthor.isNotBlank())
 
-        // Reload from store to verify JSON persistence of quote
+        // Reload from store to verify JSON persistence of quote while active
         val reloaded = ChallengeStore(context, clock = { currentNow }).state.value.active
         assertNotNull(reloaded)
         assertTrue(reloaded!!.isLockPhone)
         assertEquals(created.quoteText, reloaded.quoteText)
         assertEquals(created.quoteAuthor, reloaded.quoteAuthor)
 
-        // When time reaches endAt, Lock Phone automatically finishes as DONE (unlocking phone)
+        // When time reaches endAt, Lock Phone unlocks the phone (active = null) and does NOT save a history record
         currentNow = endAt + 1_000L
-        store.expireIfDue()
+        val expired = store.expireIfDue()
+        assertNotNull(expired)
+        assertEquals(ChallengeResult.DONE, expired!!.result)
         assertNull(store.state.value.active)
-        val finished = store.state.value.history.firstOrNull { it.id == created.id }
-        assertNotNull(finished)
-        assertEquals(ChallengeResult.DONE, finished!!.result)
+        assertTrue(store.state.value.history.none { it.id == created.id })
     }
 
     @Test
-    fun `StrictPhoneLockOverlay displays only countdown counter and motivational quote`() {
+    fun `StrictPhoneLockOverlay displays only countdown counter and motivational quote and calls onTimeUp when finished`() {
         val now = 1_700_000_000_000L
         val challenge = Challenge(
             id = 101L,
@@ -717,13 +717,15 @@ class StudyGroupChallengeTest {
             quoteText = "Discipline is choosing between what you want now and what you want most.",
             quoteAuthor = "Abraham Lincoln"
         )
+        val currentNow = androidx.compose.runtime.mutableLongStateOf(now + 15 * 60_000L)
+        var timeUpCalled = false
 
         composeRule.setContent {
             FocusIslandTheme(themeMode = ThemeMode.DARK) {
                 StrictPhoneLockOverlay(
                     challenge = challenge,
-                    nowMs = now + 15 * 60_000L,
-                    onTimeUp = {}
+                    nowMs = currentNow.longValue,
+                    onTimeUp = { timeUpCalled = true }
                 )
             }
         }
@@ -736,6 +738,12 @@ class StudyGroupChallengeTest {
             "“Discipline is choosing between what you want now and what you want most.”"
         ).assertIsDisplayed()
         composeRule.onNodeWithText("— Abraham Lincoln").assertIsDisplayed()
+        assertFalse(timeUpCalled)
+
+        // Advance time to endAt and verify onTimeUp is invoked
+        currentNow.longValue = challenge.endAt
+        composeRule.waitForIdle()
+        assertTrue(timeUpCalled)
     }
 }
 

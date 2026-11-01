@@ -65,6 +65,7 @@ class FocusOverlayActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        PhoneLockOverlayManager.registerHostActivity(this)
         enableShowWhenLockedFlag()
 
         if (!android.provider.Settings.canDrawOverlays(this)) {
@@ -96,7 +97,7 @@ class FocusOverlayActivity : ComponentActivity() {
                     }
                 }
 
-                if (activeChallenge != null && activeChallenge.isLockPhone && nowMs < activeChallenge.endAt) {
+                if (activeChallenge != null && activeChallenge.isLockPhone) {
                     StrictPhoneLockOverlay(
                         challenge = activeChallenge,
                         nowMs = nowMs,
@@ -109,6 +110,14 @@ class FocusOverlayActivity : ComponentActivity() {
                             finish()
                         }
                     )
+                } else if (phoneLockMode) {
+                    androidx.compose.runtime.LaunchedEffect(Unit) {
+                        PhoneLockOverlayManager.tryStopScreenPinning(this@FocusOverlayActivity)
+                        PhoneLockOverlayManager.dismissShield(this@FocusOverlayActivity)
+                        ChallengeAlarmReceiver.cancel(this@FocusOverlayActivity)
+                        PomodoroTimerService.syncPhoneLock(this@FocusOverlayActivity)
+                        finish()
+                    }
                 } else {
                     val appName = remember(blockedPackage) { appLabel(blockedPackage) }
                     BackHandler(onBack = ::backToFocus)
@@ -128,10 +137,21 @@ class FocusOverlayActivity : ComponentActivity() {
     /** singleTop: another blocked app opened while this screen is still up. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        PhoneLockOverlayManager.registerHostActivity(this)
         blockedPackage = intent.getStringExtra(EXTRA_BLOCKED_PACKAGE).orEmpty()
         phoneLockMode = intent.getBooleanExtra(EXTRA_PHONE_LOCK_MODE, phoneLockMode)
         if (intent.getBooleanExtra(EXTRA_REQUEST_SCREEN_PIN, false)) {
             PhoneLockOverlayManager.tryStartScreenPinning(this)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        PhoneLockOverlayManager.registerHostActivity(this)
+        if (!isPhoneLockActive() && phoneLockMode) {
+            PhoneLockOverlayManager.tryStopScreenPinning(this)
+            PhoneLockOverlayManager.dismissShield(this)
+            finish()
         }
     }
 
@@ -141,6 +161,8 @@ class FocusOverlayActivity : ComponentActivity() {
             PhoneLockOverlayManager.reLockImmediately(this)
             @Suppress("DEPRECATION")
             runCatching { sendBroadcast(Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS)) }
+        } else if (!isPhoneLockActive()) {
+            PhoneLockOverlayManager.tryStopScreenPinning(this)
         }
     }
 

@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        PhoneLockOverlayManager.registerHostActivity(this)
         enableShowOnLockScreen()
         AppLanguage.applyLocale(this)
         enableEdgeToEdge()
@@ -90,6 +91,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        PhoneLockOverlayManager.registerHostActivity(this)
         val isLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
         if (!isLocked) {
             openedFocusModeForCurrentLock = false
@@ -99,6 +101,9 @@ class MainActivity : ComponentActivity() {
         }
         if (isPhoneLockActive()) {
             PhoneLockOverlayManager.reLockImmediately(this)
+        } else {
+            PhoneLockOverlayManager.tryStopScreenPinning(this)
+            PhoneLockOverlayManager.dismissShield(this)
         }
     }
 
@@ -108,6 +113,8 @@ class MainActivity : ComponentActivity() {
             PhoneLockOverlayManager.reLockImmediately(this)
             @Suppress("DEPRECATION")
             runCatching { sendBroadcast(Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS)) }
+        } else if (!isPhoneLockActive()) {
+            PhoneLockOverlayManager.tryStopScreenPinning(this)
         }
     }
 

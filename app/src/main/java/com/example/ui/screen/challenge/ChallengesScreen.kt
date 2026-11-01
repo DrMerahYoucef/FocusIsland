@@ -114,6 +114,8 @@ import com.example.data.challenge.ChallengeState
 import com.example.data.challenge.FriendChallenge
 import com.example.data.challenge.FriendChallengeState
 import com.example.data.challenge.PersonalChallengeType
+import com.example.service.PhoneLockOverlayManager
+import com.example.service.findActivity
 import com.example.ui.designsystem.ConfirmDialog
 import com.example.ui.designsystem.Celebration
 import com.example.ui.designsystem.playSuccessSound
@@ -194,12 +196,25 @@ fun ChallengesScreen(
             delay(1_000L - value % 1_000L)
         }
     }
+    LaunchedEffect(state.active?.id, state.active?.isLockPhone) {
+        val active = state.active
+        if (active == null || !active.isLockPhone) {
+            PhoneLockOverlayManager.tryStopScreenPinning(context.findActivity())
+            PhoneLockOverlayManager.dismissShield(context)
+        }
+    }
     LaunchedEffect(now, state.active?.id, state.active?.result) {
         val active = state.active ?: return@LaunchedEffect
         if (now >= active.endAt && active.result != ChallengeResult.FAILED) {
+            if (active.isLockPhone) {
+                PhoneLockOverlayManager.tryStopScreenPinning(context.findActivity())
+                PhoneLockOverlayManager.dismissShield(context)
+            }
             val finalized = viewModel.timeUp()
             if (finalized?.result == ChallengeResult.DONE) {
-                celebrated = finalized
+                if (!finalized.isLockPhone) {
+                    celebrated = finalized
+                }
                 playSuccessSound(context, focusStyle.successSound)
             }
         }
@@ -219,9 +234,13 @@ fun ChallengesScreen(
             onGiveUp = { confirmGiveUp = true },
             onStopOvertime = viewModel::stopOvertime,
             onTimeUp = {
+                PhoneLockOverlayManager.tryStopScreenPinning(context.findActivity())
+                PhoneLockOverlayManager.dismissShield(context)
                 val finalized = viewModel.timeUp()
                 if (finalized?.result == ChallengeResult.DONE) {
-                    celebrated = finalized
+                    if (!finalized.isLockPhone) {
+                        celebrated = finalized
+                    }
                     playSuccessSound(context, focusStyle.successSound)
                 }
             },
@@ -365,7 +384,7 @@ internal fun ChallengesContent(
 ) {
     // When a Lock Phone personal challenge is active, lock the entire view to StrictPhoneLockOverlay
     val activeChallenge = state.active
-    if (activeChallenge != null && activeChallenge.isLockPhone && nowMs < activeChallenge.endAt) {
+    if (activeChallenge != null && activeChallenge.isLockPhone) {
         StrictPhoneLockOverlay(
             challenge = activeChallenge,
             nowMs = nowMs,

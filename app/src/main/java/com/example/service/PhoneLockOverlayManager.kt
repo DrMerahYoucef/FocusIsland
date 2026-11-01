@@ -3,6 +3,7 @@ package com.example.service
 import android.app.Activity
 import android.app.ActivityManager
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Canvas
@@ -34,6 +35,19 @@ import com.example.ui.screen.challenge.ChallengeTime
 import com.example.ui.theme.AppStyle
 import com.example.ui.theme.FocusStyles
 import com.example.ui.theme.ThemeMode
+import java.lang.ref.WeakReference
+
+/**
+ * Unwraps any [ContextWrapper] chain (such as locale wrappers) to locate the underlying [Activity].
+ */
+fun Context.findActivity(): Activity? {
+    var ctx: Context? = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
 
 /**
  * Persistent, full-screen system window shield (`TYPE_APPLICATION_OVERLAY`) for strict
@@ -57,8 +71,22 @@ object PhoneLockOverlayManager {
     private var clockTextView: TextView? = null
     private var renderedChallengeId: Long = -1L
 
+    @Volatile
+    private var pinnedActivityRef: WeakReference<Activity>? = null
+
+    @Volatile
+    private var hostActivityRef: WeakReference<Activity>? = null
+
     val isShieldAttached: Boolean
         get() = shieldView != null
+
+    /**
+     * Registers the currently active [Activity] so [dismissShield] and [tryStopScreenPinning]
+     * can always unpin the screen even when triggered from a background service or alarm.
+     */
+    fun registerHostActivity(activity: Activity) {
+        hostActivityRef = WeakReference(activity)
+    }
 
     /**
      * Checks whether the device is currently in Android Screen Pinning (`LockTask`) mode.
@@ -74,25 +102,54 @@ object PhoneLockOverlayManager {
      * at the OS level.
      */
     fun tryStartScreenPinning(activity: Activity) {
-        runCatching {
-            if (!isScreenPinned(activity)) {
-                activity.startLockTask()
+        pinnedActivityRef = WeakReference(activity)
+        hostActivityRef = WeakReference(activity)
+        val block = Runnable {
+            runCatching {
+                if (!isScreenPinned(activity)) {
+                    activity.startLockTask()
+                }
+            }.onFailure {
+                Log.w(TAG, "startLockTask failed: ${it.message}")
             }
-        }.onFailure {
-            Log.w(TAG, "startLockTask failed: ${it.message}")
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            block.run()
+        } else {
+            mainHandler.post(block)
         }
     }
 
     /**
-     * Stops Android Screen Pinning (`stopLockTask()`) on [activity] when the lock timer finishes.
+     * Stops Android Screen Pinning (`stopLockTask()`) when the lock timer finishes.
+     * Automatically resolves the passed [activity], the tracked [pinnedActivityRef], and
+     * [hostActivityRef] so the app never remains stuck in pinned mode.
      */
-    fun tryStopScreenPinning(activity: Activity) {
-        runCatching {
-            if (isScreenPinned(activity)) {
-                activity.stopLockTask()
+    fun tryStopScreenPinning(activity: Activity? = null) {
+        val block = Runnable {
+            val candidates = listOfNotNull(
+                activity,
+                pinnedActivityRef?.get(),
+                hostActivityRef?.get()
+            ).distinct()
+            for (act in candidates) {
+                runCatching {
+                    if (isScreenPinned(act)) {
+                        act.stopLockTask()
+                    } else {
+                        // Fallback in case lockTaskModeState is transiently stale
+                        runCatching { act.stopLockTask() }
+                    }
+                }.onFailure {
+                    Log.w(TAG, "stopLockTask failed: ${it.message}")
+                }
             }
-        }.onFailure {
-            Log.w(TAG, "stopLockTask failed: ${it.message}")
+            pinnedActivityRef = null
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            block.run()
+        } else {
+            mainHandler.post(block)
         }
     }
 
@@ -111,6 +168,7 @@ object PhoneLockOverlayManager {
                 runCatching { store.expireIfDue() }
                 ChallengeAlarmReceiver.cancel(appContext)
             }
+            tryStopScreenPinning(context.findActivity())
             dismissShield(appContext)
             return
         }
@@ -125,9 +183,10 @@ object PhoneLockOverlayManager {
     fun reLockImmediately(context: Context) {
         val appContext = context.applicationContext
         val store = runCatching { FocusFlowApplication.instance.challengeStore }.getOrNull()
-        val active = store?.state?.value?.active ?: return
+        val active = store?.state?.value?.active
         val now = System.currentTimeMillis()
-        if (!active.isLockPhone || now >= active.endAt) {
+        if (active == null || !active.isLockPhone || now >= active.endAt) {
+            tryStopScreenPinning(context.findActivity())
             dismissShield(appContext)
             return
         }
@@ -135,11 +194,14 @@ object PhoneLockOverlayManager {
     }
 
     /**
-     * Removes the system overlay shield completely when the Lock Phone session finishes.
+     * Removes the system overlay shield completely and unpins the screen when the Lock Phone session finishes.
      */
     fun dismissShield(context: Context) {
+        val callerActivity = context.findActivity()
+        tryStopScreenPinning(callerActivity)
         val appContext = context.applicationContext
         mainHandler.post {
+            tryStopScreenPinning(callerActivity)
             val view = shieldView ?: return@post
             shieldView = null
             shieldParams = null

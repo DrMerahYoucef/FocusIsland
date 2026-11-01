@@ -107,6 +107,7 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
                     } else emptyList()
 
                     val mergedHistory = (_state.value.history + remoteHistory)
+                        .filterNot { it.isLockPhone }
                         .distinctBy { it.id }
                         .sortedByDescending { it.finishedAt ?: it.startAt }
                         .take(MAX_HISTORY)
@@ -127,7 +128,7 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
         if (uid.isEmpty()) return
         runCatching {
             val activeJson = state.active?.toJson()?.toString().orEmpty()
-            val historyJson = JSONArray(state.history.take(MAX_HISTORY).map { it.toJson() }).toString()
+            val historyJson = JSONArray(state.history.filterNot { it.isLockPhone }.take(MAX_HISTORY).map { it.toJson() }).toString()
             Firebase.firestore.collection("users").document(uid)
                 .set(
                     mapOf(
@@ -149,9 +150,8 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
     ): Challenge {
         val now = clock()
         val historyWithPrevious = _state.value.active?.let { prev ->
-            if (prev.isLockPhone && now >= prev.endAt) {
-                val finalized = prev.copy(finishedAt = prev.endAt, result = ChallengeResult.DONE)
-                upsertHistory(finalized, _state.value.history)
+            if (prev.isLockPhone) {
+                _state.value.history
             } else if (prev.result == ChallengeResult.FAILED || now >= prev.endAt) {
                 val finalized = prev.copy(finishedAt = now, result = ChallengeResult.FAILED)
                 upsertHistory(finalized, _state.value.history)
@@ -186,7 +186,12 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
     fun finish(result: ChallengeResult): Challenge? {
         val active = _state.value.active ?: return null
         val done = active.copy(finishedAt = clock(), result = result)
-        save(ChallengeState(active = null, history = upsertHistory(done, _state.value.history)))
+        val nextHistory = if (active.isLockPhone) {
+            _state.value.history
+        } else {
+            upsertHistory(done, _state.value.history)
+        }
+        save(ChallengeState(active = null, history = nextHistory))
         return done
     }
 
@@ -194,8 +199,8 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
      * For [PersonalChallengeType.GOAL]: marks the active challenge failed when its countdown reaches 00:00,
      * recording it in history as FAILED while keeping it in [ChallengeState.active] so the overtime clock keeps counting up.
      *
-     * For [PersonalChallengeType.LOCK_PHONE]: reaching 00:00 completes the lock session successfully as DONE
-     * and unlocks the phone (`active = null`).
+     * For [PersonalChallengeType.LOCK_PHONE]: reaching 00:00 completes the lock session and unlocks the phone
+     * (`active = null`) without adding a history record.
      */
     @Synchronized
     fun expireIfDue(): Challenge? {
@@ -204,7 +209,7 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
         if (now < active.endAt) return null
         if (active.isLockPhone) {
             val done = active.copy(finishedAt = active.endAt, result = ChallengeResult.DONE)
-            save(ChallengeState(active = null, history = upsertHistory(done, _state.value.history)))
+            save(ChallengeState(active = null, history = _state.value.history))
             return done
         }
         if (active.result == ChallengeResult.FAILED) return active
@@ -219,33 +224,45 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
         val active = _state.value.active ?: return null
         val now = clock()
         val finalized = active.copy(finishedAt = maxOf(now, active.endAt), result = ChallengeResult.FAILED)
-        save(ChallengeState(active = null, history = upsertHistory(finalized, _state.value.history)))
+        val nextHistory = if (active.isLockPhone) {
+            _state.value.history
+        } else {
+            upsertHistory(finalized, _state.value.history)
+        }
+        save(ChallengeState(active = null, history = nextHistory))
         return finalized
     }
 
     fun clearHistory() = save(_state.value.copy(history = emptyList()))
 
     private fun upsertHistory(entry: Challenge, current: List<Challenge>): List<Challenge> {
-        val filtered = current.filterNot { it.id == entry.id }
+        val cleanCurrent = current.filterNot { it.isLockPhone }
+        if (entry.isLockPhone) return cleanCurrent
+        val filtered = cleanCurrent.filterNot { it.id == entry.id }
         return (listOf(entry) + filtered).take(MAX_HISTORY)
     }
 
     private fun save(state: ChallengeState) {
-        _state.value = state
+        val cleanHistory = state.history.filterNot { it.isLockPhone }
+        val cleanState = if (cleanHistory.size == state.history.size) state else state.copy(history = cleanHistory)
+        _state.value = cleanState
         prefs.edit()
-            .putString(KEY_ACTIVE, state.active?.toJson()?.toString())
-            .putString(KEY_HISTORY, JSONArray(state.history.map { it.toJson() }).toString())
+            .putString(KEY_ACTIVE, cleanState.active?.toJson()?.toString())
+            .putString(KEY_HISTORY, JSONArray(cleanState.history.map { it.toJson() }).toString())
             .apply()
         val uid = runCatching { Firebase.auth.currentUser?.takeIf { !it.isAnonymous }?.uid.orEmpty() }.getOrDefault("")
         if (uid.isNotEmpty()) {
-            pushToFirestore(uid, state)
+            pushToFirestore(uid, cleanState)
         }
     }
 
     private fun load(): ChallengeState = runCatching {
         val active = prefs.getString(KEY_ACTIVE, null)?.let { challengeFromJson(JSONObject(it)) }
         val array = JSONArray(prefs.getString(KEY_HISTORY, "[]"))
-        ChallengeState(active, (0 until array.length()).map { challengeFromJson(array.getJSONObject(it)) })
+        val history = (0 until array.length())
+            .map { challengeFromJson(array.getJSONObject(it)) }
+            .filterNot { it.isLockPhone }
+        ChallengeState(active, history)
     }.getOrDefault(ChallengeState())
 
     companion object {

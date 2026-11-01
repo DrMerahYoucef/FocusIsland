@@ -56,10 +56,12 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.FocusFlowApplication
 import com.example.R
 import com.example.data.challenge.Challenge
 import com.example.data.challenge.ChallengeQuotes
 import com.example.service.PhoneLockOverlayManager
+import com.example.service.findActivity
 import com.example.ui.designsystem.PhaseRing
 import com.example.ui.designsystem.RingClock
 import com.example.ui.theme.Spacing
@@ -100,9 +102,11 @@ fun StrictPhoneLockOverlay(
         // Intentionally no-op
     }
 
-    // Enter sticky immersive mode (hide status bar and navigation bar) while the lock is active
+    // Enter sticky immersive mode (hide status bar and navigation bar) while the lock is active,
+    // and guarantee screen unpinning when this lock screen leaves composition.
     DisposableEffect(view) {
-        val activity = view.context as? Activity
+        val activity = view.context.findActivity() ?: context.findActivity()
+        activity?.let { PhoneLockOverlayManager.registerHostActivity(it) }
         val window = activity?.window
         val controller = if (window != null) {
             WindowCompat.getInsetsController(window, view)
@@ -113,18 +117,27 @@ fun StrictPhoneLockOverlay(
         }
         onDispose {
             controller?.show(WindowInsetsCompat.Type.systemBars())
+            val active = runCatching { FocusFlowApplication.instance.challengeStore.state.value.active }.getOrNull()
+            if (active == null || !active.isLockPhone || System.currentTimeMillis() >= active.endAt) {
+                PhoneLockOverlayManager.tryStopScreenPinning(activity)
+                PhoneLockOverlayManager.dismissShield(context)
+            }
         }
     }
 
     // Automatically request Android Screen Pinning when the lock screen opens
     LaunchedEffect(challenge.id) {
-        (view.context as? Activity)?.let { PhoneLockOverlayManager.tryStartScreenPinning(it) }
+        val activity = view.context.findActivity() ?: context.findActivity()
+        if (activity != null) {
+            PhoneLockOverlayManager.tryStartScreenPinning(activity)
+        }
     }
 
     val remainingMs = (challenge.endAt - nowMs).coerceAtLeast(0L)
     LaunchedEffect(remainingMs <= 0L) {
         if (remainingMs <= 0L) {
-            (view.context as? Activity)?.let { PhoneLockOverlayManager.tryStopScreenPinning(it) }
+            val activity = view.context.findActivity() ?: context.findActivity()
+            PhoneLockOverlayManager.tryStopScreenPinning(activity)
             PhoneLockOverlayManager.dismissShield(context)
             onTimeUp()
         }
