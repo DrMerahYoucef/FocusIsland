@@ -9,8 +9,11 @@ import com.example.data.challenge.ChallengeResult
 import com.example.data.challenge.ChallengeState
 import com.example.data.challenge.FriendChallenge
 import com.example.data.challenge.FriendChallengeState
+import com.example.data.challenge.PersonalChallengeType
 import com.example.data.challenge.StudyFriendOption
 import com.example.service.ChallengeAlarmReceiver
+import com.example.service.PhoneLockOverlayManager
+import com.example.service.PomodoroTimerService
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -28,32 +31,56 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         if (store.expireIfDue() != null) ChallengeAlarmReceiver.cancel(application)
+        PomodoroTimerService.syncPhoneLock(application)
     }
 
-    fun start(goal: String, endAt: Long) {
-        val challenge = store.start(goal, endAt)
+    fun start(
+        goal: String,
+        endAt: Long,
+        type: PersonalChallengeType = PersonalChallengeType.GOAL
+    ) {
+        val challenge = store.start(
+            goal = goal,
+            endAt = endAt,
+            type = type
+        )
         ChallengeAlarmReceiver.schedule(getApplication(), challenge)
+        if (type == PersonalChallengeType.LOCK_PHONE) {
+            PhoneLockOverlayManager.reLockImmediately(getApplication())
+        }
+        PomodoroTimerService.syncPhoneLock(getApplication())
     }
 
     /** Returns the finished challenge so the screen can celebrate. */
     fun goalReached(): Challenge? = finish(ChallengeResult.DONE)
 
     fun giveUp() {
+        val active = store.state.value.active
+        // Strict lock phone sessions cannot be given up early
+        if (active?.isLockPhone == true && System.currentTimeMillis() < active.endAt) return
         finish(ChallengeResult.FAILED)
     }
 
-    /** Called by the screen when its countdown reaches zero. */
-    fun timeUp() {
-        val active = store.state.value.active ?: return
-        if (active.result != ChallengeResult.FAILED && store.expireIfDue() != null) {
-            ChallengeAlarmReceiver.cancel(getApplication())
+    /** Called by the screen when its countdown reaches zero. Returns the finalized challenge if it transitioned. */
+    fun timeUp(): Challenge? {
+        val active = store.state.value.active ?: return null
+        if (active.result != ChallengeResult.FAILED) {
+            val finalized = store.expireIfDue()
+            if (finalized != null) {
+                PhoneLockOverlayManager.dismissShield(getApplication())
+                ChallengeAlarmReceiver.cancel(getApplication())
+                PomodoroTimerService.syncPhoneLock(getApplication())
+                return finalized
+            }
         }
+        return null
     }
 
     /** Stops the overtime timer on an expired challenge and records total time spent in history. */
     fun stopOvertime() {
         store.stopOvertime()
         ChallengeAlarmReceiver.cancel(getApplication())
+        PomodoroTimerService.syncPhoneLock(getApplication())
     }
 
     fun clearHistory() = store.clearHistory()
@@ -157,6 +184,7 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
     private fun finish(result: ChallengeResult): Challenge? {
         val done = store.finish(result) ?: return null
         ChallengeAlarmReceiver.cancel(getApplication())
+        PomodoroTimerService.syncPhoneLock(getApplication())
         return done
     }
 }

@@ -1318,6 +1318,40 @@
     <string name="community_friend_status_focusing">En focus</string>
     <string name="community_friend_status_paused">En pause</string>
     <string name="community_friend_status_offline">Hors ligne</string>
+
+    <!-- Personal Challenge: Set a Goal vs Lock Phone -->
+    <string name="personal_challenge_mode_set_goal">Fixer un objectif</string>
+    <string name="personal_challenge_mode_lock_phone">Verrouiller le téléphone</string>
+    <string name="personal_challenge_mode_set_goal_desc">Définissez un objectif personnel et battez le compte à rebours.</string>
+    <string name="personal_challenge_mode_lock_phone_desc">Verrouillez strictement votre téléphone avec un minuteur ou jusqu\'à une heure précise. Seules les applications nécessaires choisies restent accessibles.</string>
+    <string name="lock_phone_title">Téléphone Verrouillé</string>
+    <string name="lock_phone_default_goal">Défi Téléphone Verrouillé</string>
+    <string name="lock_phone_label_optional">Intitulé de session (optionnel)</string>
+    <string name="lock_phone_label_hint">ex. Révision intense — zéro distraction</string>
+    <string name="lock_phone_time_mode_timer">Minuteur</string>
+    <string name="lock_phone_time_mode_until_hour">Jusqu\'à l\'heure</string>
+    <string name="lock_phone_necessary_apps_title">Applications nécessaires autorisées</string>
+    <string name="lock_phone_necessary_apps_subtitle">Les applications choisies apparaissent en raccourci sur l\'écran verrouillé. L\'écran d\'accueil, les notifications et les autres applications sont bloqués.</string>
+    <plurals name="lock_phone_necessary_apps_count">
+        <item quantity="one">%d application nécessaire sélectionnée</item>
+        <item quantity="many">%d applications nécessaires sélectionnées</item>
+        <item quantity="other">%d applications nécessaires sélectionnées</item>
+    </plurals>
+    <string name="lock_phone_no_apps_selected">Aucune application sélectionnée — verrouillage total</string>
+    <string name="lock_phone_permissions_title">Autorisations de verrouillage strict</string>
+    <string name="lock_phone_permissions_subtitle">Accordez ces accès pour bloquer l\'écran d\'accueil, les autres applications et les notifications.</string>
+    <string name="lock_phone_strict_notice">Verrouillage strict : une fois lancé, aucune sortie anticipée n\'est possible avant 00:00.</string>
+    <string name="lock_phone_start_button">Verrouiller maintenant</string>
+    <string name="lock_phone_strict_badge">Verrouillage Strict · Sans sortie anticipée</string>
+    <string name="lock_phone_unlocks_at">Déverrouillage à %1$s</string>
+    <string name="lock_phone_allowed_apps_dock_title">Applications nécessaires autorisées</string>
+    <string name="lock_phone_pure_mode_badge">Mode Verrouillage Pur · Aucune application externe</string>
+    <string name="lock_phone_footer_hint">L\'écran d\'accueil, les notifications et les autres applications sont verrouillés jusqu\'à la fin du compte à rebours.</string>
+    <string name="lock_phone_completed_title">Téléphone Déverrouillé · Défi Réussi !</string>
+    <string name="lock_phone_completed_body">Vous avez terminé votre session de verrouillage strict sans distraction.</string>
+    <string name="lock_phone_history_badge">Verrouillage</string>
+    <string name="lock_phone_pin_screen_cta">Épingler l\'écran (bloquer volet de notifications et récents)</string>
+    <string name="lock_phone_pinned_active_badge">Écran épinglé · Notifications et récents verrouillés</string>
 </resources>
 
 

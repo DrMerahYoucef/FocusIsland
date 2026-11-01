@@ -14,17 +14,44 @@ import org.json.JSONObject
 
 enum class ChallengeResult { DONE, FAILED }
 
-/** A goal with a deadline. [result] and [finishedAt] are set once it is reached or the time is up. */
+enum class PersonalChallengeType { GOAL, LOCK_PHONE }
+
+data class MotivationalQuote(val quote: String, val author: String)
+
+object ChallengeQuotes {
+    val quotes: List<MotivationalQuote> = listOf(
+        MotivationalQuote("Deep work is the superpower of the 21st century.", "Cal Newport"),
+        MotivationalQuote("Starve your distractions, feed your focus.", "Daniel Goleman"),
+        MotivationalQuote("The successful warrior is the average person, with laser-like focus.", "Bruce Lee"),
+        MotivationalQuote("Discipline is choosing between what you want now and what you want most.", "Abraham Lincoln"),
+        MotivationalQuote("You will never reach your destination if you stop and throw stones at every dog that barks.", "Winston Churchill"),
+        MotivationalQuote("Concentrate all your thoughts upon the work at hand. The sun's rays do not burn until brought to a focus.", "Alexander Graham Bell"),
+        MotivationalQuote("What you stay focused on will grow.", "Roy T. Bennett"),
+        MotivationalQuote("Do not let what you cannot do interfere with what you can do.", "John Wooden"),
+        MotivationalQuote("Focus is a matter of deciding what things you're not going to do.", "John Carmack"),
+        MotivationalQuote("One hour of unbroken focus beats an entire day of scattered effort.", "Focus Island"),
+        MotivationalQuote("Your future self is watching you right now through your memories. Make them proud.", "Focus Island"),
+        MotivationalQuote("Silence the noise. Master this moment.", "Focus Island")
+    )
+
+    fun pickRandom(): MotivationalQuote = quotes.random()
+}
+
+/** A goal or strict phone lock with a deadline. [result] and [finishedAt] are set once it is reached or the time is up. */
 data class Challenge(
     val id: Long,
     val goal: String,
     val startAt: Long,
     val endAt: Long,
     val finishedAt: Long? = null,
-    val result: ChallengeResult? = null
+    val result: ChallengeResult? = null,
+    val type: PersonalChallengeType = PersonalChallengeType.GOAL,
+    val quoteText: String = "",
+    val quoteAuthor: String = ""
 ) {
     val durationMs: Long get() = endAt - startAt
     val actualDurationMs: Long get() = ((finishedAt ?: endAt) - startAt).coerceAtLeast(durationMs)
+    val isLockPhone: Boolean get() = type == PersonalChallengeType.LOCK_PHONE
 }
 
 data class ChallengeState(val active: Challenge? = null, val history: List<Challenge> = emptyList()) {
@@ -114,10 +141,18 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
     }
 
     @Synchronized
-    fun start(goal: String, endAt: Long): Challenge {
+    fun start(
+        goal: String,
+        endAt: Long,
+        type: PersonalChallengeType = PersonalChallengeType.GOAL,
+        quote: MotivationalQuote? = null
+    ): Challenge {
         val now = clock()
         val historyWithPrevious = _state.value.active?.let { prev ->
-            if (prev.result == ChallengeResult.FAILED || now >= prev.endAt) {
+            if (prev.isLockPhone && now >= prev.endAt) {
+                val finalized = prev.copy(finishedAt = prev.endAt, result = ChallengeResult.DONE)
+                upsertHistory(finalized, _state.value.history)
+            } else if (prev.result == ChallengeResult.FAILED || now >= prev.endAt) {
                 val finalized = prev.copy(finishedAt = now, result = ChallengeResult.FAILED)
                 upsertHistory(finalized, _state.value.history)
             } else {
@@ -125,7 +160,23 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
             }
         } ?: _state.value.history
 
-        val challenge = Challenge(id = now, goal = goal.trim(), startAt = now, endAt = endAt)
+        val chosenQuote = if (type == PersonalChallengeType.LOCK_PHONE) {
+            quote ?: ChallengeQuotes.pickRandom()
+        } else {
+            quote
+        }
+        val cleanGoal = goal.trim().ifBlank {
+            if (type == PersonalChallengeType.LOCK_PHONE) "Lock Phone Challenge" else ""
+        }
+        val challenge = Challenge(
+            id = now,
+            goal = cleanGoal,
+            startAt = now,
+            endAt = endAt,
+            type = type,
+            quoteText = chosenQuote?.quote.orEmpty(),
+            quoteAuthor = chosenQuote?.author.orEmpty()
+        )
         save(ChallengeState(active = challenge, history = historyWithPrevious))
         return challenge
     }
@@ -140,14 +191,22 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
     }
 
     /**
-     * Marks the active challenge failed when its countdown reaches 00:00, recording it in history
-     * as FAILED while keeping it in [ChallengeState.active] so the overtime clock keeps counting up.
+     * For [PersonalChallengeType.GOAL]: marks the active challenge failed when its countdown reaches 00:00,
+     * recording it in history as FAILED while keeping it in [ChallengeState.active] so the overtime clock keeps counting up.
+     *
+     * For [PersonalChallengeType.LOCK_PHONE]: reaching 00:00 completes the lock session successfully as DONE
+     * and unlocks the phone (`active = null`).
      */
     @Synchronized
     fun expireIfDue(): Challenge? {
         val active = _state.value.active ?: return null
         val now = clock()
         if (now < active.endAt) return null
+        if (active.isLockPhone) {
+            val done = active.copy(finishedAt = active.endAt, result = ChallengeResult.DONE)
+            save(ChallengeState(active = null, history = upsertHistory(done, _state.value.history)))
+            return done
+        }
         if (active.result == ChallengeResult.FAILED) return active
         val failed = active.copy(finishedAt = now, result = ChallengeResult.FAILED)
         save(ChallengeState(active = failed, history = upsertHistory(failed, _state.value.history)))
@@ -196,19 +255,34 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
         private const val MAX_HISTORY = 200
 
         internal fun Challenge.toJson(): JSONObject = JSONObject()
-            .put("id", id).put("goal", goal).put("startAt", startAt).put("endAt", endAt)
+            .put("id", id)
+            .put("goal", goal)
+            .put("startAt", startAt)
+            .put("endAt", endAt)
+            .put("type", type.name)
+            .put("quoteText", quoteText)
+            .put("quoteAuthor", quoteAuthor)
             .apply {
                 finishedAt?.let { put("finishedAt", it) }
                 result?.let { put("result", it.name) }
             }
 
-        internal fun challengeFromJson(o: JSONObject) = Challenge(
-            id = o.getLong("id"),
-            goal = o.optString("goal"),
-            startAt = o.getLong("startAt"),
-            endAt = o.getLong("endAt"),
-            finishedAt = if (o.has("finishedAt")) o.getLong("finishedAt") else null,
-            result = o.optString("result").takeIf { it.isNotEmpty() }?.let { runCatching { ChallengeResult.valueOf(it) }.getOrNull() }
-        )
+        internal fun challengeFromJson(o: JSONObject): Challenge {
+            val parsedType = o.optString("type").takeIf { it.isNotEmpty() }?.let {
+                runCatching { PersonalChallengeType.valueOf(it) }.getOrNull()
+            } ?: PersonalChallengeType.GOAL
+            return Challenge(
+                id = o.getLong("id"),
+                goal = o.optString("goal"),
+                startAt = o.getLong("startAt"),
+                endAt = o.getLong("endAt"),
+                finishedAt = if (o.has("finishedAt")) o.getLong("finishedAt") else null,
+                result = o.optString("result").takeIf { it.isNotEmpty() }?.let { runCatching { ChallengeResult.valueOf(it) }.getOrNull() },
+                type = parsedType,
+                quoteText = o.optString("quoteText", ""),
+                quoteAuthor = o.optString("quoteAuthor", "")
+            )
+        }
     }
 }
+

@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for the floating challenge invitation capsule (with Accept, Deny, Hide, Focus screen dismissible overlay, and nav bar notification badge), challenge initialization options (Whole Day, Preset Hours, Defined Day Hour, and Start from Zero vs. Keep Day Progress), and Challenges screen compact header + collapsible room header redesign to maximize chat space.",
-  "updatedAt":  "2026-10-31T14:20:26.459485573Z",
+  "summary":  "Implementation plan for upgrading the Lock Phone personal challenge with a persistent full-screen WindowManager TYPE_APPLICATION_OVERLAY shield and Android Screen Pinning (startLockTask) to block Recent Apps, Home, and Notification Drawer escapes, with instant re-lock on exiting allowed apps.",
+  "updatedAt":  "2026-11-01T11:05:09.426362745Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

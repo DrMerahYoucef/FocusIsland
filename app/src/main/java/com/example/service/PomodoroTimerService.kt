@@ -115,20 +115,55 @@ class PomodoroTimerService : Service() {
             }
             ACTION_STOP -> {
                 stopTimer()
-                stopSelf()
+                if (!hasActivePhoneLockChallenge()) {
+                    stopSelf()
+                }
             }
+            ACTION_SYNC_PHONE_LOCK -> syncPhoneLockProtection()
             ACTION_SET_AMBIENT -> setAmbientSound(intent.getStringExtra(EXTRA_AMBIENT_ID) ?: AMBIENT_NONE)
             else -> { // ACTION_RESTORE or a system restart after the process was killed
-                if (_state.value.isRunning) start() else if (!_state.value.isUntouched) showPausedForeground() else stopSelf()
+                when {
+                    _state.value.isRunning -> start()
+                    hasActivePhoneLockChallenge() -> syncPhoneLockProtection()
+                    !_state.value.isUntouched -> showPausedForeground()
+                    else -> stopSelf()
+                }
             }
         }
         return START_STICKY
+    }
+
+    private fun hasActivePhoneLockChallenge(): Boolean {
+        val active = runCatching { FocusFlowApplication.instance.challengeStore.state.value.active }.getOrNull() ?: return false
+        return active.isLockPhone && System.currentTimeMillis() < active.endAt
+    }
+
+    private fun syncPhoneLockProtection() {
+        if (hasActivePhoneLockChallenge()) {
+            PhoneLockOverlayManager.syncWithActiveChallenge(this)
+            if (startForegroundCompat()) {
+                enableDnd()
+                launchMonitor.start()
+            }
+        } else {
+            PhoneLockOverlayManager.dismissShield(this)
+            if (!_state.value.isRunning) {
+                focusProtectionOff()
+                if (_state.value.isUntouched) {
+                    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                } else {
+                    updateNotification()
+                }
+            }
+        }
     }
 
     override fun onDestroy() {
         serviceAlive = false
         runCatching { unregisterReceiver(screenOffReceiver) }
         FloatingFocusBubbleManager.hidePausedBubble(this)
+        PhoneLockOverlayManager.dismissShield(this)
         tickerJob?.cancel()
         launchMonitor.stop()
         restoreDnd()
@@ -180,8 +215,8 @@ class PomodoroTimerService : Service() {
         _state.update { it.copy(isRunning = false, remainingMs = remainingNow()) }
         persist(this)
         releaseWakeLock()
-        if (keepLaunchMonitor && _state.value.phase == Phase.FOCUS) {
-            restoreDnd()
+        if ((keepLaunchMonitor && _state.value.phase == Phase.FOCUS) || hasActivePhoneLockChallenge()) {
+            if (!hasActivePhoneLockChallenge()) restoreDnd()
             launchMonitor.start()
         } else {
             focusProtectionOff()
@@ -210,9 +245,9 @@ class PomodoroTimerService : Service() {
         if (pm?.isInteractive == false || km?.isKeyguardLocked == true || km?.isDeviceLocked == true) {
             return
         }
-        // If the user switched to an app on the App Blocker list during Focus, block that app
+        // If the user switched to an app on the App Blocker list during Focus (or during Lock Phone), block that app
         // and keep the Pomodoro running uninterrupted!
-        if (_state.value.phase == Phase.FOCUS && launchMonitor.checkAndBlockForegroundApp()) {
+        if ((_state.value.phase == Phase.FOCUS || hasActivePhoneLockChallenge()) && launchMonitor.checkAndBlockForegroundApp()) {
             return
         }
         lastAutoPausedElapsed = SystemClock.elapsedRealtime()
@@ -239,7 +274,9 @@ class PomodoroTimerService : Service() {
         FloatingFocusBubbleManager.hidePausedBubble(this)
         tickerJob?.cancel()
         releaseWakeLock()
-        focusProtectionOff()
+        if (!hasActivePhoneLockChallenge()) {
+            focusProtectionOff()
+        }
         focusSecsBeforePhase = 0L
         _state.update {
             settings.applyTo(it).copy(
@@ -252,7 +289,9 @@ class PomodoroTimerService : Service() {
         }
         persist(this)
         syncAmbientPlayback()
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        if (!hasActivePhoneLockChallenge()) {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        }
     }
 
     private fun startTicker() {
@@ -660,6 +699,7 @@ class PomodoroTimerService : Service() {
         const val ACTION_AUTO_RESUME = "ACTION_AUTO_RESUME"
         const val ACTION_SKIP = "ACTION_SKIP"
         const val ACTION_STOP = "ACTION_STOP"
+        const val ACTION_SYNC_PHONE_LOCK = "ACTION_SYNC_PHONE_LOCK"
         const val ACTION_SET_AMBIENT = "ACTION_SET_AMBIENT"
         const val ACTION_RESTORE = "ACTION_RESTORE"
         const val EXTRA_AMBIENT_ID = "EXTRA_AMBIENT_ID"
@@ -695,12 +735,30 @@ class PomodoroTimerService : Service() {
          */
         fun restoreIfNeeded(context: Context) {
             loadPersisted(context)
-            if (_state.value.isRunning && !serviceAlive) {
+            val hasPhoneLock = runCatching {
+                FocusFlowApplication.instance.challengeStore.state.value.active?.let {
+                    it.isLockPhone && System.currentTimeMillis() < it.endAt
+                } == true
+            }.getOrDefault(false)
+            if ((_state.value.isRunning || hasPhoneLock) && !serviceAlive) {
                 runCatching {
                     ContextCompat.startForegroundService(
                         context, Intent(context, PomodoroTimerService::class.java).setAction(ACTION_RESTORE)
                     )
                 }.onFailure { Log.w(TAG, "Could not restore running timer", it) }
+            }
+        }
+
+        fun syncPhoneLock(context: Context) {
+            runCatching {
+                val active = FocusFlowApplication.instance.challengeStore.state.value.active
+                val isLocked = active != null && active.isLockPhone && System.currentTimeMillis() < active.endAt
+                val intent = Intent(context, PomodoroTimerService::class.java).setAction(ACTION_SYNC_PHONE_LOCK)
+                if (isLocked) {
+                    ContextCompat.startForegroundService(context, intent)
+                } else if (serviceAlive) {
+                    context.startService(intent)
+                }
             }
         }
 

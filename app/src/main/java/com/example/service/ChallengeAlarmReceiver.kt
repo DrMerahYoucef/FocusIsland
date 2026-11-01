@@ -25,12 +25,27 @@ class ChallengeAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val store = FocusFlowApplication.instance.challengeStore
         when (intent.action) {
-            ACTION_TIME_UP -> store.expireIfDue()?.let { showFinished(context, it) }
-            ACTION_DONE -> store.finish(ChallengeResult.DONE)?.let { cancelAlarm(context); showFinished(context, it) }
+            ACTION_TIME_UP -> store.expireIfDue()?.let {
+                PhoneLockOverlayManager.dismissShield(context)
+                PomodoroTimerService.syncPhoneLock(context)
+                showFinished(context, it)
+            }
+            ACTION_DONE -> store.finish(ChallengeResult.DONE)?.let {
+                PhoneLockOverlayManager.dismissShield(context)
+                cancelAlarm(context)
+                showFinished(context, it)
+            }
             Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
                 val expired = store.expireIfDue()
-                if (expired != null) showFinished(context, expired)
-                else store.state.value.active?.let { schedule(context, it) }
+                if (expired != null) {
+                    PhoneLockOverlayManager.dismissShield(context)
+                    showFinished(context, expired)
+                } else {
+                    store.state.value.active?.let {
+                        schedule(context, it)
+                        if (it.isLockPhone) PomodoroTimerService.syncPhoneLock(context)
+                    }
+                }
             }
         }
     }
@@ -70,9 +85,14 @@ class ChallengeAlarmReceiver : BroadcastReceiver() {
 
         private fun showFinished(context: Context, challenge: Challenge) {
             val done = challenge.result == ChallengeResult.DONE
+            val titleRes = when {
+                challenge.isLockPhone && done -> R.string.lock_phone_completed_title
+                done -> R.string.challenge_notif_done_title
+                else -> R.string.challenge_notif_time_up_title
+            }
             val notification = NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(if (done) R.drawable.ic_widget_star else R.drawable.ic_widget_flame)
-                .setContentTitle(context.getString(if (done) R.string.challenge_notif_done_title else R.string.challenge_notif_time_up_title))
+                .setContentTitle(context.getString(titleRes))
                 .setContentText(challenge.goal)
                 .setContentIntent(openApp(context))
                 .setAutoCancel(true)
@@ -83,7 +103,11 @@ class ChallengeAlarmReceiver : BroadcastReceiver() {
 
         private fun ongoing(context: Context, challenge: Challenge) = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_widget_flame)
-            .setContentTitle(context.getString(R.string.challenge_notif_running_title))
+            .setContentTitle(
+                context.getString(
+                    if (challenge.isLockPhone) R.string.lock_phone_title else R.string.challenge_notif_running_title
+                )
+            )
             .setContentText(challenge.goal)
             .setContentIntent(openApp(context))
             .setOngoing(true)
@@ -94,7 +118,11 @@ class ChallengeAlarmReceiver : BroadcastReceiver() {
             .setShowWhen(true)
             .setWhen(challenge.endAt)
             .setTimeoutAfter((challenge.endAt - System.currentTimeMillis()).coerceAtLeast(1L))
-            .addAction(0, context.getString(R.string.challenge_goal_reached), broadcast(context, ACTION_DONE, 2))
+            .apply {
+                if (!challenge.isLockPhone) {
+                    addAction(0, context.getString(R.string.challenge_goal_reached), broadcast(context, ACTION_DONE, 2))
+                }
+            }
             .build()
 
         private fun notify(context: Context, notification: android.app.Notification) {

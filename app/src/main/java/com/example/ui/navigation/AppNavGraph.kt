@@ -458,6 +458,8 @@ private fun MainShell(
     challengeViewModel: ChallengeViewModel
 ) {
     val settings by settingsViewModel.state.collectAsState()
+    val personalChallengeState by challengeViewModel.state.collectAsStateWithLifecycle()
+    val isPhoneLockActive = personalChallengeState.active?.isLockPhone == true
     val friendChallengeState by challengeViewModel.friendState.collectAsStateWithLifecycle()
     val pendingInviteCount = friendChallengeState.incomingPending.size
     val tabs = TopLevel.entries
@@ -468,9 +470,19 @@ private fun MainShell(
     val wide = LocalConfiguration.current.screenWidthDp >= 600
     val isImeVisible = WindowInsets.isImeVisible
 
+    LaunchedEffect(isPhoneLockActive) {
+        if (isPhoneLockActive && pagerState.currentPage != TopLevel.CHALLENGES.ordinal) {
+            pagerState.scrollToPage(TopLevel.CHALLENGES.ordinal)
+        }
+    }
+
     LaunchedEffect(navRequest) {
         val req = navRequest ?: return@LaunchedEffect
         onConsumeNavRequest()
+        if (isPhoneLockActive) {
+            pagerState.scrollToPage(TopLevel.CHALLENGES.ordinal)
+            return@LaunchedEffect
+        }
         progressTab = req.progressTab
         pagerState.scrollToPage(req.tab.ordinal)
         if (req.openFocusMode && navController.currentDestination?.route != Routes.FOCUS_MODE) {
@@ -479,11 +491,12 @@ private fun MainShell(
     }
 
     fun select(tab: TopLevel) {
+        if (isPhoneLockActive) return
         scope.launch { pagerState.animateScrollToPage(tab.ordinal) }
     }
 
     Row(Modifier.fillMaxSize()) {
-        if (wide) {
+        if (wide && !isPhoneLockActive) {
             NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
                 tabs.forEach { tab ->
                     NavigationRailItem(
@@ -514,7 +527,7 @@ private fun MainShell(
             containerColor = MaterialTheme.colorScheme.background,
             topBar = {
                 // Challenges tab merges its title, Personal/Study Group tabs, and Settings action into one compact bar
-                if (current != TopLevel.CHALLENGES) {
+                if (current != TopLevel.CHALLENGES && !isPhoneLockActive) {
                     androidx.compose.material3.TopAppBar(
                         title = { Text(stringResource(current.label)) },
                         colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
@@ -530,7 +543,7 @@ private fun MainShell(
                 }
             },
             bottomBar = {
-                if (!wide && !isImeVisible) {
+                if (!wide && !isImeVisible && !isPhoneLockActive) {
                     NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
                         tabs.forEach { tab ->
                             NavigationBarItem(
@@ -558,11 +571,11 @@ private fun MainShell(
                 }
             }
         ) { padding ->
-            val bottomPadding = if (isImeVisible) 0.dp else padding.calculateBottomPadding()
-            val topPadding = if (isImeVisible && current == TopLevel.CHALLENGES) 0.dp else padding.calculateTopPadding()
+            val bottomPadding = if (isImeVisible || isPhoneLockActive) 0.dp else padding.calculateBottomPadding()
+            val topPadding = if ((isImeVisible && current == TopLevel.CHALLENGES) || isPhoneLockActive) 0.dp else padding.calculateTopPadding()
             HorizontalPager(
                 state = pagerState,
-                userScrollEnabled = settings.swipeToNavigate && !isImeVisible,
+                userScrollEnabled = settings.swipeToNavigate && !isImeVisible && !isPhoneLockActive,
                 beyondViewportPageCount = 0,
                 modifier = Modifier
                     .fillMaxSize()

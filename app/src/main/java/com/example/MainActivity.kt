@@ -17,6 +17,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.service.PhoneLockOverlayManager
 import com.example.service.PomodoroTimerService
 import com.example.ui.navigation.AppNavGraph
 import com.example.ui.navigation.NavRequest
@@ -96,6 +97,30 @@ class MainActivity : ComponentActivity() {
                 navRequest.value = null
             }
         }
+        if (isPhoneLockActive()) {
+            PhoneLockOverlayManager.reLockImmediately(this)
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus && isPhoneLockActive()) {
+            PhoneLockOverlayManager.reLockImmediately(this)
+            @Suppress("DEPRECATION")
+            runCatching { sendBroadcast(Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS)) }
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (isPhoneLockActive()) {
+            PhoneLockOverlayManager.reLockImmediately(this)
+        }
+    }
+
+    private fun isPhoneLockActive(): Boolean {
+        val active = runCatching { FocusFlowApplication.instance.challengeStore.state.value.active }.getOrNull() ?: return false
+        return active.isLockPhone && System.currentTimeMillis() < active.endAt
     }
 
     @Suppress("DEPRECATION")

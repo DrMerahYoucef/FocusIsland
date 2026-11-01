@@ -7,7 +7,9 @@ import android.content.Intent
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.content.ContextCompat
+import com.example.FocusFlowApplication
 import com.example.FocusOverlayActivity
+import com.example.data.challenge.Challenge
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -17,9 +19,11 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Shows [FocusOverlayActivity] when a launch-blocked app comes to the foreground during focus.
- * Runs inside the timer's foreground service (no second foreground service, which Android 12+
- * would refuse to start from the background when a break ends).
+ * Monitors foreground app changes and enforces:
+ * 1. Focus session app launch blocking ([FocusOverlayActivity]).
+ * 2. Strict Lock Phone personal challenges via [PhoneLockOverlayManager] (full-screen
+ *    `TYPE_APPLICATION_OVERLAY` shield over Recent Apps, Home, and any app launched from the
+ *    Notification Drawer) plus [FocusOverlayActivity] fallback.
  */
 class AppLaunchMonitor(
     private val context: Context,
@@ -37,19 +41,45 @@ class AppLaunchMonitor(
         }
     }
 
-    fun isPackageBlocked(pkg: String): Boolean =
-        pkg.isNotBlank() && pkg != context.packageName && pkg in currentBlocked && pkg !in allowedThisSession
+    private fun activePhoneLockChallenge(): Challenge? {
+        val store = runCatching { FocusFlowApplication.instance.challengeStore }.getOrNull() ?: return null
+        val active = store.state.value.active ?: return null
+        if (!active.isLockPhone) return null
+        val now = System.currentTimeMillis()
+        if (now >= active.endAt) {
+            runCatching { store.expireIfDue() }
+            PhoneLockOverlayManager.dismissShield(context)
+            return null
+        }
+        return active
+    }
+
+    fun isPackageBlocked(pkg: String): Boolean {
+        if (pkg.isBlank() || pkg == context.packageName) return false
+        if (activePhoneLockChallenge() != null) return true
+        return pkg in currentBlocked && pkg !in allowedThisSession
+    }
 
     /**
-     * Synchronously checks if the current foreground app is in the blocked list.
-     * If it is blocked, hides any floating paused bubble, launches [FocusOverlayActivity], and returns true
+     * Synchronously checks if the current foreground app is in the blocked list (or blocked by Lock Phone).
+     * If it is blocked, hides any floating paused bubble, shows the lock overlay, and returns true
      * so the Pomodoro timer stays running uninterrupted.
      */
     fun checkAndBlockForegroundApp(): Boolean {
-        val pkg = foregroundPackage() ?: return false
+        val phoneLock = activePhoneLockChallenge()
+        val pkg = foregroundPackage()
+        if (phoneLock != null) {
+            FloatingFocusBubbleManager.hidePausedBubble(context)
+            PhoneLockOverlayManager.reLockImmediately(context)
+            if (pkg != null && pkg != context.packageName) {
+                showOverlay(pkg, isPhoneLock = true)
+            }
+            return true
+        }
+        if (pkg == null) return false
         if (isPackageBlocked(pkg)) {
             FloatingFocusBubbleManager.hidePausedBubble(context)
-            showOverlay(pkg)
+            showOverlay(pkg, isPhoneLock = false)
             return true
         }
         return false
@@ -61,8 +91,22 @@ class AppLaunchMonitor(
             val power = context.getSystemService(PowerManager::class.java)
             var lastShown: String? = null
             while (isActive) {
-                delay(POLL_MS)
+                val phoneLock = activePhoneLockChallenge()
+                delay(if (phoneLock != null) POLL_LOCK_PHONE_MS else POLL_MS)
                 if (power?.isInteractive == false) continue // screen off: nothing to block
+
+                if (phoneLock != null) {
+                    FloatingFocusBubbleManager.hidePausedBubble(context)
+                    PhoneLockOverlayManager.syncWithActiveChallenge(context)
+                    val pkg = foregroundPackage()
+                    if (pkg != null && pkg != context.packageName) {
+                        showOverlay(pkg, isPhoneLock = true)
+                    }
+                    continue
+                } else if (PhoneLockOverlayManager.isShieldAttached) {
+                    PhoneLockOverlayManager.dismissShield(context)
+                }
+
                 val pkg = foregroundPackage() ?: continue
                 if (pkg == context.packageName) {
                     lastShown = null
@@ -85,7 +129,7 @@ class AppLaunchMonitor(
                         }
                         if (pkg != lastShown) {
                             lastShown = pkg
-                            showOverlay(pkg)
+                            showOverlay(pkg, isPhoneLock = false)
                         }
                     }
                 }
@@ -97,6 +141,7 @@ class AppLaunchMonitor(
         job?.cancel()
         job = null
         allowedThisSession.clear()
+        PhoneLockOverlayManager.dismissShield(context)
     }
 
     internal fun foregroundPackage(): String? {
@@ -120,26 +165,29 @@ class AppLaunchMonitor(
         }.getOrNull()
     }
 
-    private fun showOverlay(pkg: String) {
+    private fun showOverlay(pkg: String, isPhoneLock: Boolean = false) {
         if (!Settings.canDrawOverlays(context)) return
         runCatching {
             context.startActivity(
                 Intent(context, FocusOverlayActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                     .putExtra(FocusOverlayActivity.EXTRA_BLOCKED_PACKAGE, pkg)
+                    .putExtra(FocusOverlayActivity.EXTRA_PHONE_LOCK_MODE, isPhoneLock)
             )
         }
     }
 
     companion object {
         private const val POLL_MS = 250L
+        private const val POLL_LOCK_PHONE_MS = 120L
         private const val LOOKBACK_MS = 60_000L
 
         /** Apps the user chose to "open anyway"; cleared when the focus phase ends. */
         private val allowedThisSession: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
         fun allowForCurrentSession(pkg: String) {
-            if (pkg.isNotBlank()) allowedThisSession += pkg
+            if (pkg.isBlank()) return
+            allowedThisSession += pkg
         }
     }
 }

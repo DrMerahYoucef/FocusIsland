@@ -7,12 +7,17 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.test.core.app.ApplicationProvider
+import com.example.data.challenge.Challenge
+import com.example.data.challenge.ChallengeResult
+import com.example.data.challenge.ChallengeStore
 import com.example.data.challenge.FriendChallenge
 import com.example.data.challenge.FriendChallengeRepository
 import com.example.data.challenge.FriendChallengeRepository.Companion.challengeFromJson
 import com.example.data.challenge.FriendChallengeRepository.Companion.mergeChallenges
 import com.example.data.challenge.FriendChallengeRepository.Companion.toJson
 import com.example.data.challenge.FriendChallengeStatus
+import com.example.data.challenge.PersonalChallengeType
 import com.example.data.challenge.StudyFriendOption
 import com.example.data.challenge.StudyGroupMember
 import com.example.data.challenge.StudyGroupMessage
@@ -21,12 +26,14 @@ import com.example.data.challenge.StudyMemberRoleStatus
 import com.example.data.challenge.StudyMemberTimerState
 import com.example.ui.screen.challenge.ChallengeDurationMode
 import com.example.ui.screen.challenge.ChallengeInitConfig
+import com.example.ui.screen.challenge.StrictPhoneLockOverlay
 import com.example.ui.screen.challenge.StudyGroupFriendsSheet
 import com.example.ui.theme.FocusIslandTheme
 import com.example.ui.theme.ThemeMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -662,6 +669,73 @@ class StudyGroupChallengeTest {
         assertEquals("22:00", submittedConfig!!.customEndHourLabel)
         assertTrue(submittedConfig!!.customEndAtMs > 0L)
         assertFalse(submittedConfig!!.startFromZero)
+    }
+
+    @Test
+    fun `lock phone challenge persists quote and auto-completes as DONE when timer ends`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        var currentNow = 1_700_000_000_000L
+        val store = ChallengeStore(context, clock = { currentNow })
+        val endAt = currentNow + 3_600_000L
+
+        val created = store.start(
+            goal = "Lock Phone",
+            endAt = endAt,
+            type = PersonalChallengeType.LOCK_PHONE
+        )
+
+        assertTrue(created.isLockPhone)
+        assertEquals(PersonalChallengeType.LOCK_PHONE, created.type)
+        assertTrue(created.quoteText.isNotBlank())
+        assertTrue(created.quoteAuthor.isNotBlank())
+
+        // Reload from store to verify JSON persistence of quote
+        val reloaded = ChallengeStore(context, clock = { currentNow }).state.value.active
+        assertNotNull(reloaded)
+        assertTrue(reloaded!!.isLockPhone)
+        assertEquals(created.quoteText, reloaded.quoteText)
+        assertEquals(created.quoteAuthor, reloaded.quoteAuthor)
+
+        // When time reaches endAt, Lock Phone automatically finishes as DONE (unlocking phone)
+        currentNow = endAt + 1_000L
+        store.expireIfDue()
+        assertNull(store.state.value.active)
+        val finished = store.state.value.history.firstOrNull { it.id == created.id }
+        assertNotNull(finished)
+        assertEquals(ChallengeResult.DONE, finished!!.result)
+    }
+
+    @Test
+    fun `StrictPhoneLockOverlay displays only countdown counter and motivational quote`() {
+        val now = 1_700_000_000_000L
+        val challenge = Challenge(
+            id = 101L,
+            goal = "Lock Phone",
+            startAt = now,
+            endAt = now + 45 * 60_000L,
+            type = PersonalChallengeType.LOCK_PHONE,
+            quoteText = "Discipline is choosing between what you want now and what you want most.",
+            quoteAuthor = "Abraham Lincoln"
+        )
+
+        composeRule.setContent {
+            FocusIslandTheme(themeMode = ThemeMode.DARK) {
+                StrictPhoneLockOverlay(
+                    challenge = challenge,
+                    nowMs = now + 15 * 60_000L,
+                    onTimeUp = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("strict_phone_lock_overlay").assertIsDisplayed()
+        composeRule.onNodeWithTag("phone_lock_countdown_clock").assertIsDisplayed()
+        composeRule.onNodeWithTag("phone_lock_quote_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("phone_lock_quote_text").assertIsDisplayed()
+        composeRule.onNodeWithText(
+            "“Discipline is choosing between what you want now and what you want most.”"
+        ).assertIsDisplayed()
+        composeRule.onNodeWithText("— Abraham Lincoln").assertIsDisplayed()
     }
 }
 

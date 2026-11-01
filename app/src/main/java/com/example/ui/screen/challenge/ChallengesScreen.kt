@@ -48,6 +48,7 @@ import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.HourglassBottom
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
@@ -112,6 +113,7 @@ import com.example.data.challenge.ChallengeResult
 import com.example.data.challenge.ChallengeState
 import com.example.data.challenge.FriendChallenge
 import com.example.data.challenge.FriendChallengeState
+import com.example.data.challenge.PersonalChallengeType
 import com.example.ui.designsystem.ConfirmDialog
 import com.example.ui.designsystem.Celebration
 import com.example.ui.designsystem.playSuccessSound
@@ -135,20 +137,37 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
 /** A challenge waiting for its 5-second countdown: either a duration or a fixed end time. */
-private data class PendingChallenge(val goal: String, val minutes: Int, val endAt: Long) {
+internal data class PendingChallenge(
+    val goal: String,
+    val minutes: Int,
+    val endAt: Long,
+    val type: PersonalChallengeType = PersonalChallengeType.GOAL
+) {
     fun endAt(nowMs: Long) = if (minutes > 0) ChallengeTime.endAfter(nowMs, minutes) else endAt
 }
 
 private val PendingSaver = listSaver<PendingChallenge?, Any>(
-    save = { p -> if (p == null) emptyList() else listOf(p.goal, p.minutes, p.endAt) },
-    restore = { l -> if (l.isEmpty()) null else PendingChallenge(l[0] as String, l[1] as Int, l[2] as Long) }
+    save = { p ->
+        if (p == null) emptyList()
+        else listOf(p.goal, p.minutes, p.endAt, p.type.name)
+    },
+    restore = { l ->
+        if (l.isEmpty()) null
+        else PendingChallenge(
+            goal = l[0] as String,
+            minutes = l[1] as Int,
+            endAt = l[2] as Long,
+            type = runCatching { PersonalChallengeType.valueOf(l.getOrNull(3) as? String ?: "GOAL") }
+                .getOrDefault(PersonalChallengeType.GOAL)
+        )
+    }
 )
 
 private const val COUNTDOWN_FROM = 5
 
 /**
  * Challenges screen split into two dedicated tabs:
- * - Tab 0 (Personal): Set a personal goal and deadline, 5-second countdown with sound, beat the clock, and view personal history.
+ * - Tab 0 (Personal): Set a personal goal or lock phone, 5-second countdown with sound, beat the clock, and view personal history.
  * - Tab 1 (Study Group): Full-screen Messenger-style group study chat room with collapsible horloge leaderboard, emoji reactions, and focus nudges.
  */
 @Composable
@@ -178,7 +197,11 @@ fun ChallengesScreen(
     LaunchedEffect(now, state.active?.id, state.active?.result) {
         val active = state.active ?: return@LaunchedEffect
         if (now >= active.endAt && active.result != ChallengeResult.FAILED) {
-            viewModel.timeUp()
+            val finalized = viewModel.timeUp()
+            if (finalized?.result == ChallengeResult.DONE) {
+                celebrated = finalized
+                playSuccessSound(context, focusStyle.successSound)
+            }
         }
     }
 
@@ -195,6 +218,13 @@ fun ChallengesScreen(
             },
             onGiveUp = { confirmGiveUp = true },
             onStopOvertime = viewModel::stopOvertime,
+            onTimeUp = {
+                val finalized = viewModel.timeUp()
+                if (finalized?.result == ChallengeResult.DONE) {
+                    celebrated = finalized
+                    playSuccessSound(context, focusStyle.successSound)
+                }
+            },
             onDismissCelebration = { celebrated = null },
             onClearHistory = { confirmClear = true },
             onOpenStudyGroupFriends = { showStudyGroupSheet = true },
@@ -232,7 +262,11 @@ fun ChallengesScreen(
             StartCountdown(
                 tones = tones,
                 onFinished = {
-                    viewModel.start(p.goal, p.endAt(System.currentTimeMillis()))
+                    viewModel.start(
+                        goal = p.goal,
+                        endAt = p.endAt(System.currentTimeMillis()),
+                        type = p.type
+                    )
                     pending = null
                 },
                 onCancel = { pending = null }
@@ -314,6 +348,7 @@ internal fun ChallengesContent(
     onDismissCelebration: () -> Unit,
     onClearHistory: () -> Unit,
     onStopOvertime: () -> Unit = {},
+    onTimeUp: () -> Unit = {},
     friendState: FriendChallengeState = FriendChallengeState(),
     onOpenStudyGroupFriends: () -> Unit = {},
     onAcceptFriendDuel: (FriendChallenge) -> Unit = {},
@@ -328,6 +363,17 @@ internal fun ChallengesContent(
     onAddStudyGroupTime: (FriendChallenge, Int) -> Unit = { _, _ -> },
     onOpenSettings: (() -> Unit)? = null
 ) {
+    // When a Lock Phone personal challenge is active, lock the entire view to StrictPhoneLockOverlay
+    val activeChallenge = state.active
+    if (activeChallenge != null && activeChallenge.isLockPhone && nowMs < activeChallenge.endAt) {
+        StrictPhoneLockOverlay(
+            challenge = activeChallenge,
+            nowMs = nowMs,
+            onTimeUp = onTimeUp,
+            modifier = Modifier.fillMaxSize()
+        )
+        return
+    }
     val hasActiveOrInviteGroup = friendState.activeDuel != null || friendState.incomingPending.isNotEmpty()
     val isImeVisible = WindowInsets.isImeVisible
     var selectedTab by rememberSaveable {
@@ -969,15 +1015,23 @@ private fun ResultCard(challenge: Challenge, success: Boolean, onDismiss: (() ->
                 modifier = Modifier.size(Spacing.iconLg)
             )
             Text(
-                styledString(if (success) R.string.challenge_success_title else R.string.challenge_time_up_title),
+                if (challenge.isLockPhone && success) {
+                    stringResource(R.string.lock_phone_completed_title)
+                } else {
+                    styledString(if (success) R.string.challenge_success_title else R.string.challenge_time_up_title)
+                },
                 style = MaterialTheme.typography.headlineSmall,
+                textAlign = TextAlign.Center,
                 modifier = Modifier.semantics { heading() }
             )
             Text(challenge.goal, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
             Text(
-                if (success && spare < 1) styledString(R.string.challenge_success_body_tight)
-                else if (success) styledString(R.string.challenge_success_body, durationText(spare))
-                else styledString(R.string.challenge_time_up_body),
+                when {
+                    challenge.isLockPhone && success -> stringResource(R.string.lock_phone_completed_body)
+                    success && spare < 1 -> styledString(R.string.challenge_success_body_tight)
+                    success -> styledString(R.string.challenge_success_body, durationText(spare))
+                    else -> styledString(R.string.challenge_time_up_body)
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center
             )
@@ -1015,18 +1069,27 @@ private fun HistoryRow(
             .testTag("personal_challenge_history_row_${challenge.id}"),
         leadingContent = {
             Icon(
-                if (done) Icons.Rounded.EmojiEvents else Icons.Rounded.HourglassBottom,
+                imageVector = when {
+                    challenge.isLockPhone -> Icons.Rounded.Lock
+                    done -> Icons.Rounded.EmojiEvents
+                    else -> Icons.Rounded.HourglassBottom
+                },
                 contentDescription = null,
                 tint = if (done) MaterialTheme.extendedColors.success else MaterialTheme.colorScheme.error
             )
         },
         headlineContent = { Text(challenge.goal, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
+            val baseText = if (hasOvertime) {
+                stringResource(R.string.challenge_history_overtime, day, plannedDurationText, ChallengeTime.clock(totalMs))
+            } else {
+                "$day · $plannedDurationText"
+            }
             Text(
-                if (hasOvertime) {
-                    stringResource(R.string.challenge_history_overtime, day, plannedDurationText, ChallengeTime.clock(totalMs))
+                if (challenge.isLockPhone) {
+                    "$baseText · ${stringResource(R.string.lock_phone_history_badge)}"
                 } else {
-                    "$day · $plannedDurationText"
+                    baseText
                 }
             )
         },
@@ -1080,7 +1143,11 @@ private fun PersonalChallengeSummarySheet(
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
-                        imageVector = if (done) Icons.Rounded.EmojiEvents else Icons.Rounded.HourglassBottom,
+                        imageVector = when {
+                            challenge.isLockPhone -> Icons.Rounded.Lock
+                            done -> Icons.Rounded.EmojiEvents
+                            else -> Icons.Rounded.HourglassBottom
+                        },
                         contentDescription = null,
                         modifier = Modifier.size(32.dp)
                     )
@@ -1118,6 +1185,32 @@ private fun PersonalChallengeSummarySheet(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (challenge.isLockPhone && challenge.quoteText.isNotBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(Spacing.md),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "“${challenge.quoteText}”",
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center
+                        )
+                        if (challenge.quoteAuthor.isNotBlank()) {
+                            Text(
+                                text = "— ${challenge.quoteAuthor}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
             Button(
                 onClick = onDismiss,
                 modifier = Modifier
@@ -1134,7 +1227,13 @@ private fun PersonalChallengeSummarySheet(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: () -> Unit) {
+internal fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: () -> Unit) {
+    var challengeTypeName by rememberSaveable { mutableStateOf(PersonalChallengeType.GOAL.name) }
+    val challengeType = remember(challengeTypeName) {
+        runCatching { PersonalChallengeType.valueOf(challengeTypeName) }.getOrDefault(PersonalChallengeType.GOAL)
+    }
+    val isLockPhone = challengeType == PersonalChallengeType.LOCK_PHONE
+
     var goal by rememberSaveable { mutableStateOf("") }
     var byEndTime by rememberSaveable { mutableStateOf(false) }
     var hours by rememberSaveable { mutableStateOf("0") }
@@ -1146,7 +1245,8 @@ private fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: ()
 
     val totalMinutes = (hours.toIntOrNull() ?: 0) * 60 + (minutes.toIntOrNull() ?: 0)
     val durationOk = totalMinutes in 1..ChallengeTime.MAX_MINUTES
-    val canStart = goal.isNotBlank() && (byEndTime || durationOk)
+    val canStart = (isLockPhone || goal.isNotBlank()) && (byEndTime || durationOk)
+    val defaultLockGoal = stringResource(R.string.lock_phone_default_goal)
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
@@ -1159,23 +1259,74 @@ private fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: ()
                 .padding(bottom = Spacing.lg),
             verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
-            Text(stringResource(R.string.challenge_new), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-            OutlinedTextField(
-                value = goal,
-                onValueChange = { goal = it.take(GOAL_MAX) },
-                label = { Text(stringResource(R.string.challenge_goal)) },
-                placeholder = { Text(stringResource(R.string.challenge_goal_hint)) },
-                maxLines = 3,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                modifier = Modifier.fillMaxWidth()
+            Text(
+                stringResource(R.string.challenge_new),
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.semantics { heading() }
             )
-            val modes = listOf(R.string.challenge_mode_duration, R.string.challenge_mode_end_time)
+
+            // Top Two-Choice Selector: Set a Goal vs Lock Phone
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = !isLockPhone,
+                    onClick = { challengeTypeName = PersonalChallengeType.GOAL.name },
+                    shape = SegmentedButtonDefaults.itemShape(0, 2),
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Rounded.Flag,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    modifier = Modifier.testTag("personal_mode_set_goal")
+                ) {
+                    Text(stringResource(R.string.personal_challenge_mode_set_goal))
+                }
+                SegmentedButton(
+                    selected = isLockPhone,
+                    onClick = { challengeTypeName = PersonalChallengeType.LOCK_PHONE.name },
+                    shape = SegmentedButtonDefaults.itemShape(1, 2),
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Rounded.Lock,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    modifier = Modifier.testTag("personal_mode_lock_phone")
+                ) {
+                    Text(stringResource(R.string.personal_challenge_mode_lock_phone))
+                }
+            }
+
+            if (!isLockPhone) {
+                OutlinedTextField(
+                    value = goal,
+                    onValueChange = { goal = it.take(GOAL_MAX) },
+                    label = { Text(stringResource(R.string.challenge_goal)) },
+                    placeholder = { Text(stringResource(R.string.challenge_goal_hint)) },
+                    maxLines = 3,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("personal_goal_input")
+                )
+            }
+
+            val modes = if (isLockPhone) {
+                listOf(R.string.lock_phone_time_mode_timer, R.string.lock_phone_time_mode_until_hour)
+            } else {
+                listOf(R.string.challenge_mode_duration, R.string.challenge_mode_end_time)
+            }
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                 modes.forEachIndexed { i, label ->
                     SegmentedButton(
                         selected = byEndTime == (i == 1),
                         onClick = { byEndTime = i == 1 },
-                        shape = SegmentedButtonDefaults.itemShape(i, modes.size)
+                        shape = SegmentedButtonDefaults.itemShape(i, modes.size),
+                        modifier = Modifier.testTag(
+                            if (i == 0) "lock_phone_time_mode_duration" else "lock_phone_time_mode_until_hour"
+                        )
                     ) { Text(stringResource(label)) }
                 }
             }
@@ -1194,28 +1345,58 @@ private fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: ()
                     NumberField(minutes, { minutes = it }, R.string.challenge_minutes, Modifier.weight(1f))
                 }
                 if (!durationOk) {
-                    Text(stringResource(R.string.challenge_duration_invalid), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    Text(
+                        stringResource(R.string.challenge_duration_invalid),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             } else {
                 val end = LocalTime.of(endHour, endMinute)
                 val tomorrow = !end.isAfter(LocalTime.now())
-                OutlinedButton(onClick = { pickTime = true }, modifier = Modifier.fillMaxWidth().heightIn(min = Spacing.buttonHeight)) {
+                OutlinedButton(
+                    onClick = { pickTime = true },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = Spacing.buttonHeight)
+                        .testTag("lock_phone_pick_hour_button")
+                ) {
                     Icon(Icons.Rounded.Schedule, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
                     Spacer(Modifier.size(ButtonDefaults.IconSpacing))
                     Text(stringResource(if (tomorrow) R.string.challenge_ends_tomorrow else R.string.challenge_ends_today, formatTime(end)))
                 }
             }
+
+            if (isLockPhone) {
+                LockPermissionsSection()
+            }
+
             Button(
                 onClick = {
                     val endAt = if (byEndTime) ChallengeTime.endAtClock(System.currentTimeMillis(), LocalTime.of(endHour, endMinute)) else 0L
-                    onStart(PendingChallenge(goal.trim(), if (byEndTime) 0 else totalMinutes, endAt))
+                    val resolvedGoal = if (isLockPhone) defaultLockGoal else goal.trim()
+                    onStart(
+                        PendingChallenge(
+                            goal = resolvedGoal,
+                            minutes = if (byEndTime) 0 else totalMinutes,
+                            endAt = endAt,
+                            type = challengeType
+                        )
+                    )
                 },
                 enabled = canStart,
-                modifier = Modifier.fillMaxWidth().heightIn(min = Spacing.buttonHeight)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = Spacing.buttonHeight)
+                    .testTag(if (isLockPhone) "lock_phone_start_button" else "personal_start_challenge_button")
             ) {
-                Icon(Icons.Rounded.Flag, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                Icon(
+                    imageVector = if (isLockPhone) Icons.Rounded.Lock else Icons.Rounded.Flag,
+                    contentDescription = null,
+                    modifier = Modifier.size(ButtonDefaults.IconSize)
+                )
                 Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                Text(stringResource(R.string.challenge_start))
+                Text(stringResource(if (isLockPhone) R.string.lock_phone_start_button else R.string.challenge_start))
             }
         }
     }

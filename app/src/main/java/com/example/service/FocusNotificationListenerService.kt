@@ -42,6 +42,13 @@ class FocusNotificationListenerService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        val activeChallenge = runCatching { FocusFlowApplication.instance.challengeStore.state.value.active }.getOrNull()
+        if (activeChallenge != null && activeChallenge.isLockPhone && System.currentTimeMillis() < activeChallenge.endAt) {
+            if (sbn.packageName != packageName) {
+                runCatching { cancelNotification(sbn.key) }
+            }
+            return
+        }
         val state = PomodoroTimerService.state.value
         if (!state.isRunning || state.phase != Phase.FOCUS) return
         if (sbn.packageName in blockedPackages) {

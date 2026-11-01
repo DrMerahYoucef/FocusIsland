@@ -1333,6 +1333,39 @@
     <string name="community_friend_status_focusing">Focusing</string>
     <string name="community_friend_status_paused">On pause</string>
     <string name="community_friend_status_offline">Offline</string>
+
+    <!-- Personal Challenge: Set a Goal vs Lock Phone -->
+    <string name="personal_challenge_mode_set_goal">Set a goal</string>
+    <string name="personal_challenge_mode_lock_phone">Lock phone</string>
+    <string name="personal_challenge_mode_set_goal_desc">Set a personal objective and beat the countdown clock.</string>
+    <string name="personal_challenge_mode_lock_phone_desc">Strictly lock your phone with a timer or until a specific hour. Only pre-selected necessary apps can be opened.</string>
+    <string name="lock_phone_title">Phone Locked</string>
+    <string name="lock_phone_default_goal">Lock Phone Challenge</string>
+    <string name="lock_phone_label_optional">Focus label (optional)</string>
+    <string name="lock_phone_label_hint">e.g. Deep study block — no distractions</string>
+    <string name="lock_phone_time_mode_timer">Set a timer</string>
+    <string name="lock_phone_time_mode_until_hour">Until hour</string>
+    <string name="lock_phone_necessary_apps_title">Necessary apps allowed</string>
+    <string name="lock_phone_necessary_apps_subtitle">Selected apps appear as shortcuts on the lock screen. Every other app, the Android home screen, and notifications are blocked.</string>
+    <plurals name="lock_phone_necessary_apps_count">
+        <item quantity="one">%d necessary app selected</item>
+        <item quantity="other">%d necessary apps selected</item>
+    </plurals>
+    <string name="lock_phone_no_apps_selected">Zero apps selected — pure phone lock</string>
+    <string name="lock_phone_permissions_title">Full lock protection permissions</string>
+    <string name="lock_phone_permissions_subtitle">Grant these permissions so the lock screen immediately blocks the home launcher, other apps, and notifications.</string>
+    <string name="lock_phone_strict_notice">Strict lock: Once started, there is no early exit until the countdown reaches 00:00.</string>
+    <string name="lock_phone_start_button">Lock phone now</string>
+    <string name="lock_phone_strict_badge">Strict Lock · No Early Exit</string>
+    <string name="lock_phone_unlocks_at">Unlocks at %1$s</string>
+    <string name="lock_phone_allowed_apps_dock_title">Allowed necessary apps</string>
+    <string name="lock_phone_pure_mode_badge">Pure Lock Mode · No external apps allowed</string>
+    <string name="lock_phone_footer_hint">Home screen, notifications, and other apps are locked until the countdown ends.</string>
+    <string name="lock_phone_completed_title">Phone Unlocked · Challenge Complete!</string>
+    <string name="lock_phone_completed_body">You completed your strict phone lock session without distractions.</string>
+    <string name="lock_phone_history_badge">Phone Lock</string>
+    <string name="lock_phone_pin_screen_cta">Pin screen to block notification drawer &amp; recents</string>
+    <string name="lock_phone_pinned_active_badge">Screen Pinned · Notification drawer &amp; recents locked</string>
 </resources>
 
 
