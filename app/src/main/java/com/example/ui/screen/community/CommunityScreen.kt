@@ -218,17 +218,106 @@ fun CommunityScreen(
 
     Box(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            PrimaryTabRow(selectedTabIndex = tab) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text(stringResource(R.string.community_tab_leaderboard)) })
-                Tab(
-                    selected = tab == 1,
-                    onClick = { tab = 1 },
-                    text = {
-                        BadgedBox(badge = { if (pending.isNotEmpty()) Badge { Text(pending.size.toString()) } }) {
-                            Text(stringResource(R.string.community_tab_friends))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Spacing.sm, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val leaderboardSelected = tab == 0
+                        Surface(
+                            onClick = { tab = 0 },
+                            shape = CircleShape,
+                            color = if (leaderboardSelected) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                Color.Transparent
+                            },
+                            contentColor = if (leaderboardSelected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 36.dp)
+                                .testTag("community_tab_leaderboard")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.EmojiEvents,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = stringResource(R.string.community_tab_leaderboard),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = if (leaderboardSelected) FontWeight.Bold else FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        val friendsSelected = tab == 1
+                        Surface(
+                            onClick = { tab = 1 },
+                            shape = CircleShape,
+                            color = if (friendsSelected) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                Color.Transparent
+                            },
+                            contentColor = if (friendsSelected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 36.dp)
+                                .testTag("community_tab_friends")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Groups,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = stringResource(R.string.community_tab_friends),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = if (friendsSelected) FontWeight.Bold else FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (pending.isNotEmpty()) {
+                                    Badge { Text(pending.size.toString()) }
+                                }
+                            }
                         }
                     }
-                )
+                }
             }
             when (tab) {
                 0 -> LeaderboardPane(

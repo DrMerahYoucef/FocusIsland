@@ -1,71 +1,60 @@
-# Automatic Screen Unpinning & Ephemeral Lock Phone Sessions
+# Unified Compact Pill Tab Headers & Focus-Only Settings Button
 
-When a Lock Phone countdown finishes, the app will automatically exit Android Screen Pinning (`stopLockTask()`) across every timer expiration path so you can immediately close the app or return to the Android home screen without seeing the system *"Pour que l'appli ne soit plus épinglée, balayez-la vers le haut et maintenez le doigt appuyé"* prompt, and Lock Phone sessions will not be saved in the personal challenge history record.
+Apply the compact segmented pill tab bar design to **Progress** and **Community** (matching **Challenges**), remove the top bar screen title text across all five main screens, and keep the **Settings** button exclusively on the **Focus** screen.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> - **Confirmed Decision 1 (Auto-Unpin on Completion)**: Keep Android Screen Pinning active during the Lock Phone countdown, and automatically unpin the app (`stopLockTask()`) the moment the timer reaches `00:00` so the app is never left pinned afterward.
-> - **Confirmed Decision 2 (Do Not Save Lock Phone Records)**: Because a Lock Phone session strictly forces completion, it does not need to be logged in the personal challenge history list. Only "Set a Goal" (`GOAL`) challenges are recorded in history.
+> - **Confirmed Decision 1 (Compact Pill Tabs on Multi-Tab Screens)**: Replace the `PrimaryTabRow` on **Progress** and **Community** with the sleek compact segmented pill tab bar used on **Challenges**.
+> - **Confirmed Decision 2 (Remove Top Bar Screen Titles)**: Remove the redundant screen title text (`Focus`, `Study`, `Challenges`, `Progress`, `Community`) from the top bar across all main screens.
+> - **Confirmed Decision 3 (Settings Button Only on Focus Screen)**: Show the **Settings** icon button exclusively on the **Focus** screen and remove it from **Study**, **Challenges**, **Progress**, and **Community**.
 
 ## 1. Overview & Core Concept
 
-- **Root Cause of Unpin Prompt**: Previously, when the countdown reached `00:00`, the background timer service (`PomodoroTimerService`), alarm receiver (`ChallengeAlarmReceiver`), or parent `ChallengesScreen` expired the active challenge first (`state.active = null`). This immediately removed `StrictPhoneLockOverlay` from the UI before its internal completion effect could call `stopLockTask()`, and `PhoneLockOverlayManager.dismissShield()` did not hold a reference to the pinned `Activity` to unpin it.
-- **Solution**:
-  1. Track the pinned `Activity` directly inside `PhoneLockOverlayManager`, unwrap `ContextWrapper` chains reliably to locate the host `Activity`, and invoke `stopLockTask()` automatically in `dismissShield()`, on `StrictPhoneLockOverlay` disposal, in `ChallengesScreen` completion handlers, and in `MainActivity` / `FocusOverlayActivity` lifecycle hooks whenever no Lock Phone session is active.
-  2. Update `ChallengeStore` so finishing or expiring a `LOCK_PHONE` session simply clears `active = null` without adding the session to `history` (and filters out any `LOCK_PHONE` entries from local/remote history).
+- **What It Does**:
+  - **Focus Screen**: Displays a clean, transparent top bar with no `"Focus"` title text and the **Settings** icon button in the top-right corner.
+  - **Challenges Screen**: Displays the full-width compact segmented pill tab bar (**Personal** | **Study Group**) at the top without a trailing Settings button.
+  - **Progress Screen**: Displays the full-width compact segmented pill tab bar (**Stats** | **Exams** | **Island**) at the top without a `"Progress"` title bar or Settings button.
+  - **Community Screen**: Displays the full-width compact segmented pill tab bar (**Leaderboard** | **Friends** with pending-request badge) at the top without a `"Community"` title bar or Settings button.
+  - **Study Screen**: Starts directly with the Study content (Today card, search bar, and decks) below the status bar safe area without a `"Study"` title bar or Settings button.
 
 ## 2. User Experience & Visual Design
 
-- **Seamless Timer Completion**:
-  1. While the Lock Phone countdown is running, the screen remains strictly locked and pinned, displaying only the circular countdown counter and the session's motivational quote.
-  2. The instant the countdown reaches `00:00`, the system overlay shield is dismissed, Android Screen Pinning is stopped (`stopLockTask()`), system navigation/status bars are restored, and the active lock session is cleared without adding a history card.
-  3. Swiping up to go Home, opening Recent Apps, or closing the app works immediately without any Android "swipe up and hold to unpin" toast.
+- **Visual Identity & Theme**:
+  - *Pill Tab Styling*: Full-width rounded pill container (`CircleShape`, `MaterialTheme.colorScheme.surfaceContainer` with `3.dp` inner padding) holding equal-weight pill tabs that highlight the active tab with `MaterialTheme.colorScheme.primaryContainer` and bold `labelLarge` typography paired with a leading 16dp Material icon.
+  - *Focus-Only Settings Action*: Only the **Focus** tab renders the top-right `Settings` `IconButton`, giving **Study**, **Challenges**, **Progress**, and **Community** full horizontal width and maximum vertical space.
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Centralized Activity Tracking in `PhoneLockOverlayManager`**
-  - *Chosen Approach*: Store a `WeakReference<Activity>` to the pinned activity whenever `tryStartScreenPinning()` is called or when `MainActivity` / `FocusOverlayActivity` is active, and automatically call `stopLockTask()` inside `dismissShield()`.
-  - *Why*: Timer expiration can be triggered first by `PomodoroTimerService` (1-second ticker), `ChallengeAlarmReceiver` (exact alarm), or the Compose UI loop. Centralizing unpinning inside `dismissShield()` guarantees that whichever component expires the timer first will also unpin the `Activity` on the main thread.
-- **Decision 2: Compose Disposal & Activity Lifecycle Safety Nets**
-  - *Chosen Approach*: Call `tryStopScreenPinning()` inside `StrictPhoneLockOverlay`'s `DisposableEffect.onDispose`, inside `ChallengesScreen` when `state.active` clears, and inside `MainActivity` / `FocusOverlayActivity` lifecycle callbacks (`onResume`, `onWindowFocusChanged`) whenever `isPhoneLockActive()` is false.
-  - *Why*: Eliminates any race condition where the Compose lock screen unmounts before the countdown callback fires.
-- **Decision 3: Ephemeral Lock Phone Sessions (No History Record)**
-  - *Chosen Approach*: In `ChallengeStore.expireIfDue()`, `finish()`, and `start()`, when the challenge is `PersonalChallengeType.LOCK_PHONE`, set `active = null` while leaving `history` untouched, and exclude `LOCK_PHONE` challenges when loading or syncing history.
-  - *Why*: Keeps the Personal Challenges history dedicated to actual "Set a Goal" challenges where the user races the clock to beat a goal.
+- **Decision 1: Full-Width Pill Bar on `Challenges`, `Progress`, and `Community`**
+  - *Chosen Approach*: Remove the trailing Settings `IconButton` from `ChallengesScreen` and render the segmented pill bar across the full width on `Challenges`, `Progress`, and `Community`, using `WindowInsets.statusBars` safe padding when the `TopAppBar` is absent.
+  - *Why*: Gives 3-tab screens like **Progress** (`Stats` / `Exams` / `Island`) and 2-tab screens (`Challenges`, `Community`) generous horizontal room for labels and icons while saving ~64dp of vertical height.
+- **Decision 2: Settings Button Exclusively on `Focus`**
+  - *Chosen Approach*: Render the transparent `TopAppBar(title = {}, actions = { SettingsIconButton })` only when `current == TopLevel.FOCUS`. On all other tabs (`STUDY`, `CHALLENGES`, `PROGRESS`, `COMMUNITY`), no `TopAppBar` is shown and top status-bar inset padding is applied cleanly so content never overlaps the system status bar.
+  - *Why*: Keeps the app chrome minimal and distraction-free while keeping Settings one tap away from the home Focus screen.
 
 ## 4. Technical Architecture & Data Strategy *(Technical Reference)*
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                     Lock Phone Timer Reaches 00:00                       │
-│  (Triggered by ChallengesScreen, PomodoroTimerService, or AlarmReceiver) │
-└────────────────────────────────────┬─────────────────────────────────────┘
-                                     │
-                   ┌─────────────────┴─────────────────┐
-                   ▼                                   ▼
-┌─────────────────────────────────────┐ ┌──────────────────────────────────┐
-│           ChallengeStore            │ │     PhoneLockOverlayManager      │
-│  • expireIfDue() / finish() clears  │ │  • Removes WindowManager overlay │
-│    active = null                    │ │  • Calls stopLockTask() on       │
-│  • Does NOT append LOCK_PHONE       │ │    pinnedActivityRef on Main     │
-│    sessions to history              │ │    Looper                        │
-└─────────────────────────────────────┘ └──────────────┬───────────────────┘
-                                                       │
-                                     ┌─────────────────┴─────────────────┐
-                                     ▼                                   ▼
-                   ┌───────────────────────────────────┐ ┌──────────────────────────────────┐
-                   │      StrictPhoneLockOverlay       │ │ MainActivity & FocusOverlay      │
-                   │  • Context.findActivity() unwraps │ │  • Unpins in onResume /          │
-                   │    ContextWrapper chains          │ │    onWindowFocusChanged if       │
-                   │  • DisposableEffect.onDispose     │ │    !isPhoneLockActive()          │
-                   │    calls tryStopScreenPinning()   │ │  • Restores system bars          │
-                   └───────────────────────────────────┘ └──────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           MainShell (AppNavGraph)                       │
+├────────────────────────────────────┬────────────────────────────────────┤
+│   Focus Tab (TopLevel.FOCUS)       │ Study, Challenges, Progress,       │
+│   • Transparent TopAppBar          │ Community Tabs                     │
+│   • Empty title = {}               │ • No TopAppBar & no Settings icon  │
+│   • Top-right Settings IconButton  │ • Status bar safe-area padding     │
+│                                    │ • Full-width Segmented Pill Tabs   │
+│                                    │   on Challenges/Progress/Community │
+└────────────────────────────────────┴────────────────────────────────────┘
 ```
 
 - **Interactive Component & State Mapping**:
-  - `Context.findActivity()`: Recursively unwraps `ContextWrapper` instances so `LocalContext.current` and `LocalView.current.context` always resolve to the host `Activity` even when locale wrappers are active.
-  - `PhoneLockOverlayManager.tryStartScreenPinning(activity)`: Records `pinnedActivityRef = WeakReference(activity)` and invokes `activity.startLockTask()` if not already in LockTask mode.
-  - `PhoneLockOverlayManager.tryStopScreenPinning(activity?)`: Resolves either the passed `Activity` or `pinnedActivityRef.get()`, checks `ActivityManager.lockTaskModeState != LOCK_TASK_MODE_NONE`, and invokes `stopLockTask()` on the main thread.
-  - `PhoneLockOverlayManager.dismissShield(context)`: Removes the `TYPE_APPLICATION_OVERLAY` view and invokes `tryStopScreenPinning()` so background service/alarm expiration always unpins the app.
-  - `ChallengeStore`: Keeps `active` persisted while a `LOCK_PHONE` session is running (so reboots or app restarts cannot bypass the lock), and clears `active = null` upon completion without saving a history item.
+  - `MainShell`:
+    - Renders `TopAppBar(title = {}, actions = { SettingsIconButton })` only when `current == TopLevel.FOCUS && !isPhoneLockActive`.
+    - Applies `statusBarsPadding()` to non-Focus tab content so removing the `TopAppBar` on `STUDY`, `CHALLENGES`, `PROGRESS`, and `COMMUNITY` never clips under the status bar.
+  - `ChallengesScreen`:
+    - Full-width compact segmented pill bar (`Personal` | `Study Group`) with `onOpenSettings = null`.
+  - `ProgressTab`:
+    - Replaces `PrimaryTabRow` with a full-width compact segmented pill bar (`Stats`, `Exams`, `Island` with icons).
+  - `CommunityTab` & `CommunityScreen`:
+    - Replaces `PrimaryTabRow` with a full-width compact segmented pill bar (`Leaderboard`, `Friends` with pending-request count badge).

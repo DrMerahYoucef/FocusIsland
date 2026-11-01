@@ -17,10 +17,16 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -33,6 +39,8 @@ import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.EmojiEvents
+import androidx.compose.material.icons.rounded.Event
+import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Insights
@@ -49,9 +57,8 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
-import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -526,10 +533,10 @@ private fun MainShell(
             modifier = Modifier.weight(1f),
             containerColor = MaterialTheme.colorScheme.background,
             topBar = {
-                // Challenges tab merges its title, Personal/Study Group tabs, and Settings action into one compact bar
-                if (current != TopLevel.CHALLENGES && !isPhoneLockActive) {
+                // Keep the Settings button only on the Focus screen (with no topbar screen title text)
+                if (current == TopLevel.FOCUS && !isPhoneLockActive) {
                     androidx.compose.material3.TopAppBar(
-                        title = { Text(stringResource(current.label)) },
+                        title = {},
                         colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
                             containerColor = androidx.compose.ui.graphics.Color.Transparent,
                             scrolledContainerColor = androidx.compose.ui.graphics.Color.Transparent
@@ -617,11 +624,7 @@ private fun MainShell(
                                 )
                                 TopLevel.CHALLENGES -> ChallengesScreen(
                                     viewModel = challengeViewModel,
-                                    onOpenSettings = if (current == TopLevel.CHALLENGES) {
-                                        { navController.navigate(Routes.SETTINGS) }
-                                    } else {
-                                        null
-                                    }
+                                    onOpenSettings = null
                                 )
                                 TopLevel.PROGRESS -> ProgressTab(
                                     selected = progressTab,
@@ -639,7 +642,6 @@ private fun MainShell(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ProgressTab(
     selected: Int,
@@ -647,20 +649,75 @@ private fun ProgressTab(
     analyticsViewModel: AnalyticsViewModel,
     examsViewModel: ExamsViewModel
 ) {
+    val activeIdx = selected.coerceIn(0, 2)
+    val progressTabs = listOf(
+        Triple(0, R.string.progress_tab_stats, Icons.Rounded.Insights),
+        Triple(1, R.string.progress_tab_exams, Icons.Rounded.Event),
+        Triple(2, R.string.progress_tab_island, Icons.Rounded.Explore)
+    )
     Column(Modifier.fillMaxSize()) {
-        PrimaryTabRow(
-            selectedTabIndex = selected.coerceIn(0, 2),
-            containerColor = androidx.compose.ui.graphics.Color.Transparent
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.sm, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Tab(selected = selected == 0, onClick = { onSelect(0) }, text = { Text(stringResource(R.string.progress_tab_stats)) })
-            Tab(selected = selected == 1, onClick = { onSelect(1) }, text = { Text(stringResource(R.string.progress_tab_exams)) })
-            Tab(
-                selected = selected == 2,
-                onClick = { onSelect(2) },
-                text = { Text(stringResource(R.string.progress_tab_island)) }
-            )
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    progressTabs.forEach { (idx, labelRes, icon) ->
+                        val isSelected = activeIdx == idx
+                        Surface(
+                            onClick = { onSelect(idx) },
+                            shape = CircleShape,
+                            color = if (isSelected) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                androidx.compose.ui.graphics.Color.Transparent
+                            },
+                            contentColor = if (isSelected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 36.dp)
+                                .testTag("progress_tab_$idx")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = stringResource(labelRes),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
-        when (selected) {
+        when (activeIdx) {
             0 -> AnalyticsScreen(viewModel = analyticsViewModel, onOpenIsland = { onSelect(2) })
             1 -> ExamsScreen(viewModel = examsViewModel)
             else -> com.example.ui.screen.island.IslandExplorerScreen(analyticsViewModel = analyticsViewModel)

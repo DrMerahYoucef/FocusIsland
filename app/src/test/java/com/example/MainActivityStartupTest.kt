@@ -53,7 +53,10 @@ class MainActivityStartupTest {
         composeRule.onNodeWithText("Community").performClick()
         composeRule.waitForIdle()
 
-        // 5. Open Settings and switch language to French and English
+        // 5. Return to Focus tab where the Settings button lives, open Settings and switch language
+        composeRule.onNodeWithText("Focus").performClick()
+        composeRule.waitForIdle()
+
         composeRule.onNodeWithContentDescription("Settings").performClick()
         composeRule.waitForIdle()
 
