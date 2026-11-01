@@ -703,6 +703,9 @@ class StudyGroupChallengeTest {
         assertEquals(ChallengeResult.DONE, expired!!.result)
         assertNull(store.state.value.active)
         assertTrue(store.state.value.history.none { it.id == created.id })
+
+        store.clearHistory()
+        context.getSharedPreferences("challenges", android.content.Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     @Test

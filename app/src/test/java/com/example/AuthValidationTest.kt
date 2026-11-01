@@ -12,7 +12,7 @@ import org.robolectric.annotation.Config
 
 /** The sign-in form rules. Robolectric provides android.util.Patterns; a plain Application avoids Firebase. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = Application::class)
+@Config(application = Application::class)
 class AuthValidationTest {
 
     @Test

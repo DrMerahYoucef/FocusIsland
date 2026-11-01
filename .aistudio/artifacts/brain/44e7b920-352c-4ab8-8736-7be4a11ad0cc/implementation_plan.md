@@ -1,60 +1,31 @@
-# Unified Compact Pill Tab Headers & Focus-Only Settings Button
+# Fix Failing `MainActivityStartupTest` on Line 38 (`"New challenge"`)
 
-Apply the compact segmented pill tab bar design to **Progress** and **Community** (matching **Challenges**), remove the top bar screen title text across all five main screens, and keep the **Settings** button exclusively on the **Focus** screen.
+## Root Cause Analysis
+When `MainActivityStartupTest.fullAppFlowAndTabsAndSettingsAndDialogsDoNotCrash` clicks `"Challenges"` (line 34) and then attempts to click `"New challenge"` (line 38), it fails to find the `"New challenge"` node due to three interacting factors:
 
-## User Review & Critical Decisions
+1. **Mid-Scroll `Scaffold` `TopAppBar` Unmounting & Pager Transition (`AppNavGraph.kt`)**:
+   - In `MainShell`, `Scaffold(topBar = ...)` conditionally renders `TopAppBar` only when `current == TopLevel.FOCUS`.
+   - When tapping `"Challenges"` (page 2) from `"Focus"` (page 0), `select(tab)` calls `pagerState.animateScrollToPage(2)` while `beyondViewportPageCount = 0`. Halfway through the scroll (at page 1, `"Study"`), `current == TopLevel.FOCUS` flips to `false`, causing `Scaffold` to unmount its `TopAppBar` and change `padding.calculateTopPadding()` mid-animation.
+   - Switching `select(tab)` to `pagerState.scrollToPage(tab.ordinal)` (matching `navRequest` tab navigation) and keeping `MainShell`'s `Scaffold` layout stable ensures clicking any bottom/rail navigation tab lands deterministically on the target tab on the first frame after `waitForIdle()`.
 
-> [!IMPORTANT]
-> - **Confirmed Decision 1 (Compact Pill Tabs on Multi-Tab Screens)**: Replace the `PrimaryTabRow` on **Progress** and **Community** with the sleek compact segmented pill tab bar used on **Challenges**.
-> - **Confirmed Decision 2 (Remove Top Bar Screen Titles)**: Remove the redundant screen title text (`Focus`, `Study`, `Challenges`, `Progress`, `Community`) from the top bar across all main screens.
-> - **Confirmed Decision 3 (Settings Button Only on Focus Screen)**: Show the **Settings** icon button exclusively on the **Focus** screen and remove it from **Study**, **Challenges**, **Progress**, and **Community**.
+2. **Shared Persistent `ChallengeStore` State Across Robolectric Tests (`StudyGroupChallengeTest.kt` & `MainActivityStartupTest.kt`)**:
+   - `StudyGroupChallengeTest` mutates `ChallengeStore(context)` (which persists to `SharedPreferences("challenges")`) and `FocusFlowApplication.instance.challengeStore`.
+   - If any test leaves an active or recent challenge state in `SharedPreferences`, `PersonalChallengeTabContent` renders `ActiveChallengeCard` or `ResultCard` instead of the `"New challenge"` button (`personal_challenge_new_button`).
 
-## 1. Overview & Core Concept
+3. **Test Isolation & Viewport Scrolling (`MainActivityStartupTest.kt`)**:
+   - Resetting `ChallengeStore` and ensuring `AppLanguage.ENGLISH` at the start of `MainActivityStartupTest`, ensuring the Personal tab (`challenges_tab_personal`) is active, and scrolling to `"New challenge"` before clicking makes the UI test deterministic across all screen sizes and CI test orderings.
 
-- **What It Does**:
-  - **Focus Screen**: Displays a clean, transparent top bar with no `"Focus"` title text and the **Settings** icon button in the top-right corner.
-  - **Challenges Screen**: Displays the full-width compact segmented pill tab bar (**Personal** | **Study Group**) at the top without a trailing Settings button.
-  - **Progress Screen**: Displays the full-width compact segmented pill tab bar (**Stats** | **Exams** | **Island**) at the top without a `"Progress"` title bar or Settings button.
-  - **Community Screen**: Displays the full-width compact segmented pill tab bar (**Leaderboard** | **Friends** with pending-request badge) at the top without a `"Community"` title bar or Settings button.
-  - **Study Screen**: Starts directly with the Study content (Today card, search bar, and decks) below the status bar safe area without a `"Study"` title bar or Settings button.
+---
 
-## 2. User Experience & Visual Design
+## Proposed Changes
 
-- **Visual Identity & Theme**:
-  - *Pill Tab Styling*: Full-width rounded pill container (`CircleShape`, `MaterialTheme.colorScheme.surfaceContainer` with `3.dp` inner padding) holding equal-weight pill tabs that highlight the active tab with `MaterialTheme.colorScheme.primaryContainer` and bold `labelLarge` typography paired with a leading 16dp Material icon.
-  - *Focus-Only Settings Action*: Only the **Focus** tab renders the top-right `Settings` `IconButton`, giving **Study**, **Challenges**, **Progress**, and **Community** full horizontal width and maximum vertical space.
+1. **`app/src/main/java/com/example/ui/navigation/AppNavGraph.kt`**
+   - Update `select(tab: TopLevel)` in `MainShell` to use `pagerState.scrollToPage(tab.ordinal)` so tapping bottom navigation or navigation rail items switches directly to the target tab without intermediate page compositions or mid-scroll `TopAppBar` layout shifts.
 
-## 3. Key Product Decisions & Trade-Offs
+2. **`app/src/test/java/com/example/StudyGroupChallengeTest.kt`**
+   - Clean up `ChallengeStore` (`SharedPreferences("challenges")`) at the end of the `ChallengeStore` persistence test so it never leaks state to other tests running in the same Gradle worker.
 
-- **Decision 1: Full-Width Pill Bar on `Challenges`, `Progress`, and `Community`**
-  - *Chosen Approach*: Remove the trailing Settings `IconButton` from `ChallengesScreen` and render the segmented pill bar across the full width on `Challenges`, `Progress`, and `Community`, using `WindowInsets.statusBars` safe padding when the `TopAppBar` is absent.
-  - *Why*: Gives 3-tab screens like **Progress** (`Stats` / `Exams` / `Island`) and 2-tab screens (`Challenges`, `Community`) generous horizontal room for labels and icons while saving ~64dp of vertical height.
-- **Decision 2: Settings Button Exclusively on `Focus`**
-  - *Chosen Approach*: Render the transparent `TopAppBar(title = {}, actions = { SettingsIconButton })` only when `current == TopLevel.FOCUS`. On all other tabs (`STUDY`, `CHALLENGES`, `PROGRESS`, `COMMUNITY`), no `TopAppBar` is shown and top status-bar inset padding is applied cleanly so content never overlaps the system status bar.
-  - *Why*: Keeps the app chrome minimal and distraction-free while keeping Settings one tap away from the home Focus screen.
-
-## 4. Technical Architecture & Data Strategy *(Technical Reference)*
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           MainShell (AppNavGraph)                       │
-├────────────────────────────────────┬────────────────────────────────────┤
-│   Focus Tab (TopLevel.FOCUS)       │ Study, Challenges, Progress,       │
-│   • Transparent TopAppBar          │ Community Tabs                     │
-│   • Empty title = {}               │ • No TopAppBar & no Settings icon  │
-│   • Top-right Settings IconButton  │ • Status bar safe-area padding     │
-│                                    │ • Full-width Segmented Pill Tabs   │
-│                                    │   on Challenges/Progress/Community │
-└────────────────────────────────────┴────────────────────────────────────┘
-```
-
-- **Interactive Component & State Mapping**:
-  - `MainShell`:
-    - Renders `TopAppBar(title = {}, actions = { SettingsIconButton })` only when `current == TopLevel.FOCUS && !isPhoneLockActive`.
-    - Applies `statusBarsPadding()` to non-Focus tab content so removing the `TopAppBar` on `STUDY`, `CHALLENGES`, `PROGRESS`, and `COMMUNITY` never clips under the status bar.
-  - `ChallengesScreen`:
-    - Full-width compact segmented pill bar (`Personal` | `Study Group`) with `onOpenSettings = null`.
-  - `ProgressTab`:
-    - Replaces `PrimaryTabRow` with a full-width compact segmented pill bar (`Stats`, `Exams`, `Island` with icons).
-  - `CommunityTab` & `CommunityScreen`:
-    - Replaces `PrimaryTabRow` with a full-width compact segmented pill bar (`Leaderboard`, `Friends` with pending-request count badge).
+3. **`app/src/test/java/com/example/MainActivityStartupTest.kt`**
+   - Reset `ChallengeStore` state and ensure `AppLanguage.ENGLISH` before running the startup flow.
+   - Align `@Config(application = FocusFlowApplication::class)` with the project's default Robolectric SDK so tests run consistently in both local and GitHub Actions environments.
+   - Ensure the `"New challenge"` button is scrolled into view before clicking.

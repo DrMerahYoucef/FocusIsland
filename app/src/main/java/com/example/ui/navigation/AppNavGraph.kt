@@ -499,7 +499,7 @@ private fun MainShell(
 
     fun select(tab: TopLevel) {
         if (isPhoneLockActive) return
-        scope.launch { pagerState.animateScrollToPage(tab.ordinal) }
+        scope.launch { pagerState.scrollToPage(tab.ordinal) }
     }
 
     Row(Modifier.fillMaxSize()) {
