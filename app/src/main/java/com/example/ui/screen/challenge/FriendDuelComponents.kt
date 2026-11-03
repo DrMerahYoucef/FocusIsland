@@ -375,6 +375,7 @@ fun FriendDuelLiveCard(
     onNudgeFriend: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
     onResendInvite: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
     onAddTime: (FriendChallenge, Int) -> Unit = { _, _ -> },
+    onToggleStartFromZero: (FriendChallenge) -> Unit = {},
     onClearMessages: (FriendChallenge) -> Unit = {},
     onDeleteGroup: (FriendChallenge) -> Unit = {},
     onAddFriends: (() -> Unit)? = null,
@@ -565,7 +566,17 @@ fun FriendDuelLiveCard(
                                 Surface(
                                     shape = CircleShape,
                                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .then(
+                                            if (isCreator && !compact) {
+                                                Modifier.clickable { onToggleStartFromZero(duel) }
+                                            } else {
+                                                Modifier
+                                            }
+                                        )
+                                        .testTag("study_group_progress_mode_badge_button")
                                 ) {
                                     Text(
                                         text = stringResource(
@@ -709,6 +720,24 @@ fun FriendDuelLiveCard(
                                                 showAddTimeSheet = true
                                             },
                                             modifier = Modifier.testTag("study_group_add_time_button")
+                                        )
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    stringResource(
+                                                        if (duel.startFromZero) R.string.challenge_progress_keep_day
+                                                        else R.string.challenge_progress_from_zero
+                                                    )
+                                                )
+                                            },
+                                            leadingIcon = {
+                                                Icon(Icons.Rounded.SportsScore, contentDescription = null)
+                                            },
+                                            onClick = {
+                                                moreMenuExpanded = false
+                                                onToggleStartFromZero(duel)
+                                            },
+                                            modifier = Modifier.testTag("study_group_toggle_progress_mode_button")
                                         )
                                     }
                                     if (onAddFriends != null) {

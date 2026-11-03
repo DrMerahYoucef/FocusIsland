@@ -392,12 +392,23 @@ class FriendChallengeRepository(
     private var myFriendIds: Set<String> = emptySet()
     @Volatile
     private var todayCompletedSessions: List<com.example.data.db.entity.SessionEntity> = emptyList()
+    @Volatile
+    private var hasLoadedTodaySessions: Boolean = false
 
     private fun getPreChallengeMinutes(challengeCreatedAt: Long): Int {
         if (challengeCreatedAt <= 0L) return 0
         return todayCompletedSessions
             .filter { it.date <= challengeCreatedAt }
             .sumOf { it.durationSeconds } / 60
+    }
+
+    private fun computeMyEffectiveBaseline(challenge: FriendChallenge, myMember: StudyGroupMember?): Int {
+        if (!challenge.startFromZero) return 0
+        return if (hasLoadedTodaySessions) {
+            getPreChallengeMinutes(challenge.createdAt)
+        } else {
+            (myMember?.baselineMinutes ?: 0).coerceAtLeast(0)
+        }
     }
 
     private val celebratedIds: MutableSet<String> = java.util.Collections.synchronizedSet(
@@ -792,15 +803,16 @@ class FriendChallengeRepository(
         val currentMembers = ch.allMembers()
         val updatedMembers = currentMembers.map { m ->
             if (m.uid == myUid && myUid.isNotEmpty()) {
-                val effectiveBaseline = if (ch.startFromZero) {
-                    maxOf(m.baselineMinutes, getPreChallengeMinutes(ch.createdAt))
-                } else {
-                    0
-                }
+                val effectiveBaseline = computeMyEffectiveBaseline(ch, m)
                 val myChallengeMins = (_state.value.myLiveMinutesToday - effectiveBaseline).coerceAtLeast(0)
+                val resolvedMins = if (hasLoadedTodaySessions) {
+                    maxOf(m.minutes, myChallengeMins)
+                } else {
+                    maxOf(m.minutes, myChallengeMins)
+                }
                 m.copy(
                     name = myResolvedUsername.ifBlank { m.name },
-                    minutes = maxOf(m.minutes, myChallengeMins),
+                    minutes = resolvedMins,
                     baselineMinutes = effectiveBaseline,
                     timerState = _state.value.myTimerState,
                     roleStatus = if (ch.id in abandonedIds) StudyMemberRoleStatus.SURRENDERED else m.roleStatus
@@ -840,6 +852,7 @@ class FriendChallengeRepository(
                 val today = LocalDate.now()
                 val todaySessions = all.filter { it.completed && StatsCalculator.localDay(it.date) == today }
                 todayCompletedSessions = todaySessions
+                hasLoadedTodaySessions = true
                 todaySessions.sumOf { it.durationSeconds } / 60
             }
             val liveTimerFlow = PomodoroTimerService.state.map { timer ->
@@ -870,14 +883,19 @@ class FriendChallengeRepository(
                 val active = _state.value.activeDuel ?: return@collectLatest
                 if (uid.isNotEmpty()) {
                     val myMember = active.allMembers().firstOrNull { it.uid == uid }
-                    val effectiveBaseline = if (active.startFromZero) {
-                        maxOf(myMember?.baselineMinutes ?: 0, getPreChallengeMinutes(active.createdAt))
-                    } else {
-                        0
-                    }
+                    val effectiveBaseline = computeMyEffectiveBaseline(active, myMember)
                     val myChallengeMinutes = (totalTodayMinutes - effectiveBaseline).coerceAtLeast(0)
-                    if (active.myMinutes(uid) != myChallengeMinutes || myMember?.timerState != timerStatus) {
-                        pushMyStateToActiveChallenge(active, uid, myChallengeMinutes, timerStatus)
+                    if (active.myMinutes(uid) != myChallengeMinutes ||
+                        myMember?.baselineMinutes != effectiveBaseline ||
+                        myMember.timerState != timerStatus
+                    ) {
+                        pushMyStateToActiveChallenge(
+                            challenge = active,
+                            myUid = uid,
+                            minutes = myChallengeMinutes,
+                            timerState = timerStatus,
+                            baselineMinutes = effectiveBaseline
+                        )
                     }
                 }
             }
@@ -972,11 +990,7 @@ class FriendChallengeRepository(
             if (effectiveUid.isNotEmpty()) {
                 val updatedMembers = duel.allMembers().map { m ->
                     if (m.uid == effectiveUid) {
-                        val effectiveBaseline = if (duel.startFromZero) {
-                            maxOf(m.baselineMinutes, getPreChallengeMinutes(duel.createdAt))
-                        } else {
-                            0
-                        }
+                        val effectiveBaseline = computeMyEffectiveBaseline(duel, m)
                         val myChallengeMins = (liveMinutes - effectiveBaseline).coerceAtLeast(0)
                         m.copy(
                             minutes = maxOf(m.minutes, myChallengeMins),
@@ -1009,6 +1023,26 @@ class FriendChallengeRepository(
             } else duel
         }
 
+        // If our local sessions or healed baseline produced higher/updated challenge minutes than stored in activeRaw, push immediately
+        if (activeRaw != null && active != null && effectiveUid.isNotEmpty() && hasLoadedTodaySessions) {
+            val rawMyMember = activeRaw.allMembers().firstOrNull { it.uid == effectiveUid }
+            val activeMyMember = active.allMembers().firstOrNull { it.uid == effectiveUid }
+            if (rawMyMember != null && activeMyMember != null &&
+                (rawMyMember.minutes != activeMyMember.minutes ||
+                    rawMyMember.baselineMinutes != activeMyMember.baselineMinutes)
+            ) {
+                appScope.launch {
+                    pushMyStateToActiveChallenge(
+                        challenge = active,
+                        myUid = effectiveUid,
+                        minutes = activeMyMember.minutes,
+                        timerState = activeMyMember.timerState,
+                        baselineMinutes = activeMyMember.baselineMinutes
+                    )
+                }
+            }
+        }
+
         // If live minutes just reached the target hours for the active challenge, finish it immediately
         if (active != null) {
             val liveTargetWinner = active.findTargetReachedWinnerUid()
@@ -1022,8 +1056,17 @@ class FriendChallengeRepository(
             markAutoStarted(active.id)
             startPomodoroForActiveChallenge()
             if (effectiveUid.isNotEmpty()) {
+                val myMember = active.allMembers().firstOrNull { it.uid == effectiveUid }
                 val myChallengeMins = active.myMinutes(effectiveUid)
-                appScope.launch { pushMyStateToActiveChallenge(active, effectiveUid, myChallengeMins, myTimerSt) }
+                appScope.launch {
+                    pushMyStateToActiveChallenge(
+                        challenge = active,
+                        myUid = effectiveUid,
+                        minutes = myChallengeMins,
+                        timerState = myTimerSt,
+                        baselineMinutes = myMember?.baselineMinutes
+                    )
+                }
             }
         }
 
@@ -1319,7 +1362,7 @@ class FriendChallengeRepository(
                 }
                 val friendTodayTotal = maxOf(friend.todayMinutes, liveFriend?.todayMinutes ?: 0).coerceAtLeast(0)
                 val preservedBaseline = if (groupStartFromZero) {
-                    existingMember?.baselineMinutes?.takeIf { it > 0 } ?: friendTodayTotal
+                    existingMember?.baselineMinutes?.coerceAtLeast(0) ?: friendTodayTotal
                 } else {
                     0
                 }
@@ -1365,8 +1408,14 @@ class FriendChallengeRepository(
         val id = "${dayKey}_${myUid}_${now}"
         val primaryOpponent = allowedFriendsToInvite.first()
 
-        val myInitialMinutes = if (startFromZero) 0 else myMins.coerceAtLeast(0)
-        val myBaselineMinutes = if (startFromZero) myMins.coerceAtLeast(0) else 0
+        val myBaselineMinutes = if (startFromZero) {
+            if (hasLoadedTodaySessions) getPreChallengeMinutes(now) else myMins.coerceAtLeast(0)
+        } else 0
+        val myInitialMinutes = if (startFromZero) {
+            (myMins - myBaselineMinutes).coerceAtLeast(0)
+        } else {
+            myMins.coerceAtLeast(0)
+        }
         val primaryOpponentLive = liveFriendProfiles[primaryOpponent.uid]
         val primaryOpponentToday = maxOf(primaryOpponent.todayMinutes, primaryOpponentLive?.todayMinutes ?: 0).coerceAtLeast(0)
         val primaryOpponentInitial = if (startFromZero) 0 else primaryOpponentToday
@@ -1449,7 +1498,7 @@ class FriendChallengeRepository(
         val existing = if (idx >= 0) currentMembers[idx] else null
         val friendTodayTotal = (liveFriend?.todayMinutes ?: 0).coerceAtLeast(0)
         val preservedBaseline = if (challenge.startFromZero) {
-            existing?.baselineMinutes?.takeIf { it > 0 } ?: friendTodayTotal
+            existing?.baselineMinutes?.coerceAtLeast(0) ?: friendTodayTotal
         } else {
             0
         }
@@ -1522,11 +1571,7 @@ class FriendChallengeRepository(
         val myTimerSt = _state.value.myTimerState
         val updatedMembers = challenge.allMembers().map { m ->
             if (m.uid == myUid) {
-                val effectiveBaseline = if (challenge.startFromZero) {
-                    maxOf(m.baselineMinutes, getPreChallengeMinutes(challenge.createdAt))
-                } else {
-                    0
-                }
+                val effectiveBaseline = computeMyEffectiveBaseline(challenge, m)
                 val myChallengeMins = (myMins - effectiveBaseline).coerceAtLeast(0)
                 m.copy(
                     minutes = maxOf(m.minutes, myChallengeMins),
@@ -1718,6 +1763,77 @@ class FriendChallengeRepository(
         val updated = challenge.copy(
             targetMinutes = newTargetMinutes,
             messages = updatedMessages
+        )
+        remoteCollectionDuels[updated.id] = updated
+        if (myUid.isNotEmpty()) {
+            remoteUserDuels[myUid] = updated
+        }
+        val cached = loadCachedChallenges()
+        val nextCached = if (cached.any { it.id == challenge.id }) {
+            cached.map { if (it.id == challenge.id) updated else it }
+        } else {
+            cached + updated
+        }
+        saveCachedChallenges(nextCached)
+        rebuildState(nextCached, myUid, _state.value.myLiveMinutesToday)
+        syncChallengeToFirestoreAsync(updated)
+        updated
+    }
+
+    /**
+     * Allows the creator of the Study Group challenge to switch between "Start from 0m" (`startFromZero = true`)
+     * and "Keep day progress" (`startFromZero = false`) on an active challenge so all focus sessions from
+     * earlier today can be included (or excluded) immediately without losing the group.
+     */
+    suspend fun setStartFromZeroByCreator(
+        challenge: FriendChallenge,
+        startFromZero: Boolean
+    ): Result<FriendChallenge> = runCatching {
+        val myUid = _state.value.myUid.ifEmpty { currentUid().ifEmpty { challenge.challengerUid } }
+        require(myUid.isEmpty() || challenge.isChallenger(myUid) || challenge.challengerUid == "local_user") {
+            "Only the creator can change the challenge progress mode"
+        }
+        val now = clock()
+        val myMins = _state.value.myLiveMinutesToday
+        val updatedMembers = challenge.allMembers().map { m ->
+            if (m.uid == myUid) {
+                val newBaseline = if (startFromZero) {
+                    if (hasLoadedTodaySessions) getPreChallengeMinutes(challenge.createdAt) else 0
+                } else {
+                    0
+                }
+                val newMins = (myMins - newBaseline).coerceAtLeast(0)
+                m.copy(
+                    minutes = newMins,
+                    baselineMinutes = newBaseline,
+                    updatedAt = now
+                )
+            } else {
+                val liveFriend = liveFriendProfiles[m.uid]
+                val friendTodayTotal = maxOf(
+                    liveFriend?.todayMinutes ?: 0,
+                    m.minutes + m.baselineMinutes.coerceAtLeast(0)
+                ).coerceAtLeast(0)
+                val newBaseline = if (startFromZero) {
+                    m.baselineMinutes.takeIf { it > 0 } ?: 0
+                } else {
+                    0
+                }
+                val newMins = (friendTodayTotal - newBaseline).coerceAtLeast(0)
+                m.copy(
+                    minutes = newMins,
+                    baselineMinutes = newBaseline,
+                    updatedAt = now
+                )
+            }
+        }
+        val challengerMins = updatedMembers.firstOrNull { it.uid == challenge.challengerUid }?.minutes ?: challenge.challengerMinutes
+        val opponentMins = updatedMembers.firstOrNull { it.uid == challenge.opponentUid }?.minutes ?: challenge.opponentMinutes
+        val updated = challenge.copy(
+            startFromZero = startFromZero,
+            challengerMinutes = challengerMins,
+            opponentMinutes = opponentMins,
+            members = updatedMembers
         )
         remoteCollectionDuels[updated.id] = updated
         if (myUid.isNotEmpty()) {
@@ -2282,7 +2398,8 @@ class FriendChallengeRepository(
         challenge: FriendChallenge,
         myUid: String,
         minutes: Int,
-        timerState: StudyMemberTimerState
+        timerState: StudyMemberTimerState,
+        baselineMinutes: Int? = null
     ) {
         val now = clock()
         val updatedMembers = challenge.allMembers().map { m ->
@@ -2290,6 +2407,7 @@ class FriendChallengeRepository(
                 m.copy(
                     name = myResolvedUsername.ifBlank { m.name },
                     minutes = minutes,
+                    baselineMinutes = baselineMinutes ?: m.baselineMinutes,
                     timerState = timerState,
                     updatedAt = now
                 )
@@ -2424,11 +2542,25 @@ class FriendChallengeRepository(
 
         internal fun mergeChallenges(a: FriendChallenge, b: FriendChallenge): FriendChallenge {
             val primary = if (statusRank(b.status) >= statusRank(a.status)) b else a
+            val aLatestUpdate = maxOf(
+                a.createdAt,
+                a.acceptedAt ?: 0L,
+                a.allMembers().maxOfOrNull { it.updatedAt } ?: 0L,
+                a.messages.maxOfOrNull { it.createdAt } ?: 0L
+            )
+            val bLatestUpdate = maxOf(
+                b.createdAt,
+                b.acceptedAt ?: 0L,
+                b.allMembers().maxOfOrNull { it.updatedAt } ?: 0L,
+                b.messages.maxOfOrNull { it.createdAt } ?: 0L
+            )
+            val latestConfig = if (bLatestUpdate >= aLatestUpdate) b else a
+            val effectiveStartFromZero = if (a.status == b.status) latestConfig.startFromZero else primary.startFromZero
             val mergedMembersByUid = LinkedHashMap<String, StudyGroupMember>()
             (a.allMembers() + b.allMembers()).forEach { m ->
                 val prev = mergedMembersByUid[m.uid]
                 if (prev == null) {
-                    mergedMembersByUid[m.uid] = m
+                    mergedMembersByUid[m.uid] = if (!effectiveStartFromZero) m.copy(baselineMinutes = 0) else m
                 } else {
                     val prevInvitedAt = prev.invitedAt
                     val mInvitedAt = m.invitedAt
@@ -2443,13 +2575,18 @@ class FriendChallengeRepository(
                             StudyMemberRoleStatus.ACTIVE
                         else -> newer.roleStatus
                     }
+                    val resolvedBaseline = when {
+                        !effectiveStartFromZero -> 0
+                        m.updatedAt != prev.updatedAt -> newer.baselineMinutes.coerceAtLeast(0)
+                        else -> maxOf(prev.baselineMinutes, m.baselineMinutes)
+                    }
                     mergedMembersByUid[m.uid] = newer.copy(
                         name = m.name.ifBlank { prev.name },
                         minutes = maxOf(prev.minutes, m.minutes),
                         roleStatus = role,
                         invitedAt = maxInvitedAt,
                         updatedAt = maxOf(prev.updatedAt, m.updatedAt),
-                        baselineMinutes = maxOf(prev.baselineMinutes, m.baselineMinutes)
+                        baselineMinutes = resolvedBaseline
                     )
                 }
             }
@@ -2488,7 +2625,7 @@ class FriendChallengeRepository(
                 nudges = mergedNudges,
                 messagesClearedAt = maxClearedAt,
                 targetMinutes = maxOf(a.targetMinutes, b.targetMinutes),
-                startFromZero = primary.startFromZero,
+                startFromZero = effectiveStartFromZero,
                 customEndHourLabel = b.customEndHourLabel.ifBlank { a.customEndHourLabel }
             )
         }

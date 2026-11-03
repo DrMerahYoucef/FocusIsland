@@ -149,6 +149,12 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun toggleStudyGroupStartFromZero(challenge: FriendChallenge) {
+        viewModelScope.launch {
+            friendRepo.setStartFromZeroByCreator(challenge, !challenge.startFromZero)
+        }
+    }
+
     fun acceptFriendChallenge(challenge: FriendChallenge) {
         viewModelScope.launch { friendRepo.acceptChallenge(challenge) }
     }

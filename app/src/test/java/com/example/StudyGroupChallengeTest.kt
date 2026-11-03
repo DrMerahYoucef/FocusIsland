@@ -748,6 +748,78 @@ class StudyGroupChallengeTest {
         composeRule.waitForIdle()
         assertTrue(timeUpCalled)
     }
+
+    @Test
+    fun `healed baselineMinutes and toggling startFromZero count full 2h30m (150 min) study progress`() {
+        val t0 = 12_000_000L
+        // Stale snapshot where creator had an inflated baselineMinutes = 100 and stayed at 50m (150 - 100 = 50)
+        val staleCreator = StudyGroupMember(
+            uid = "creator",
+            name = "Youcef",
+            minutes = 50,
+            baselineMinutes = 100,
+            timerState = StudyMemberTimerState.FOCUSING,
+            roleStatus = StudyMemberRoleStatus.ACTIVE,
+            invitedAt = t0,
+            updatedAt = t0 + 1_000L
+        )
+        val friend = StudyGroupMember(
+            uid = "friend1",
+            name = "Khalil",
+            minutes = 219,
+            baselineMinutes = 0,
+            timerState = StudyMemberTimerState.ON_BREAK,
+            roleStatus = StudyMemberRoleStatus.ACTIVE,
+            invitedAt = t0,
+            updatedAt = t0 + 1_000L
+        )
+        val staleChallenge = FriendChallenge(
+            id = "2026-11-03_creator_$t0",
+            challengerUid = "creator",
+            challengerName = "Youcef",
+            challengerMinutes = 50,
+            opponentUid = "friend1",
+            opponentName = "Khalil",
+            opponentMinutes = 219,
+            dayKey = "2026-11-03",
+            createdAt = t0,
+            acceptedAt = t0,
+            endAt = t0 + 86_400_000L,
+            targetMinutes = 420,
+            startFromZero = true,
+            status = FriendChallengeStatus.ACTIVE,
+            members = listOf(staleCreator, friend)
+        )
+
+        // Newer snapshot where local session check healed baselineMinutes to 0 and updated minutes to 150 (2h30m)
+        val healedCreator = staleCreator.copy(
+            minutes = 150,
+            baselineMinutes = 0,
+            updatedAt = t0 + 5_000L
+        )
+        val healedChallenge = staleChallenge.copy(
+            challengerMinutes = 150,
+            members = listOf(healedCreator, friend)
+        )
+
+        val mergedHealed = mergeChallenges(staleChallenge, healedChallenge)
+        assertEquals(150, mergedHealed.myMinutes("creator"))
+        assertEquals(0, mergedHealed.allMembers().first { it.uid == "creator" }.baselineMinutes)
+
+        // Toggling startFromZero = false (Keep day progress / Total jour) overrides startFromZero = true and zeroes baselines
+        val switchedToDayProgress = staleChallenge.copy(
+            startFromZero = false,
+            challengerMinutes = 150,
+            members = listOf(
+                staleCreator.copy(minutes = 150, baselineMinutes = 0, updatedAt = t0 + 10_000L),
+                friend.copy(updatedAt = t0 + 10_000L)
+            )
+        )
+        val mergedModeSwitch = mergeChallenges(staleChallenge, switchedToDayProgress)
+        assertFalse(mergedModeSwitch.startFromZero)
+        assertEquals(150, mergedModeSwitch.myMinutes("creator"))
+        assertEquals(0, mergedModeSwitch.allMembers().first { it.uid == "creator" }.baselineMinutes)
+    }
 }
 
 

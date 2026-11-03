@@ -269,6 +269,7 @@ fun ChallengesScreen(
                 val notice = context.getString(R.string.study_group_add_time_chat_notice, addedFmt, newTargetFmt)
                 viewModel.addStudyGroupTime(duel, addedMinutes, notice)
             },
+            onToggleStudyGroupStartFromZero = viewModel::toggleStudyGroupStartFromZero,
             onOpenSettings = onOpenSettings
         )
         Celebration(trigger = celebrated?.id)
@@ -380,6 +381,7 @@ internal fun ChallengesContent(
     onDeleteStudyGroupChallenge: (FriendChallenge) -> Unit = {},
     onResendStudyGroupInvite: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
     onAddStudyGroupTime: (FriendChallenge, Int) -> Unit = { _, _ -> },
+    onToggleStudyGroupStartFromZero: (FriendChallenge) -> Unit = {},
     onOpenSettings: (() -> Unit)? = null
 ) {
     // When a Lock Phone personal challenge is active, lock the entire view to StrictPhoneLockOverlay
@@ -588,6 +590,7 @@ internal fun ChallengesContent(
                 onDeleteStudyGroupChallenge = onDeleteStudyGroupChallenge,
                 onResendStudyGroupInvite = onResendStudyGroupInvite,
                 onAddStudyGroupTime = onAddStudyGroupTime,
+                onToggleStudyGroupStartFromZero = onToggleStudyGroupStartFromZero,
                 onHistoryDuelClick = { selectedHistoryDuel = it },
                 modifier = Modifier.weight(1f)
             )
@@ -738,6 +741,7 @@ private fun StudyGroupTabContent(
     onDeleteStudyGroupChallenge: (FriendChallenge) -> Unit,
     onResendStudyGroupInvite: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
     onAddStudyGroupTime: (FriendChallenge, Int) -> Unit = { _, _ -> },
+    onToggleStudyGroupStartFromZero: (FriendChallenge) -> Unit = {},
     onHistoryDuelClick: (FriendChallenge) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -772,6 +776,7 @@ private fun StudyGroupTabContent(
                 onNudgeFriend = onNudgeStudyGroupFriend,
                 onResendInvite = onResendStudyGroupInvite,
                 onAddTime = onAddStudyGroupTime,
+                onToggleStartFromZero = onToggleStudyGroupStartFromZero,
                 onClearMessages = onClearStudyGroupMessages,
                 onDeleteGroup = onDeleteStudyGroupChallenge,
                 onAddFriends = onOpenStudyGroupFriends,
