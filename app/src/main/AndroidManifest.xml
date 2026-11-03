@@ -37,11 +37,14 @@
     <!-- Foreground service for background audio -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
-    <!-- App blocker lists apps that have a launcher icon (no QUERY_ALL_PACKAGES needed) -->
+    <!-- App blocker and Lock Phone permitted apps list launchable apps and dialer (no QUERY_ALL_PACKAGES needed) -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
         </intent>
     </queries>
 

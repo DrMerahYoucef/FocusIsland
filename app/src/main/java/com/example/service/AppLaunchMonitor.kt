@@ -56,7 +56,10 @@ class AppLaunchMonitor(
 
     fun isPackageBlocked(pkg: String): Boolean {
         if (pkg.isBlank() || pkg == context.packageName) return false
-        if (activePhoneLockChallenge() != null) return true
+        val phoneLock = activePhoneLockChallenge()
+        if (phoneLock != null) {
+            return !PhoneLockOverlayManager.isPackagePermittedForActiveLock(context, pkg, phoneLock)
+        }
         return pkg in currentBlocked && pkg !in allowedThisSession
     }
 
@@ -70,6 +73,17 @@ class AppLaunchMonitor(
         val pkg = foregroundPackage()
         if (phoneLock != null) {
             FloatingFocusBubbleManager.hidePausedBubble(context)
+            val isPermitted = when {
+                PhoneLockOverlayManager.isWithinLaunchGraceWindow() -> true
+                pkg == context.packageName -> false
+                pkg != null -> PhoneLockOverlayManager.isPackagePermittedForActiveLock(context, pkg, phoneLock)
+                else -> PhoneLockOverlayManager.hasActivePermittedSession() &&
+                    !FocusFlowApplication.instance.isAppInForeground
+            }
+            if (isPermitted) {
+                PhoneLockOverlayManager.showFloatingPillForPermittedApp(context, phoneLock)
+                return false
+            }
             PhoneLockOverlayManager.reLockImmediately(context)
             if (pkg != null && pkg != context.packageName) {
                 showOverlay(pkg, isPhoneLock = true)
@@ -97,10 +111,21 @@ class AppLaunchMonitor(
 
                 if (phoneLock != null) {
                     FloatingFocusBubbleManager.hidePausedBubble(context)
-                    PhoneLockOverlayManager.syncWithActiveChallenge(context)
                     val pkg = foregroundPackage()
-                    if (pkg != null && pkg != context.packageName) {
-                        showOverlay(pkg, isPhoneLock = true)
+                    val permittedNow = when {
+                        PhoneLockOverlayManager.isWithinLaunchGraceWindow() -> true
+                        pkg == context.packageName -> false
+                        pkg != null -> PhoneLockOverlayManager.isPackagePermittedForActiveLock(context, pkg, phoneLock)
+                        else -> PhoneLockOverlayManager.hasActivePermittedSession() &&
+                            !FocusFlowApplication.instance.isAppInForeground
+                    }
+                    if (permittedNow) {
+                        PhoneLockOverlayManager.showFloatingPillForPermittedApp(context, phoneLock)
+                    } else {
+                        PhoneLockOverlayManager.reLockImmediately(context)
+                        if (pkg != null && pkg != context.packageName) {
+                            showOverlay(pkg, isPhoneLock = true)
+                        }
                     }
                     continue
                 } else if (PhoneLockOverlayManager.isShieldAttached) {

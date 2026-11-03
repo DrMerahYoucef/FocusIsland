@@ -1352,6 +1352,14 @@
     <string name="lock_phone_history_badge">Verrouillage</string>
     <string name="lock_phone_pin_screen_cta">Épingler l\'écran (bloquer volet de notifications et récents)</string>
     <string name="lock_phone_pinned_active_badge">Écran épinglé · Notifications et récents verrouillés</string>
+    <string name="lock_phone_choose_apps_button">Choisir les apps</string>
+    <string name="lock_phone_picker_title">Applications autorisées</string>
+    <string name="lock_phone_picker_search_hint">Rechercher une application…</string>
+    <string name="lock_phone_picker_save">Enregistrer (%1$d)</string>
+    <string name="lock_phone_picker_clear">Tout effacer</string>
+    <string name="lock_phone_phone_app_default_name">Téléphone</string>
+    <string name="lock_phone_floating_return_pill">🔒 %1$s · Retour au verrouillage</string>
+    <string name="lock_phone_permitted_apps_saved_hint">Mémorisé pour vos prochains verrouillages</string>
 </resources>
 
 

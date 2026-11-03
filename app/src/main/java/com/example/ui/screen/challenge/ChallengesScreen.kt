@@ -143,7 +143,8 @@ internal data class PendingChallenge(
     val goal: String,
     val minutes: Int,
     val endAt: Long,
-    val type: PersonalChallengeType = PersonalChallengeType.GOAL
+    val type: PersonalChallengeType = PersonalChallengeType.GOAL,
+    val allowedPackages: Set<String> = emptySet()
 ) {
     fun endAt(nowMs: Long) = if (minutes > 0) ChallengeTime.endAfter(nowMs, minutes) else endAt
 }
@@ -151,7 +152,7 @@ internal data class PendingChallenge(
 private val PendingSaver = listSaver<PendingChallenge?, Any>(
     save = { p ->
         if (p == null) emptyList()
-        else listOf(p.goal, p.minutes, p.endAt, p.type.name)
+        else listOf(p.goal, p.minutes, p.endAt, p.type.name, p.allowedPackages.joinToString(","))
     },
     restore = { l ->
         if (l.isEmpty()) null
@@ -160,7 +161,13 @@ private val PendingSaver = listSaver<PendingChallenge?, Any>(
             minutes = l[1] as Int,
             endAt = l[2] as Long,
             type = runCatching { PersonalChallengeType.valueOf(l.getOrNull(3) as? String ?: "GOAL") }
-                .getOrDefault(PersonalChallengeType.GOAL)
+                .getOrDefault(PersonalChallengeType.GOAL),
+            allowedPackages = (l.getOrNull(4) as? String)
+                .orEmpty()
+                .split(",")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .toSet()
         )
     }
 )
@@ -285,7 +292,8 @@ fun ChallengesScreen(
                     viewModel.start(
                         goal = p.goal,
                         endAt = p.endAt(System.currentTimeMillis()),
-                        type = p.type
+                        type = p.type,
+                        allowedPackages = if (p.type == PersonalChallengeType.LOCK_PHONE) p.allowedPackages else null
                     )
                     pending = null
                 },
@@ -1258,6 +1266,15 @@ internal fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: (
     }
     val isLockPhone = challengeType == PersonalChallengeType.LOCK_PHONE
 
+    val store = remember { runCatching { com.example.FocusFlowApplication.instance.challengeStore }.getOrNull() }
+    val initialPermittedCsv = remember {
+        store?.getDefaultAllowedPackages().orEmpty().joinToString(",")
+    }
+    var selectedPackagesCsv by rememberSaveable { mutableStateOf(initialPermittedCsv) }
+    val selectedPackages = remember(selectedPackagesCsv) {
+        selectedPackagesCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+    }
+
     var goal by rememberSaveable { mutableStateOf("") }
     var byEndTime by rememberSaveable { mutableStateOf(false) }
     var hours by rememberSaveable { mutableStateOf("0") }
@@ -1392,6 +1409,13 @@ internal fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: (
             }
 
             if (isLockPhone) {
+                LockPermittedAppsSection(
+                    selectedPackages = selectedPackages,
+                    onSelectionChanged = { updated ->
+                        selectedPackagesCsv = updated.joinToString(",")
+                        store?.setDefaultAllowedPackages(updated)
+                    }
+                )
                 LockPermissionsSection()
             }
 
@@ -1399,12 +1423,16 @@ internal fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: (
                 onClick = {
                     val endAt = if (byEndTime) ChallengeTime.endAtClock(System.currentTimeMillis(), LocalTime.of(endHour, endMinute)) else 0L
                     val resolvedGoal = if (isLockPhone) defaultLockGoal else goal.trim()
+                    if (isLockPhone) {
+                        store?.setDefaultAllowedPackages(selectedPackages)
+                    }
                     onStart(
                         PendingChallenge(
                             goal = resolvedGoal,
                             minutes = if (byEndTime) 0 else totalMinutes,
                             endAt = endAt,
-                            type = challengeType
+                            type = challengeType,
+                            allowedPackages = if (isLockPhone) selectedPackages else emptySet()
                         )
                     )
                 },

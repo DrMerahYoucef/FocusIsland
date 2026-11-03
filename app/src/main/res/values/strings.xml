@@ -1366,6 +1366,14 @@
     <string name="lock_phone_history_badge">Phone Lock</string>
     <string name="lock_phone_pin_screen_cta">Pin screen to block notification drawer &amp; recents</string>
     <string name="lock_phone_pinned_active_badge">Screen Pinned · Notification drawer &amp; recents locked</string>
+    <string name="lock_phone_choose_apps_button">Choose apps</string>
+    <string name="lock_phone_picker_title">Permitted Apps</string>
+    <string name="lock_phone_picker_search_hint">Search apps…</string>
+    <string name="lock_phone_picker_save">Save (%1$d)</string>
+    <string name="lock_phone_picker_clear">Clear all</string>
+    <string name="lock_phone_phone_app_default_name">Phone</string>
+    <string name="lock_phone_floating_return_pill">🔒 %1$s · Return to lock screen</string>
+    <string name="lock_phone_permitted_apps_saved_hint">Remembered for future Lock Phone sessions</string>
 </resources>
 
 

@@ -23,8 +23,13 @@ class MainActivityStartupTest {
 
     @Test
     fun fullAppFlowAndTabsAndSettingsAndDialogsDoNotCrash() {
-        // Ensure clean challenge state before navigating
+        // 1. Verify "Continue without an account" option is removed from AuthScreen
+        val guestNodes = composeRule.onAllNodes(hasText("Continue without an account", substring = true))
+        org.junit.Assert.assertTrue(guestNodes.fetchSemanticsNodes().isEmpty())
+
+        // Enter app for test via in-memory auth session and ensure clean challenge state
         composeRule.activityRule.scenario.onActivity {
+            FocusFlowApplication.instance.authRepository.continueAsGuest()
             val store = FocusFlowApplication.instance.challengeStore
             if (store.state.value.active != null) {
                 store.finish(ChallengeResult.DONE)
@@ -32,14 +37,6 @@ class MainActivityStartupTest {
             store.clearHistory()
         }
         composeRule.waitForIdle()
-
-        // 1. Enter app as guest if on AuthScreen
-        val guestNodes = composeRule.onAllNodes(hasText("Continue without an account", substring = true))
-        if (guestNodes.fetchSemanticsNodes().isNotEmpty()) {
-            guestNodes[0].performScrollTo()
-            guestNodes[0].performClick()
-            composeRule.waitForIdle()
-        }
 
         // 2. Navigate to Challenges tab
         composeRule.onNodeWithText("Challenges").performClick()
@@ -52,9 +49,17 @@ class MainActivityStartupTest {
             composeRule.waitForIdle()
         }
 
-        // 3. Open New Challenge bottom sheet
+        // 3. Open New Challenge bottom sheet and verify Lock Phone Permitted Apps selector
         composeRule.onNodeWithText("New challenge").performScrollTo()
         composeRule.onNodeWithText("New challenge").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("personal_mode_lock_phone").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("lock_phone_permitted_apps_card").performScrollTo()
+        composeRule.onNodeWithTag("lock_phone_choose_apps_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("permitted_picker_save_button").performClick()
         composeRule.waitForIdle()
 
         // 4. Close sheet and navigate to Study, Progress, Community tabs

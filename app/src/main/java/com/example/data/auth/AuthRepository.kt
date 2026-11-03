@@ -67,6 +67,9 @@ class AuthRepository(
     private val auth: FirebaseAuth? = runCatching { Firebase.auth }.onFailure { Log.w(TAG, "Firebase Auth unavailable", it) }.getOrNull()
     private val db: FirebaseFirestore? = runCatching { Firebase.firestore }.getOrNull()
 
+    @Volatile
+    private var testGuestOverride: Boolean = false
+
     private val _state = MutableStateFlow(compute())
     val state: StateFlow<AccountState> = _state.asStateFlow()
 
@@ -76,6 +79,9 @@ class AuthRepository(
     }
 
     init {
+        if (prefs.contains(KEY_GUEST_MODE)) {
+            prefs.edit().remove(KEY_GUEST_MODE).apply()
+        }
         auth?.addAuthStateListener { refresh() }
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
     }
@@ -94,7 +100,7 @@ class AuthRepository(
         val user = runCatching { auth?.currentUser }.getOrNull()
         return when {
             user != null && !user.isAnonymous -> AccountState.SignedIn(user.uid, user.email, user.displayName)
-            prefs.getBoolean(KEY_GUEST_MODE, false) || user?.isAnonymous == true -> AccountState.Guest
+            testGuestOverride -> AccountState.Guest
             else -> AccountState.SignedOut
         }
     }
@@ -156,28 +162,23 @@ class AuthRepository(
         AuthOutcome.Success
     }
 
-    /** Enters the app immediately; the anonymous sign-in happens in the background and may fail. */
+    /** Test/internal entry helper; does not persist guest mode on device. */
     fun continueAsGuest() {
-        prefs.edit().putBoolean(KEY_GUEST_MODE, true).apply()
+        testGuestOverride = true
         refresh()
-        val auth = auth ?: return
-        if (auth.currentUser != null) return
-        appScope.launch {
-            runCatching { auth.signInAnonymously().await() }
-                .onFailure { Log.i(TAG, "Anonymous sign-in skipped: ${it.message}") }
-            refresh()
-        }
     }
 
-    /** Signs out and leaves guest mode, so the welcome screen shows next time. */
+    /** Signs out and returns to the welcome screen. */
     fun signOut() {
+        testGuestOverride = false
         runCatching { auth?.signOut() }.onFailure { Log.e(TAG, "Sign out failed", it) }
-        prefs.edit().putBoolean(KEY_GUEST_MODE, false).apply()
+        prefs.edit().remove(KEY_GUEST_MODE).apply()
         refresh()
     }
 
     private fun afterRealSignIn(): AuthOutcome {
-        prefs.edit().putBoolean(KEY_GUEST_MODE, false).apply()
+        testGuestOverride = false
+        prefs.edit().remove(KEY_GUEST_MODE).apply()
         refresh()
         appScope.launch {
             runCatching { onSignedIn() }.onFailure { Log.w(TAG, "Post sign-in sync failed", it) }

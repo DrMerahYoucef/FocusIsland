@@ -37,12 +37,14 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
     fun start(
         goal: String,
         endAt: Long,
-        type: PersonalChallengeType = PersonalChallengeType.GOAL
+        type: PersonalChallengeType = PersonalChallengeType.GOAL,
+        allowedPackages: Set<String>? = null
     ) {
         val challenge = store.start(
             goal = goal,
             endAt = endAt,
-            type = type
+            type = type,
+            allowedPackages = allowedPackages
         )
         ChallengeAlarmReceiver.schedule(getApplication(), challenge)
         if (type == PersonalChallengeType.LOCK_PHONE) {

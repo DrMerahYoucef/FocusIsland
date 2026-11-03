@@ -217,9 +217,18 @@ fun AppNavGraph(
         }
     }
 
-    // Signed in OR guest mode skips the welcome screen. Decided once per launch.
+    // Signed-in accounts skip the welcome screen.
     val authRepository = remember { FocusFlowApplication.instance.authRepository }
+    val accountState by authRepository.state.collectAsStateWithLifecycle()
     val startDestination = remember { if (authRepository.canEnterApp) Routes.MAIN else Routes.AUTH }
+
+    LaunchedEffect(accountState) {
+        if (accountState != AccountState.SignedOut &&
+            navController.currentDestination?.route?.startsWith("auth") == true
+        ) {
+            navController.navigate(Routes.MAIN) { popUpTo(Routes.AUTH) { inclusive = true } }
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
     NavHost(

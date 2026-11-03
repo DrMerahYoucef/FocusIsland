@@ -359,25 +359,6 @@ private fun AuthContent(
                         Text(stringResource(if (creating) R.string.auth_submit_create else R.string.auth_submit_sign_in))
                     }
                 }
-
-                if (!state.isUpgrade) {
-                    Spacer(Modifier.height(Spacing.lg))
-                    OrDivider()
-                    Spacer(Modifier.height(Spacing.lg))
-                    OutlinedButton(
-                        onClick = onContinueAsGuest,
-                        enabled = !state.submitting,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = Spacing.buttonHeight)
-                    ) { Text(stringResource(R.string.auth_guest)) }
-                    Spacer(Modifier.height(Spacing.xs))
-                    Text(
-                        text = stringResource(R.string.auth_guest_note),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
             }
         }
     }
@@ -407,20 +388,6 @@ private fun BrandHeader(isUpgrade: Boolean) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
-    }
-}
-
-@Composable
-private fun OrDivider() {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        HorizontalDivider(Modifier.weight(1f))
-        Text(
-            text = stringResource(R.string.auth_or),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = Spacing.sm)
-        )
-        HorizontalDivider(Modifier.weight(1f))
     }
 }
 

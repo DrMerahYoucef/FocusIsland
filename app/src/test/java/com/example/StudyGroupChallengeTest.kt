@@ -820,6 +820,138 @@ class StudyGroupChallengeTest {
         assertEquals(150, mergedModeSwitch.myMinutes("creator"))
         assertEquals(0, mergedModeSwitch.allMembers().first { it.uid == "creator" }.baselineMinutes)
     }
+
+    @Test
+    fun `lock phone challenge remembers permitted apps across sessions and whitelists dialer packages`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        context.getSharedPreferences("challenges", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+
+        var currentNow = 1_750_000_000_000L
+        val store = ChallengeStore(context, clock = { currentNow })
+        val chosenApps = setOf(
+            com.example.service.PhoneLockOverlayManager.SYNTHETIC_PHONE_DIALER_PKG,
+            "com.google.android.calculator"
+        )
+
+        val firstLock = store.start(
+            goal = "Lock Phone",
+            endAt = currentNow + 1_800_000L,
+            type = PersonalChallengeType.LOCK_PHONE,
+            allowedPackages = chosenApps
+        )
+        assertEquals(chosenApps, firstLock.allowedPackages)
+        assertEquals(chosenApps, store.getDefaultAllowedPackages())
+
+        // Verify Phone/Dialer whitelisting allows system dialer and incall packages while blocking unrelated apps
+        assertTrue(
+            com.example.service.PhoneLockOverlayManager.isPackagePermittedForActiveLock(
+                context,
+                "com.google.android.dialer",
+                firstLock
+            )
+        )
+        assertTrue(
+            com.example.service.PhoneLockOverlayManager.isPackagePermittedForActiveLock(
+                context,
+                "com.android.incallui",
+                firstLock
+            )
+        )
+        assertTrue(
+            com.example.service.PhoneLockOverlayManager.isPackagePermittedForActiveLock(
+                context,
+                "com.google.android.calculator",
+                firstLock
+            )
+        )
+        assertFalse(
+            com.example.service.PhoneLockOverlayManager.isPackagePermittedForActiveLock(
+                context,
+                "com.instagram.android",
+                firstLock
+            )
+        )
+
+        // Complete first lock session and start a new one without passing allowedPackages:
+        // it should automatically remember the user's default permitted apps
+        currentNow += 1_900_000L
+        store.expireIfDue()
+
+        val reloadedStore = ChallengeStore(context, clock = { currentNow })
+        assertEquals(chosenApps, reloadedStore.getDefaultAllowedPackages())
+
+        val secondLock = reloadedStore.start(
+            goal = "Lock Phone 2",
+            endAt = currentNow + 1_800_000L,
+            type = PersonalChallengeType.LOCK_PHONE
+        )
+        assertEquals(chosenApps, secondLock.allowedPackages)
+
+        reloadedStore.clearHistory()
+        context.getSharedPreferences("challenges", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+    }
+
+    @Test
+    fun `rapid multi-clicking Phone app in StrictPhoneLockOverlay is debounced by single-flight cooldown and never crashes`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        com.example.service.PhoneLockOverlayManager.resetLaunchGuardState()
+
+        val phonePkg = com.example.service.PhoneLockOverlayManager.SYNTHETIC_PHONE_DIALER_PKG
+        val baseTick = 50_000L
+
+        // 1. Direct burst test: 10 rapid taps within 500ms -> only the 1st tap is accepted
+        val firstAccepted = com.example.service.PhoneLockOverlayManager.launchPermittedAppSafely(
+            context = context,
+            packageName = phonePkg,
+            nowOverrideMs = baseTick
+        )
+        assertTrue(firstAccepted)
+
+        for (i in 1..10) {
+            val acceptedDuringCooldown = com.example.service.PhoneLockOverlayManager.launchPermittedAppSafely(
+                context = context,
+                packageName = phonePkg,
+                nowOverrideMs = baseTick + i * 50L
+            )
+            assertFalse("Tap #$i within cooldown must be ignored", acceptedDuringCooldown)
+        }
+
+        // 2. UI test: render StrictPhoneLockOverlay with permitted Phone & Calculator apps and rapidly click Phone 10 times
+        com.example.service.PhoneLockOverlayManager.resetLaunchGuardState()
+        val now = 1_750_000_000_000L
+        val challenge = Challenge(
+            id = 202L,
+            goal = "Lock Phone",
+            startAt = now,
+            endAt = now + 30 * 60_000L,
+            type = PersonalChallengeType.LOCK_PHONE,
+            quoteText = "Focus is a matter of deciding what things you're not going to do.",
+            quoteAuthor = "John Carmack",
+            allowedPackages = setOf(phonePkg, "com.android.calculator2")
+        )
+
+        composeRule.setContent {
+            FocusIslandTheme(themeMode = ThemeMode.DARK) {
+                StrictPhoneLockOverlay(
+                    challenge = challenge,
+                    nowMs = now + 5 * 60_000L,
+                    onTimeUp = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("phone_lock_permitted_apps_row").performScrollTo().assertIsDisplayed()
+        val phoneNode = composeRule.onNodeWithTag("permitted_app_item_$phonePkg")
+        phoneNode.performScrollTo().assertIsDisplayed()
+
+        // Rapidly click the Phone app icon 10 times in a row — must not crash or leave lock screen
+        repeat(10) {
+            phoneNode.performClick()
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("strict_phone_lock_overlay").assertIsDisplayed()
+        com.example.service.PhoneLockOverlayManager.resetLaunchGuardState()
+    }
 }
 
 

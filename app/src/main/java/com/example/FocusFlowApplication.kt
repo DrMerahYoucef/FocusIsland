@@ -79,6 +79,7 @@ class FocusFlowApplication : Application() {
         // Eagerly initialize friendChallengeRepository so active challenge listeners and auto-start work app-wide
         runCatching { friendChallengeRepository }
 
+        installPhoneLockCrashGuard()
         registerAppSwitchAutoPause()
 
         try {
@@ -87,6 +88,41 @@ class FocusFlowApplication : Application() {
             WidgetRefreshScheduler.scheduleNextMidnight(this)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to schedule background work", e)
+        }
+    }
+
+    /**
+     * Prevents an unexpected UI/WindowManager/Activity exception from terminating the process
+     * and bypassing lock mode while a strict Lock Phone challenge is active.
+     */
+    private fun installPhoneLockCrashGuard() {
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            val activeLock = runCatching {
+                val active = challengeStore.state.value.active
+                active != null && active.isLockPhone && System.currentTimeMillis() < active.endAt
+            }.getOrDefault(false)
+
+            if (activeLock && throwable !is OutOfMemoryError) {
+                Log.e(TAG, "Suppressed exception during active Lock Phone challenge to prevent lock bypass", throwable)
+                if (thread == android.os.Looper.getMainLooper().thread) {
+                    while (true) {
+                        try {
+                            com.example.service.PhoneLockOverlayManager.syncWithActiveChallenge(this@FocusFlowApplication)
+                            android.os.Looper.loop()
+                        } catch (inner: Throwable) {
+                            if (inner is OutOfMemoryError) {
+                                previousHandler?.uncaughtException(thread, inner)
+                                break
+                            }
+                            Log.e(TAG, "Recovered main looper during active Lock Phone challenge", inner)
+                        }
+                    }
+                    return@setDefaultUncaughtExceptionHandler
+                }
+                return@setDefaultUncaughtExceptionHandler
+            }
+            previousHandler?.uncaughtException(thread, throwable)
         }
     }
 
@@ -120,6 +156,7 @@ class FocusFlowApplication : Application() {
                 }
                 val wasBackground = startedActivitiesCount == 0
                 startedActivitiesCount++
+                com.example.service.PhoneLockOverlayManager.syncWithActiveChallenge(this@FocusFlowApplication)
                 if (wasBackground && PomodoroTimerService.state.value.isAutoPausedByAppSwitch) {
                     runCatching {
                         val intent = Intent(this@FocusFlowApplication, PomodoroTimerService::class.java)
@@ -135,6 +172,7 @@ class FocusFlowApplication : Application() {
                 if (activity is FocusOverlayActivity) return
                 startedActivitiesCount = (startedActivitiesCount - 1).coerceAtLeast(0)
                 if (startedActivitiesCount == 0 && !activity.isChangingConfigurations) {
+                    com.example.service.PhoneLockOverlayManager.syncWithActiveChallenge(this@FocusFlowApplication)
                     autoPauseJob?.cancel()
                     autoPauseJob = applicationScope.launch {
                         // Wait briefly so pressing the Power button to lock the screen has time to

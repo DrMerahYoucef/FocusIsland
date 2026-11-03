@@ -47,7 +47,8 @@ data class Challenge(
     val result: ChallengeResult? = null,
     val type: PersonalChallengeType = PersonalChallengeType.GOAL,
     val quoteText: String = "",
-    val quoteAuthor: String = ""
+    val quoteAuthor: String = "",
+    val allowedPackages: Set<String> = emptySet()
 ) {
     val durationMs: Long get() = endAt - startAt
     val actualDurationMs: Long get() = ((finishedAt ?: endAt) - startAt).coerceAtLeast(durationMs)
@@ -69,9 +70,31 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
     private val _state = MutableStateFlow(load())
     val state: StateFlow<ChallengeState> = _state.asStateFlow()
 
+    private val _defaultAllowedPackages = MutableStateFlow(loadDefaultAllowedPackages())
+    val defaultAllowedPackages: StateFlow<Set<String>> = _defaultAllowedPackages.asStateFlow()
+
     init {
         observeFirestoreSync()
     }
+
+    fun getDefaultAllowedPackages(): Set<String> = _defaultAllowedPackages.value
+
+    @Synchronized
+    fun setDefaultAllowedPackages(packages: Set<String>) {
+        val cleaned = packages.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        _defaultAllowedPackages.value = cleaned
+        prefs.edit()
+            .putString(KEY_DEFAULT_ALLOWED_PACKAGES, JSONArray(cleaned.toList()).toString())
+            .apply()
+    }
+
+    private fun loadDefaultAllowedPackages(): Set<String> = runCatching {
+        val raw = prefs.getString(KEY_DEFAULT_ALLOWED_PACKAGES, null) ?: return emptySet()
+        val arr = JSONArray(raw)
+        (0 until arr.length())
+            .mapNotNull { i -> arr.optString(i).trim().takeIf { it.isNotEmpty() } }
+            .toSet()
+    }.getOrDefault(emptySet())
 
     private fun observeFirestoreSync() {
         runCatching {
@@ -146,7 +169,8 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
         goal: String,
         endAt: Long,
         type: PersonalChallengeType = PersonalChallengeType.GOAL,
-        quote: MotivationalQuote? = null
+        quote: MotivationalQuote? = null,
+        allowedPackages: Set<String>? = null
     ): Challenge {
         val now = clock()
         val historyWithPrevious = _state.value.active?.let { prev ->
@@ -168,6 +192,17 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
         val cleanGoal = goal.trim().ifBlank {
             if (type == PersonalChallengeType.LOCK_PHONE) "Lock Phone Challenge" else ""
         }
+        val resolvedAllowed = if (type == PersonalChallengeType.LOCK_PHONE) {
+            if (allowedPackages != null) {
+                val cleaned = allowedPackages.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+                setDefaultAllowedPackages(cleaned)
+                cleaned
+            } else {
+                getDefaultAllowedPackages()
+            }
+        } else {
+            emptySet()
+        }
         val challenge = Challenge(
             id = now,
             goal = cleanGoal,
@@ -175,7 +210,8 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
             endAt = endAt,
             type = type,
             quoteText = chosenQuote?.quote.orEmpty(),
-            quoteAuthor = chosenQuote?.author.orEmpty()
+            quoteAuthor = chosenQuote?.author.orEmpty(),
+            allowedPackages = resolvedAllowed
         )
         save(ChallengeState(active = challenge, history = historyWithPrevious))
         return challenge
@@ -269,6 +305,7 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
         private const val PREFS = "challenges"
         private const val KEY_ACTIVE = "active"
         private const val KEY_HISTORY = "history"
+        private const val KEY_DEFAULT_ALLOWED_PACKAGES = "default_allowed_packages"
         private const val MAX_HISTORY = 200
 
         internal fun Challenge.toJson(): JSONObject = JSONObject()
@@ -279,6 +316,7 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
             .put("type", type.name)
             .put("quoteText", quoteText)
             .put("quoteAuthor", quoteAuthor)
+            .put("allowedPackages", JSONArray(allowedPackages.toList()))
             .apply {
                 finishedAt?.let { put("finishedAt", it) }
                 result?.let { put("result", it.name) }
@@ -288,6 +326,12 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
             val parsedType = o.optString("type").takeIf { it.isNotEmpty() }?.let {
                 runCatching { PersonalChallengeType.valueOf(it) }.getOrNull()
             } ?: PersonalChallengeType.GOAL
+            val allowedArr = o.optJSONArray("allowedPackages")
+            val parsedAllowed = if (allowedArr != null) {
+                (0 until allowedArr.length())
+                    .mapNotNull { i -> allowedArr.optString(i).trim().takeIf { it.isNotEmpty() } }
+                    .toSet()
+            } else emptySet()
             return Challenge(
                 id = o.getLong("id"),
                 goal = o.optString("goal"),
@@ -297,7 +341,8 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
                 result = o.optString("result").takeIf { it.isNotEmpty() }?.let { runCatching { ChallengeResult.valueOf(it) }.getOrNull() },
                 type = parsedType,
                 quoteText = o.optString("quoteText", ""),
-                quoteAuthor = o.optString("quoteAuthor", "")
+                quoteAuthor = o.optString("quoteAuthor", ""),
+                allowedPackages = parsedAllowed
             )
         }
     }
