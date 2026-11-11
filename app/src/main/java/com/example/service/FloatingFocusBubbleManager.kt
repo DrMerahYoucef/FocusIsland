@@ -17,6 +17,7 @@ import android.provider.Settings
 import android.text.TextUtils
 import android.util.Log
 import android.util.TypedValue
+import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -41,13 +42,14 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Manages the `dynamicSpot`-style **Dynamic Island** at the top center of the screen for:
+ * Manages the `dynamicSpot`-style **Dynamic Island** positioned cleanly just below the system
+ * status bar and camera cutout when Focus Island is in the background:
  * 1. Live Pomodoro Focus / Short Break / Long Break countdowns (running or paused).
  * 2. Incoming app notifications (Study Group focus nudges, Challenge invitations, and Study Group chat alerts).
  *
  * Supports two synchronized states with fluid spring open/close morph animations:
- * - **Collapsed Pill (`COMPACT`)**: Pure-black pill (`#000000`) aligned with the top camera cutout,
- *   featuring the circular Focus Island palm-tree emblem on the left and live tabular timer on the right.
+ * - **Collapsed Pill (`COMPACT`)**: Pure-black pill (`#000000`) positioned safely below the status bar
+ *   and camera cutout, featuring the circular Focus Island palm-tree emblem on the left and live tabular timer on the right.
  * - **Expanded Card (`EXPANDED`)**: Full-width rounded pure-black card (`#000000`, `38dp` radius)
  *   with lagoon-teal header (`Focus Island • Dans 48 min`), title (`En focus · 48:31`), subtitle (`48:30`),
  *   and 3 dark-charcoal pill buttons (`Pause` / `Reprendre`, `Passer`, `Terminer`).
@@ -156,6 +158,7 @@ object FloatingFocusBubbleManager {
      */
     fun expandIsland(context: Context) {
         if (!_islandState.value.isVisible) return
+        if (_islandState.value.isExpanded) return
         _islandState.update { it.copy(isExpanded = true) }
         syncSystemOverlay(context.applicationContext, animateMorphTransition = true)
     }
@@ -185,7 +188,6 @@ object FloatingFocusBubbleManager {
 
     /**
      * Called when the Pomodoro timer is auto-paused due to switching to another app.
-     * Shows the Dynamic Island and briefly expands it so the user sees the pause status and controls.
      */
     fun showPausedBubble(context: Context, remainingClockText: String) {
         val timerState = PomodoroTimerService.state.value
@@ -484,8 +486,7 @@ object FloatingFocusBubbleManager {
 
     /**
      * Synchronizes the system-level `TYPE_APPLICATION_OVERLAY` Dynamic Island window when
-     * `Settings.canDrawOverlays(context)` is granted and the app is in the background.
-     * While `MainActivity` is in the foreground, `DynamicSpotIslandOverlay` renders the island in Compose.
+     * `Settings.canDrawOverlays(context)` is granted and Focus Island is in the background.
      */
     fun syncSystemOverlay(context: Context, animateMorphTransition: Boolean = false) {
         val appContext = context.applicationContext
@@ -504,7 +505,7 @@ object FloatingFocusBubbleManager {
                     createAndAttachSystemOverlay(appContext, wm, state)
                 } else {
                     bindSystemOverlayTexts(appContext, state)
-                    updateWindowOutsideTouchFlags(wm, state.isExpanded)
+                    updateWindowPosition(wm, state.isExpanded)
                     if (animateMorphTransition) {
                         animateSystemIslandMorph(appContext, state.isExpanded)
                     } else if (morphAnimator?.isRunning != true) {
@@ -533,11 +534,13 @@ object FloatingFocusBubbleManager {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        // CRITICAL: Do NOT set FLAG_LAYOUT_IN_SCREEN or FLAG_LAYOUT_NO_LIMITS.
+        // Without those flags, Android automatically places y=0 in the safe application display
+        // frame right below the system status bar and physical camera cutout, where the status bar
+        // never masks the Dynamic Island or blocks touch events.
         val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -548,16 +551,27 @@ object FloatingFocusBubbleManager {
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             x = 0
-            y = dp(6f)
+            y = dp(if (state.isExpanded) 8f else 4f)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
             }
         }
 
-        val wrapper = FrameLayout(appContext).apply {
+        // Custom root FrameLayout that catches MotionEvent.ACTION_OUTSIDE before child dispatch
+        val wrapper = object : FrameLayout(appContext) {
+            override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+                if (ev?.actionMasked == MotionEvent.ACTION_OUTSIDE) {
+                    if (_islandState.value.isExpanded) {
+                        collapseIsland(appContext)
+                    }
+                    return false
+                }
+                return super.dispatchTouchEvent(ev)
+            }
+        }.apply {
             clipChildren = false
             clipToPadding = false
-            setPadding(dp(8f), dp(2f), dp(8f), dp(12f))
+            setPadding(dp(6f), dp(2f), dp(6f), dp(10f))
         }
 
         val bgDrawable = GradientDrawable().apply {
@@ -570,12 +584,19 @@ object FloatingFocusBubbleManager {
 
         val card = FrameLayout(appContext).apply {
             background = bgDrawable
-            elevation = dp(14f).toFloat()
+            elevation = dp(12f).toFloat()
             clipChildren = true
             clipToPadding = true
+            isClickable = true
+            isFocusable = false
+            setOnClickListener {
+                if (!_islandState.value.isExpanded) {
+                    expandIsland(appContext)
+                }
+            }
         }
 
-        // ---- 1. Compact Pill Content (Left circular island icon + Center cutout gap + Right MM:SS)
+        // ---- 1. Compact Pill Content (Left circular island icon + Center space + Right MM:SS)
         val compactRow = LinearLayout(appContext).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -584,13 +605,23 @@ object FloatingFocusBubbleManager {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
+            isClickable = true
+            isFocusable = false
+            setOnClickListener {
+                expandIsland(appContext)
+            }
         }
 
-        val compactIconBadge = createIslandEmblemView(appContext, sizeDp = 26f)
+        val compactIconBadge = createIslandEmblemView(appContext, sizeDp = 26f).apply {
+            isClickable = false
+            isFocusable = false
+        }
         compactRow.addView(compactIconBadge)
 
         val centerBridgeSpacer = View(appContext).apply {
             layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+            isClickable = false
+            isFocusable = false
         }
         compactRow.addView(centerBridgeSpacer)
 
@@ -600,6 +631,8 @@ object FloatingFocusBubbleManager {
             typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             maxLines = 1
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            isClickable = false
+            isFocusable = false
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 fontFeatureSettings = "tnum"
             }
@@ -619,6 +652,25 @@ object FloatingFocusBubbleManager {
             )
         }
 
+        val swipeDetector = GestureDetector(
+            appContext,
+            object : GestureDetector.SimpleOnGestureListener() {
+                override fun onFling(
+                    e1: MotionEvent?,
+                    e2: MotionEvent,
+                    velocityX: Float,
+                    velocityY: Float
+                ): Boolean {
+                    val startY = e1?.rawY ?: e2.rawY
+                    if (e2.rawY - startY < -dp(18f) || velocityY < -350f) {
+                        collapseIsland(appContext)
+                        return true
+                    }
+                    return false
+                }
+            }
+        )
+
         val topInfoRow = LinearLayout(appContext).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -626,19 +678,26 @@ object FloatingFocusBubbleManager {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
+            isClickable = true
             setOnClickListener {
                 onExpandedCardBodyClicked(appContext)
+            }
+            setOnTouchListener { _, event ->
+                swipeDetector.onTouchEvent(event)
+                false
             }
         }
 
         val expandedIconBadge = createIslandEmblemView(appContext, sizeDp = 50f).apply {
             (layoutParams as LinearLayout.LayoutParams).marginEnd = dp(16f)
+            isClickable = false
         }
         topInfoRow.addView(expandedIconBadge)
 
         val textColumn = LinearLayout(appContext).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            isClickable = false
         }
 
         val headerTv = TextView(appContext).apply {
@@ -647,6 +706,7 @@ object FloatingFocusBubbleManager {
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
+            isClickable = false
         }
         expandedHeaderView = headerTv
         textColumn.addView(headerTv)
@@ -657,6 +717,7 @@ object FloatingFocusBubbleManager {
             typeface = Typeface.create("sans-serif", Typeface.BOLD)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
+            isClickable = false
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -672,6 +733,7 @@ object FloatingFocusBubbleManager {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
+            isClickable = false
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -705,6 +767,7 @@ object FloatingFocusBubbleManager {
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 setPadding(dp(10f), dp(9f), dp(10f), dp(9f))
+                isClickable = true
                 layoutParams = LinearLayout.LayoutParams(0, dp(42f), 1f).apply {
                     marginStart = dp(marginStartDp)
                 }
@@ -730,49 +793,13 @@ object FloatingFocusBubbleManager {
         buttonsRow.addView(btn3)
         expandedCol.addView(buttonsRow)
 
+        expandedCol.setOnTouchListener { _, event ->
+            swipeDetector.onTouchEvent(event)
+            true
+        }
+
         expandedContentView = expandedCol
         card.addView(expandedCol)
-
-        // Touch handling:
-        // - MotionEvent.ACTION_OUTSIDE collapses the expanded card
-        // - Tapping the compact pill expands the card
-        // - Swiping up on the expanded card collapses the card
-        val touchSlop = ViewConfiguration.get(appContext).scaledTouchSlop
-        var downY = 0f
-        wrapper.setOnTouchListener { _, event ->
-            if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
-                if (_islandState.value.isExpanded) {
-                    collapseIsland(appContext)
-                }
-                return@setOnTouchListener false
-            }
-            false
-        }
-
-        card.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    downY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dy = event.rawY - downY
-                    if (_islandState.value.isExpanded && dy < -touchSlop * 1.5f) {
-                        collapseIsland(appContext)
-                        return@setOnTouchListener true
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    val dy = abs(event.rawY - downY)
-                    if (dy <= touchSlop && !_islandState.value.isExpanded) {
-                        expandIsland(appContext)
-                    }
-                    true
-                }
-                else -> false
-            }
-        }
 
         wrapper.addView(card)
         rootWrapperView = wrapper
@@ -812,6 +839,8 @@ object FloatingFocusBubbleManager {
             val img = ImageView(context).apply {
                 setImageResource(R.drawable.ic_launcher_foreground)
                 scaleType = ImageView.ScaleType.CENTER_CROP
+                isClickable = false
+                isFocusable = false
                 layoutParams = FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.MATCH_PARENT
@@ -874,11 +903,11 @@ object FloatingFocusBubbleManager {
         }
     }
 
-    private fun updateWindowOutsideTouchFlags(wm: WindowManager, expanded: Boolean) {
+    private fun updateWindowPosition(wm: WindowManager, expanded: Boolean) {
         val wrapper = rootWrapperView ?: return
         val params = windowParams ?: return
         val density = wrapper.context.resources.displayMetrics.density
-        val targetY = ((if (expanded) 10f else 6f) * density).roundToInt()
+        val targetY = ((if (expanded) 8f else 4f) * density).roundToInt()
         if (params.y != targetY) {
             params.y = targetY
             runCatching { wm.updateViewLayout(wrapper, params) }
