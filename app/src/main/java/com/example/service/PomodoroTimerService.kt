@@ -184,12 +184,14 @@ class PomodoroTimerService : Service() {
         val s = _state.value
         if (s.isRunning && tickerJob?.isActive == true) {
             startForegroundCompat()
+            FloatingFocusBubbleManager.syncTimerState(this, _state.value)
             return
         }
         val remaining = if (s.isRunning) remainingNow() else s.remainingMs
         endsAtElapsed = SystemClock.elapsedRealtime() + remaining
         _state.update { it.copy(isRunning = true, remainingMs = remaining) }
         persist(this)
+        FloatingFocusBubbleManager.syncTimerState(this, _state.value)
 
         if (!startForegroundCompat()) {
             // Android refused a foreground service (e.g. restarted in the background): keep progress, pause.
@@ -208,6 +210,7 @@ class PomodoroTimerService : Service() {
         if (!_state.value.isRunning) return
         pauseInternal()
         updateNotification()
+        FloatingFocusBubbleManager.syncTimerState(this, _state.value)
     }
 
     private fun pauseInternal(keepLaunchMonitor: Boolean = false) {
@@ -222,6 +225,7 @@ class PomodoroTimerService : Service() {
             focusProtectionOff()
         }
         syncAmbientPlayback()
+        FloatingFocusBubbleManager.syncTimerState(this, _state.value)
     }
 
     private fun skip() {
@@ -289,6 +293,7 @@ class PomodoroTimerService : Service() {
         }
         persist(this)
         syncAmbientPlayback()
+        FloatingFocusBubbleManager.syncTimerState(this, _state.value)
         if (!hasActivePhoneLockChallenge()) {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         }
@@ -303,6 +308,7 @@ class PomodoroTimerService : Service() {
                     val focusSecs = if (s.phase == Phase.FOCUS) (s.phaseDurationMs - remaining) / 1000 else 0L
                     s.copy(remainingMs = remaining, totalFocusSecs = focusSecsBeforePhase + focusSecs)
                 }
+                FloatingFocusBubbleManager.syncTimerState(this@PomodoroTimerService, _state.value)
                 maybeRotateAmbient()
                 if (remaining <= 0L) {
                     onPhaseFinished()
@@ -346,6 +352,7 @@ class PomodoroTimerService : Service() {
         } else {
             persist(this)
             updateNotification()
+            FloatingFocusBubbleManager.syncTimerState(this, _state.value)
         }
     }
 

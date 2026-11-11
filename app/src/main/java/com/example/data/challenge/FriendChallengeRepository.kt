@@ -2116,6 +2116,14 @@ class FriendChallengeRepository(
      * when a Study Group friend sends a chat message or emoji in the challenge.
      */
     internal fun triggerIncomingMessageNotification(fromFriendName: String, messageText: String) {
+        val inForeground = runCatching { com.example.FocusFlowApplication.instance.isAppInForeground }.getOrDefault(false)
+        if (!inForeground) {
+            com.example.service.FloatingFocusBubbleManager.showMessageNotification(
+                context = context,
+                fromFriendName = fromFriendName,
+                messageText = messageText
+            )
+        }
         runCatching {
             val pattern = longArrayOf(0, 180, 80, 220)
             vibrateAndPlayAlertSound(pattern)

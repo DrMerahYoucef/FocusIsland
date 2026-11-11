@@ -142,9 +142,10 @@ class FocusFlowApplication : Application() {
             override fun onActivityStarted(activity: Activity) {
                 autoPauseJob?.cancel()
                 autoPauseJob = null
-                com.example.service.FloatingFocusBubbleManager.hidePausedBubble(this@FocusFlowApplication)
-                com.example.service.FloatingFocusBubbleManager.hideNudgeBanner(this@FocusFlowApplication)
                 if (activity is FocusOverlayActivity) {
+                    com.example.service.FloatingFocusBubbleManager.hidePausedBubble(this@FocusFlowApplication)
+                    com.example.service.FloatingFocusBubbleManager.collapseIsland(this@FocusFlowApplication)
+                    com.example.service.FloatingFocusBubbleManager.syncSystemOverlay(this@FocusFlowApplication)
                     if (PomodoroTimerService.state.value.isAutoPausedByAppSwitch) {
                         runCatching {
                             val intent = Intent(this@FocusFlowApplication, PomodoroTimerService::class.java)
@@ -157,13 +158,19 @@ class FocusFlowApplication : Application() {
                 val wasBackground = startedActivitiesCount == 0
                 startedActivitiesCount++
                 com.example.service.PhoneLockOverlayManager.syncWithActiveChallenge(this@FocusFlowApplication)
-                if (wasBackground && PomodoroTimerService.state.value.isAutoPausedByAppSwitch) {
-                    runCatching {
-                        val intent = Intent(this@FocusFlowApplication, PomodoroTimerService::class.java)
-                            .setAction(PomodoroTimerService.ACTION_AUTO_RESUME)
-                        ContextCompat.startForegroundService(this@FocusFlowApplication, intent)
-                    }.onFailure {
-                        Log.w(TAG, "Failed to auto-resume Pomodoro timer", it)
+                com.example.service.FloatingFocusBubbleManager.hidePausedBubble(this@FocusFlowApplication)
+                com.example.service.FloatingFocusBubbleManager.hideNudgeBanner(this@FocusFlowApplication)
+                com.example.service.FloatingFocusBubbleManager.collapseIsland(this@FocusFlowApplication)
+                com.example.service.FloatingFocusBubbleManager.syncSystemOverlay(this@FocusFlowApplication)
+                if (wasBackground) {
+                    if (PomodoroTimerService.state.value.isAutoPausedByAppSwitch) {
+                        runCatching {
+                            val intent = Intent(this@FocusFlowApplication, PomodoroTimerService::class.java)
+                                .setAction(PomodoroTimerService.ACTION_AUTO_RESUME)
+                            ContextCompat.startForegroundService(this@FocusFlowApplication, intent)
+                        }.onFailure {
+                            Log.w(TAG, "Failed to auto-resume Pomodoro timer", it)
+                        }
                     }
                 }
             }
@@ -173,6 +180,7 @@ class FocusFlowApplication : Application() {
                 startedActivitiesCount = (startedActivitiesCount - 1).coerceAtLeast(0)
                 if (startedActivitiesCount == 0 && !activity.isChangingConfigurations) {
                     com.example.service.PhoneLockOverlayManager.syncWithActiveChallenge(this@FocusFlowApplication)
+                    com.example.service.FloatingFocusBubbleManager.syncSystemOverlay(this@FocusFlowApplication)
                     autoPauseJob?.cancel()
                     autoPauseJob = applicationScope.launch {
                         // Wait briefly so pressing the Power button to lock the screen has time to

@@ -952,7 +952,76 @@ class StudyGroupChallengeTest {
         composeRule.onNodeWithTag("strict_phone_lock_overlay").assertIsDisplayed()
         com.example.service.PhoneLockOverlayManager.resetLaunchGuardState()
     }
+
+    @Test
+    fun `DynamicSpotIslandOverlay is hidden when app is open and displays outside the app with expand and collapse`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val runningTimerState = com.example.service.TimerState(
+            phase = com.example.service.Phase.FOCUS,
+            isRunning = true,
+            focusDurationMs = 50 * 60_000L,
+            remainingMs = (48 * 60 + 31) * 1000L
+        )
+        com.example.service.FloatingFocusBubbleManager.syncTimerState(context, runningTimerState)
+        com.example.service.FloatingFocusBubbleManager.collapseIsland(context)
+
+        val inForegroundState = androidx.compose.runtime.mutableStateOf(true)
+
+        composeRule.setContent {
+            FocusIslandTheme(themeMode = ThemeMode.DARK) {
+                com.example.ui.components.DynamicSpotIslandOverlay(
+                    activeInvite = null,
+                    activeNudge = null,
+                    myUid = "user_me",
+                    isPhoneLockActive = false,
+                    isOnFocusSaverRoute = false,
+                    onAcceptInvite = {},
+                    onDeclineInvite = {},
+                    onHideInvite = {},
+                    onReturnFromNudge = {},
+                    onDismissNudge = {},
+                    onOpenFocusTab = {},
+                    onOpenChallengesTab = {},
+                    isAppInForeground = inForegroundState.value,
+                    timerState = runningTimerState
+                )
+            }
+        }
+
+        // 1. While the app is open (isAppInForeground = true), the Dynamic Island does NOT show
+        composeRule.onNodeWithTag("dynamic_island_pill").assertDoesNotExist()
+        composeRule.onNodeWithTag("dynamic_island_expanded_card").assertDoesNotExist()
+
+        // 2. When leaving the app (isAppInForeground = false), the compact pill appears with the live timer
+        inForegroundState.value = false
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("dynamic_island_pill").assertIsDisplayed()
+        composeRule.onNodeWithTag("dynamic_island_compact_clock", useUnmergedTree = true).assertIsDisplayed()
+
+        // 3. Tap compact pill to expand into the dynamicSpot control card
+        composeRule.onNodeWithTag("dynamic_island_pill").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("dynamic_island_expanded_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("dynamic_island_pause_resume_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("dynamic_island_skip_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("dynamic_island_end_button").assertIsDisplayed()
+
+        // 4. Tap outside the expanded card to collapse back to the compact pill
+        composeRule.onNodeWithTag("dynamic_island_outside_scrim").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("dynamic_island_pill").assertIsDisplayed()
+
+        // Reset back to idle
+        com.example.service.FloatingFocusBubbleManager.syncTimerState(
+            context,
+            com.example.service.TimerState()
+        )
+    }
 }
+
 
 
 

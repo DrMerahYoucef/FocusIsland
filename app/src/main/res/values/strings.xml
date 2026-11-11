@@ -1374,6 +1374,11 @@
     <string name="lock_phone_phone_app_default_name">Phone</string>
     <string name="lock_phone_floating_return_pill">🔒 %1$s · Return to lock screen</string>
     <string name="lock_phone_permitted_apps_saved_hint">Remembered for future Lock Phone sessions</string>
+    <string name="dynamic_island_header_in_min">Focus Island • In %1$d min</string>
+    <string name="dynamic_island_header_paused">Focus Island • Paused</string>
+    <string name="dynamic_island_header_now">Focus Island • Now</string>
+    <string name="dynamic_island_action_open">Open</string>
+    <string name="dynamic_island_action_dismiss">Dismiss</string>
 </resources>
 
 

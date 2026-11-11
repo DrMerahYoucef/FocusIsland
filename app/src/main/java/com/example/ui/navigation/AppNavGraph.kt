@@ -87,11 +87,13 @@ import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.FocusFlowApplication
 import com.example.R
 import com.example.data.auth.AccountState
+import com.example.ui.components.DynamicSpotIslandOverlay
 import com.example.ui.components.ForestViewModel
 import com.example.ui.designsystem.EmptyState
 import com.example.ui.screen.analytics.AnalyticsScreen
@@ -100,10 +102,8 @@ import com.example.ui.screen.appblocker.AppBlockerScreen
 import com.example.service.PomodoroTimerService
 import com.example.ui.screen.auth.AuthMode
 import com.example.ui.screen.auth.AuthScreen
-import com.example.ui.screen.challenge.ChallengeInviteFloatingCapsule
 import com.example.ui.screen.challenge.ChallengeViewModel
 import com.example.ui.screen.challenge.ChallengesScreen
-import com.example.ui.screen.challenge.NudgeToastBanner
 import com.example.ui.screen.community.CommunityScreen
 import com.example.ui.screen.community.CommunityViewModel
 import com.example.ui.screen.exams.ExamsScreen
@@ -390,72 +390,70 @@ fun AppNavGraph(
 
     val activeNudge = friendChallengeState.activeNudgeBanner
     val activeInvite = friendChallengeState.activeInviteBanner
-    Column(
-        modifier = Modifier
-            .align(Alignment.TopCenter)
-            .statusBarsPadding(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        AnimatedVisibility(
-            visible = activeInvite != null,
-            enter = slideInVertically { -it } + fadeIn(),
-            exit = slideOutVertically { -it } + fadeOut()
-        ) {
-            if (activeInvite != null) {
-                ChallengeInviteFloatingCapsule(
-                    challenge = activeInvite,
-                    myUid = friendChallengeState.myUid,
-                    onAccept = { invite ->
-                        challengeViewModel.acceptFriendChallenge(invite)
-                        if (navController.currentDestination?.route != Routes.MAIN) {
-                            if (!navController.popBackStack(Routes.MAIN, inclusive = false)) {
-                                navController.navigate(Routes.MAIN) { launchSingleTop = true }
-                            }
-                        }
-                        localNavRequest = NavRequest(tab = TopLevel.CHALLENGES)
-                    },
-                    onDecline = { invite ->
-                        challengeViewModel.declineFriendChallenge(invite)
-                    },
-                    onHide = { invite ->
-                        challengeViewModel.hideInviteBanner(invite.id)
-                    }
-                )
-            }
-        }
+    val personalChallengeState by challengeViewModel.state.collectAsStateWithLifecycle()
+    val isPhoneLockActive = personalChallengeState.active?.isLockPhone == true
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    val isHiddenRoute = currentRoute == Routes.FOCUS_MODE || currentRoute?.startsWith("auth") == true
 
-        AnimatedVisibility(
-            visible = activeNudge != null,
-            enter = slideInVertically { -it } + fadeIn(),
-            exit = slideOutVertically { -it } + fadeOut()
-        ) {
-            if (activeNudge != null) {
-                NudgeToastBanner(
-                    nudge = activeNudge,
-                    onReturnToFocus = {
-                        challengeViewModel.dismissNudgeBanner()
-                        runCatching {
-                            val serviceIntent = Intent(context, PomodoroTimerService::class.java).apply {
-                                action = PomodoroTimerService.ACTION_START
-                            }
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                                context.startForegroundService(serviceIntent)
-                            } else {
-                                context.startService(serviceIntent)
-                            }
-                        }
-                        if (navController.currentDestination?.route != Routes.MAIN) {
-                            if (!navController.popBackStack(Routes.MAIN, inclusive = false)) {
-                                navController.navigate(Routes.MAIN) { launchSingleTop = true }
-                            }
-                        }
-                        localNavRequest = NavRequest(tab = TopLevel.FOCUS)
-                    },
-                    onDismiss = challengeViewModel::dismissNudgeBanner
-                )
+    DynamicSpotIslandOverlay(
+        activeInvite = activeInvite,
+        activeNudge = activeNudge,
+        myUid = friendChallengeState.myUid,
+        isPhoneLockActive = isPhoneLockActive,
+        isOnFocusSaverRoute = isHiddenRoute,
+        onAcceptInvite = { invite ->
+            challengeViewModel.acceptFriendChallenge(invite)
+            if (navController.currentDestination?.route != Routes.MAIN) {
+                if (!navController.popBackStack(Routes.MAIN, inclusive = false)) {
+                    navController.navigate(Routes.MAIN) { launchSingleTop = true }
+                }
             }
+            localNavRequest = NavRequest(tab = TopLevel.CHALLENGES)
+        },
+        onDeclineInvite = { invite ->
+            challengeViewModel.declineFriendChallenge(invite)
+        },
+        onHideInvite = { invite ->
+            challengeViewModel.hideInviteBanner(invite.id)
+        },
+        onReturnFromNudge = {
+            challengeViewModel.dismissNudgeBanner()
+            runCatching {
+                val serviceIntent = Intent(context, PomodoroTimerService::class.java).apply {
+                    action = PomodoroTimerService.ACTION_START
+                }
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent)
+                } else {
+                    context.startService(serviceIntent)
+                }
+            }
+            if (navController.currentDestination?.route != Routes.MAIN) {
+                if (!navController.popBackStack(Routes.MAIN, inclusive = false)) {
+                    navController.navigate(Routes.MAIN) { launchSingleTop = true }
+                }
+            }
+            localNavRequest = NavRequest(tab = TopLevel.FOCUS)
+        },
+        onDismissNudge = challengeViewModel::dismissNudgeBanner,
+        onOpenFocusTab = {
+            if (navController.currentDestination?.route != Routes.MAIN) {
+                if (!navController.popBackStack(Routes.MAIN, inclusive = false)) {
+                    navController.navigate(Routes.MAIN) { launchSingleTop = true }
+                }
+            }
+            localNavRequest = NavRequest(tab = TopLevel.FOCUS)
+        },
+        onOpenChallengesTab = {
+            if (navController.currentDestination?.route != Routes.MAIN) {
+                if (!navController.popBackStack(Routes.MAIN, inclusive = false)) {
+                    navController.navigate(Routes.MAIN) { launchSingleTop = true }
+                }
+            }
+            localNavRequest = NavRequest(tab = TopLevel.CHALLENGES)
         }
-    }
+    )
     }
 }
 
