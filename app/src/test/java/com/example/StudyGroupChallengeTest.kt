@@ -1020,6 +1020,116 @@ class StudyGroupChallengeTest {
             com.example.service.TimerState()
         )
     }
+
+    @Test
+    fun dailyLockTime_handlesOvernightWindowWarningAndUnlimitedSnoozes() {
+        val zone = java.time.ZoneId.of("UTC")
+        val schedule = com.example.data.challenge.DailyLockSchedule(
+            id = "night_lock",
+            label = "Night Study",
+            startHour = 22,
+            startMinute = 0,
+            endHour = 7,
+            endMinute = 0,
+            enabled = true
+        )
+        assertEquals(9 * 60, schedule.durationMinutes)
+        assertTrue(schedule.isOvernight)
+
+        // 21:56:00 -> inside 5-minute warning window (4 minutes remaining)
+        val warningNow = java.time.ZonedDateTime.of(2026, 11, 19, 21, 56, 0, 0, zone).toInstant().toEpochMilli()
+        val occWarning = com.example.data.challenge.DailyLockTime.nextOccurrence(schedule, warningNow, zone)
+        assertNotNull(occWarning)
+        assertTrue(occWarning!!.isWarningAt(warningNow))
+        assertFalse(occWarning.isActiveAt(warningNow))
+        assertEquals(4 * 60_000L, occWarning.remainingBeforeLockMs(warningNow))
+
+        // 21:59:40 -> 20s left; snooze twice (+1 min each -> unlimited) pushes effectiveStart to 22:02:00
+        val under30Now = java.time.ZonedDateTime.of(2026, 11, 19, 21, 59, 40, 0, zone).toInstant().toEpochMilli()
+        val firstSnoozeAt = occWarning.effectiveStartMs + 60_000L
+        val secondSnoozeAt = firstSnoozeAt + 60_000L
+        val snoozedSchedule = schedule.copy(snoozeUntilMs = secondSnoozeAt)
+        val occSnoozed = com.example.data.challenge.DailyLockTime.nextOccurrence(snoozedSchedule, under30Now, zone)
+        assertNotNull(occSnoozed)
+        assertEquals(secondSnoozeAt, occSnoozed!!.effectiveStartMs)
+        assertTrue(occSnoozed.isWarningAt(under30Now))
+        assertEquals(140_000L, occSnoozed.remainingBeforeLockMs(under30Now))
+
+        // 02:30 next morning -> still inside overnight window (yesterday 22:00 -> today 07:00)
+        val overnightNow = java.time.ZonedDateTime.of(2026, 11, 20, 2, 30, 0, 0, zone).toInstant().toEpochMilli()
+        val occActive = com.example.data.challenge.DailyLockTime.nextOccurrence(schedule, overnightNow, zone)
+        assertNotNull(occActive)
+        assertTrue(occActive!!.isActiveAt(overnightNow))
+    }
+
+    @Test
+    fun dynamicSpotIsland_lockWarningShowsAddOneMinButtonOnlyUnder30SecondsAndClampsTopDrag() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        var snoozeClicks = 0
+        val lockAt = System.currentTimeMillis() + 180_000L
+
+        // Top-area drag clamping keeps Y strictly in top band and X within screen edges
+        val clampedHighY = com.example.service.FloatingFocusBubbleManager.clampTopBandY(context, 9999)
+        val clampedLowY = com.example.service.FloatingFocusBubbleManager.clampTopBandY(context, -200)
+        assertTrue(clampedLowY >= 0)
+        assertTrue(clampedHighY > clampedLowY)
+        assertTrue(clampedHighY <= (100f * context.resources.displayMetrics.density).toInt())
+
+        // Start at 3 minutes remaining (>= 30s -> no +1 min button yet)
+        com.example.service.FloatingFocusBubbleManager.updateDailyLockWarning(
+            context = context,
+            scheduleId = "sched_1",
+            scheduleLabel = "Night Lock",
+            rangeText = "22:00 – 07:00",
+            lockAtMs = lockAt,
+            remainingMs = 180_000L,
+            onAddOneMinute = { snoozeClicks++ }
+        )
+
+        composeRule.setContent {
+            FocusIslandTheme(themeMode = ThemeMode.DARK) {
+                com.example.ui.components.DynamicSpotIslandOverlay(
+                    activeInvite = null,
+                    activeNudge = null,
+                    myUid = "user_me",
+                    isPhoneLockActive = false,
+                    isOnFocusSaverRoute = false,
+                    onAcceptInvite = {},
+                    onDeclineInvite = {},
+                    onHideInvite = {},
+                    onReturnFromNudge = {},
+                    onDismissNudge = {},
+                    onOpenFocusTab = {},
+                    onOpenChallengesTab = {},
+                    isAppInForeground = false,
+                    timerState = com.example.service.TimerState()
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("dynamic_island_lock_add_one_min_button").assertDoesNotExist()
+
+        // Drop below 30s -> +1 min button appears and can be tapped multiple times
+        com.example.service.FloatingFocusBubbleManager.updateDailyLockWarning(
+            context = context,
+            scheduleId = "sched_1",
+            scheduleLabel = "Night Lock",
+            rangeText = "22:00 – 07:00",
+            lockAtMs = lockAt,
+            remainingMs = 25_000L,
+            onAddOneMinute = { snoozeClicks++ }
+        )
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("dynamic_island_lock_add_one_min_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("dynamic_island_lock_add_one_min_button").performClick()
+        composeRule.onNodeWithTag("dynamic_island_lock_add_one_min_button").performClick()
+        assertEquals(2, snoozeClicks)
+
+        // Cleanup
+        com.example.service.FloatingFocusBubbleManager.clearDailyLockWarning(context)
+    }
 }
 
 

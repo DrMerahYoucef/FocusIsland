@@ -391,10 +391,29 @@ fun AppNavGraph(
     val activeNudge = friendChallengeState.activeNudgeBanner
     val activeInvite = friendChallengeState.activeInviteBanner
     val personalChallengeState by challengeViewModel.state.collectAsStateWithLifecycle()
+    val dailyLockWarning by PomodoroTimerService.dailyLockWarning.collectAsStateWithLifecycle()
     val isPhoneLockActive = personalChallengeState.active?.isLockPhone == true
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val isHiddenRoute = currentRoute == Routes.FOCUS_MODE || currentRoute?.startsWith("auth") == true
+
+    if (!isPhoneLockActive && !isHiddenRoute) {
+        com.example.ui.components.InAppDailyLockWarningBanner(
+            warning = dailyLockWarning,
+            onAddOneMinute = { scheduleId ->
+                challengeViewModel.snoozeDailyLockByOneMinute(scheduleId)
+            },
+            onOpenSchedules = {
+                if (navController.currentDestination?.route != Routes.MAIN) {
+                    if (!navController.popBackStack(Routes.MAIN, inclusive = false)) {
+                        navController.navigate(Routes.MAIN) { launchSingleTop = true }
+                    }
+                }
+                localNavRequest = NavRequest(tab = TopLevel.CHALLENGES)
+            },
+            modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter)
+        )
+    }
 
     DynamicSpotIslandOverlay(
         activeInvite = activeInvite,

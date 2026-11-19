@@ -1379,6 +1379,33 @@
     <string name="dynamic_island_header_now">Focus Island • Now</string>
     <string name="dynamic_island_action_open">Open</string>
     <string name="dynamic_island_action_dismiss">Dismiss</string>
+
+    <!-- Daily Lock Phone Intervals & Pre-Lock Warning -->
+    <string name="lock_phone_time_mode_daily_interval">Daily</string>
+    <string name="lock_phone_daily_from">From</string>
+    <string name="lock_phone_daily_to">To</string>
+    <string name="lock_phone_daily_pick_start">Start time</string>
+    <string name="lock_phone_daily_pick_end">End time</string>
+    <string name="lock_phone_daily_label_optional">Schedule name (optional)</string>
+    <string name="lock_phone_daily_label_hint">e.g. Night wind-down or Afternoon study</string>
+    <string name="lock_phone_daily_default_label">Daily Lock</string>
+    <string name="lock_phone_daily_save_button">Save daily lock</string>
+    <string name="lock_phone_daily_invalid_range">Start and end times must be different.</string>
+    <string name="lock_phone_daily_summary">Every day · %1$s</string>
+    <string name="lock_phone_daily_summary_overnight">Every day · %1$s (overnight)</string>
+    <string name="lock_phone_daily_section_title">Daily auto-lock intervals</string>
+    <string name="lock_phone_daily_section_subtitle">Automatically locks your phone every day during these periods</string>
+    <string name="lock_phone_daily_add_button">Add</string>
+    <string name="lock_phone_daily_next_at">Every day · Next at %1$s</string>
+    <string name="lock_phone_daily_locks_in">Locks in %1$s</string>
+    <string name="lock_phone_daily_active_now">Locking now until %1$s</string>
+    <string name="lock_phone_daily_disabled">Paused</string>
+    <string name="lock_phone_daily_delete_a11y">Delete daily lock interval</string>
+    <string name="dynamic_island_lock_warning_header">Focus Island • Auto-Lock</string>
+    <string name="dynamic_island_lock_warning_title">Phone locks in %1$s</string>
+    <string name="dynamic_island_lock_warning_subtitle">%1$s · %2$s</string>
+    <string name="dynamic_island_lock_warning_add_one_min">+1 min</string>
+    <string name="dynamic_island_lock_warning_hide">Hide</string>
 </resources>
 
 

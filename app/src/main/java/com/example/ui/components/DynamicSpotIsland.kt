@@ -72,6 +72,8 @@ import com.example.service.PomodoroTimerService
 private val IslandBlack = Color(0xFF000000)
 private val IslandBorder = Color(0xFF1F2428)
 private val IslandAccentTeal = Color(0xFF38D9C0)
+private val IslandAccentAmber = Color(0xFFFFB74D)
+private val IslandDarkInk = Color(0xFF111315)
 private val IslandSubtitleSilver = Color(0xFFB0B5BA)
 private val IslandButtonCharcoal = Color(0xFF2B2B2F)
 private val IslandButtonLabelWhite = Color(0xFFF3F4F6)
@@ -251,8 +253,15 @@ fun DynamicSpotIslandOverlay(
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (compactAlpha > 0.01f) {
+                        val compactText = if (islandState.notificationKind == FloatingFocusBubbleManager.NotificationKind.LOCK_WARNING) {
+                            val totalSecs = ((islandState.lockWarningRemainingMs + 999L) / 1000L).coerceAtLeast(0L)
+                            "%02d:%02d".format(totalSecs / 60L, totalSecs % 60L)
+                        } else {
+                            islandState.clockText
+                        }
                         CompactDynamicIslandContent(
-                            clockText = islandState.clockText,
+                            clockText = compactText,
+                            isWarningAccent = islandState.notificationKind == FloatingFocusBubbleManager.NotificationKind.LOCK_WARNING,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .alpha(compactAlpha)
@@ -265,7 +274,10 @@ fun DynamicSpotIslandOverlay(
                             activeNudge = activeNudge,
                             onBodyClick = {
                                 FloatingFocusBubbleManager.collapseIsland(context)
-                                if (activeInvite != null || islandState.notificationKind == FloatingFocusBubbleManager.NotificationKind.INVITE) {
+                                if (activeInvite != null ||
+                                    islandState.notificationKind == FloatingFocusBubbleManager.NotificationKind.INVITE ||
+                                    islandState.notificationKind == FloatingFocusBubbleManager.NotificationKind.LOCK_WARNING
+                                ) {
                                     onOpenChallengesTab()
                                 } else {
                                     onOpenFocusTab()
@@ -273,6 +285,9 @@ fun DynamicSpotIslandOverlay(
                             },
                             onPrimaryClick = {
                                 when {
+                                    islandState.notificationKind == FloatingFocusBubbleManager.NotificationKind.LOCK_WARNING -> {
+                                        FloatingFocusBubbleManager.onPrimaryActionClicked(context)
+                                    }
                                     activeInvite != null -> {
                                         onHideInvite(activeInvite)
                                         FloatingFocusBubbleManager.hideInviteCapsule(context)
@@ -296,6 +311,9 @@ fun DynamicSpotIslandOverlay(
                             },
                             onSecondaryClick = {
                                 when {
+                                    islandState.notificationKind == FloatingFocusBubbleManager.NotificationKind.LOCK_WARNING -> {
+                                        FloatingFocusBubbleManager.collapseIsland(context)
+                                    }
                                     activeInvite != null -> {
                                         onDeclineInvite(activeInvite)
                                         FloatingFocusBubbleManager.hideInviteCapsule(context)
@@ -316,6 +334,10 @@ fun DynamicSpotIslandOverlay(
                             },
                             onTertiaryClick = {
                                 when {
+                                    islandState.notificationKind == FloatingFocusBubbleManager.NotificationKind.LOCK_WARNING -> {
+                                        FloatingFocusBubbleManager.collapseIsland(context)
+                                        onOpenChallengesTab()
+                                    }
                                     activeInvite != null -> {
                                         onAcceptInvite(activeInvite)
                                         FloatingFocusBubbleManager.hideInviteCapsule(context)
@@ -329,11 +351,7 @@ fun DynamicSpotIslandOverlay(
                                         runCatching {
                                             val intent = Intent(context, PomodoroTimerService::class.java)
                                                 .setAction(PomodoroTimerService.ACTION_STOP)
-                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                                context.startService(intent)
-                                            } else {
-                                                context.startService(intent)
-                                            }
+                                            context.startService(intent)
                                         }
                                     }
                                 }
@@ -352,6 +370,7 @@ fun DynamicSpotIslandOverlay(
 @Composable
 private fun CompactDynamicIslandContent(
     clockText: String,
+    isWarningAccent: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -362,7 +381,7 @@ private fun CompactDynamicIslandContent(
         Spacer(modifier = Modifier.weight(1f))
         Text(
             text = clockText,
-            color = Color.White,
+            color = if (isWarningAccent) IslandAccentAmber else Color.White,
             fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
             fontFamily = FontFamily.SansSerif,
@@ -401,7 +420,32 @@ private fun ExpandedDynamicIslandContent(
     val secondaryTag: String
     val tertiaryTag: String
 
+    val isLockWarning = islandState.notificationKind == FloatingFocusBubbleManager.NotificationKind.LOCK_WARNING
+    val isUnder30 = islandState.isLockWarningUnder30Sec
+    var showSecondary = true
+
     when {
+        isLockWarning -> {
+            headerText = stringResource(R.string.dynamic_island_lock_warning_header)
+            titleText = islandState.notificationTitle
+            subtitleText = islandState.notificationSubtitle
+            if (isUnder30) {
+                primaryLabel = stringResource(R.string.dynamic_island_lock_warning_add_one_min)
+                secondaryLabel = stringResource(R.string.dynamic_island_lock_warning_hide)
+                tertiaryLabel = stringResource(R.string.dynamic_island_action_open)
+                primaryTag = "dynamic_island_lock_add_one_min_button"
+                secondaryTag = "dynamic_island_lock_hide_button"
+                tertiaryTag = "dynamic_island_lock_open_button"
+            } else {
+                showSecondary = false
+                primaryLabel = stringResource(R.string.dynamic_island_lock_warning_hide)
+                secondaryLabel = ""
+                tertiaryLabel = stringResource(R.string.dynamic_island_action_open)
+                primaryTag = "dynamic_island_lock_hide_button"
+                secondaryTag = "dynamic_island_lock_secondary_unused"
+                tertiaryTag = "dynamic_island_lock_open_button"
+            }
+        }
         activeInvite != null || islandState.notificationKind == FloatingFocusBubbleManager.NotificationKind.INVITE -> {
             val challenger = activeInvite?.challengerName?.ifBlank { null }
                 ?: islandState.notificationSender.ifBlank { stringResource(R.string.community_unnamed) }
@@ -486,7 +530,7 @@ private fun ExpandedDynamicIslandContent(
             ) {
                 Text(
                     text = headerText,
-                    color = IslandAccentTeal,
+                    color = if (isLockWarning) IslandAccentAmber else IslandAccentTeal,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
@@ -523,14 +567,17 @@ private fun ExpandedDynamicIslandContent(
                 label = primaryLabel,
                 onClick = onPrimaryClick,
                 testTag = primaryTag,
+                highlightedAmber = isLockWarning && isUnder30,
                 modifier = Modifier.weight(1f)
             )
-            DynamicSpotActionPill(
-                label = secondaryLabel,
-                onClick = onSecondaryClick,
-                testTag = secondaryTag,
-                modifier = Modifier.weight(1f)
-            )
+            if (showSecondary) {
+                DynamicSpotActionPill(
+                    label = secondaryLabel,
+                    onClick = onSecondaryClick,
+                    testTag = secondaryTag,
+                    modifier = Modifier.weight(1f)
+                )
+            }
             DynamicSpotActionPill(
                 label = tertiaryLabel,
                 onClick = onTertiaryClick,
@@ -546,13 +593,14 @@ private fun DynamicSpotActionPill(
     label: String,
     onClick: () -> Unit,
     testTag: String,
+    highlightedAmber: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Surface(
         onClick = onClick,
         shape = CircleShape,
-        color = IslandButtonCharcoal,
-        contentColor = IslandButtonLabelWhite,
+        color = if (highlightedAmber) IslandAccentAmber else IslandButtonCharcoal,
+        contentColor = if (highlightedAmber) IslandDarkInk else IslandButtonLabelWhite,
         modifier = modifier
             .height(42.dp)
             .testTag(testTag)
@@ -563,12 +611,111 @@ private fun DynamicSpotActionPill(
         ) {
             Text(
                 text = label,
-                color = IslandButtonLabelWhite,
+                color = if (highlightedAmber) IslandDarkInk else IslandButtonLabelWhite,
                 fontSize = 13.5.sp,
-                fontWeight = FontWeight.Medium,
+                fontWeight = if (highlightedAmber) FontWeight.Bold else FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+        }
+    }
+}
+
+/**
+ * Sleek in-app top banner shown inside Focus Island during the final 5 minutes before a
+ * scheduled daily Lock Phone interval activates, revealing the unlimited `+1 min` button under 30 seconds.
+ */
+@Composable
+fun InAppDailyLockWarningBanner(
+    warning: PomodoroTimerService.DailyLockWarningState?,
+    onAddOneMinute: (String) -> Unit,
+    onOpenSchedules: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = warning != null,
+        enter = scaleIn(
+            animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow),
+            initialScale = 0.9f,
+            transformOrigin = TransformOrigin(0.5f, 0f)
+        ) + fadeIn(tween(180)),
+        exit = fadeOut(tween(150)),
+        modifier = modifier
+            .statusBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        val current = warning ?: return@AnimatedVisibility
+        Surface(
+            onClick = onOpenSchedules,
+            shape = RoundedCornerShape(24.dp),
+            color = IslandBlack,
+            contentColor = Color.White,
+            shadowElevation = 10.dp,
+            border = BorderStroke(1.dp, IslandAccentAmber.copy(alpha = 0.5f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("in_app_daily_lock_warning_banner")
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                FocusIslandCircularEmblem(size = 34.dp)
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.dynamic_island_lock_warning_header),
+                        color = IslandAccentAmber,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = stringResource(R.string.dynamic_island_lock_warning_title, current.clockText),
+                        color = Color.White,
+                        fontSize = 14.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = stringResource(R.string.dynamic_island_lock_warning_subtitle, current.label, current.rangeText),
+                        color = IslandSubtitleSilver,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (current.isUnder30Seconds) {
+                    Surface(
+                        onClick = { onAddOneMinute(current.scheduleId) },
+                        shape = CircleShape,
+                        color = IslandAccentAmber,
+                        contentColor = IslandDarkInk,
+                        modifier = Modifier
+                            .height(40.dp)
+                            .testTag("in_app_daily_lock_add_one_min_button")
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.padding(horizontal = 14.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.dynamic_island_lock_warning_add_one_min),
+                                color = IslandDarkInk,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

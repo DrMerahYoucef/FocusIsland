@@ -32,6 +32,7 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
     init {
         if (store.expireIfDue() != null) ChallengeAlarmReceiver.cancel(application)
         PomodoroTimerService.syncPhoneLock(application)
+        ChallengeAlarmReceiver.scheduleDailyLocks(application)
     }
 
     fun start(
@@ -86,6 +87,39 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun clearHistory() = store.clearHistory()
+
+    fun addDailyLockSchedule(
+        label: String,
+        startHour: Int,
+        startMinute: Int,
+        endHour: Int,
+        endMinute: Int,
+        allowedPackages: Set<String>? = null
+    ) {
+        store.addDailySchedule(
+            label = label,
+            startHour = startHour,
+            startMinute = startMinute,
+            endHour = endHour,
+            endMinute = endMinute,
+            allowedPackages = allowedPackages
+        )
+        ChallengeAlarmReceiver.scheduleDailyLocks(getApplication())
+    }
+
+    fun toggleDailyLockSchedule(id: String, enabled: Boolean) {
+        store.setDailyScheduleEnabled(id, enabled)
+        ChallengeAlarmReceiver.scheduleDailyLocks(getApplication())
+    }
+
+    fun deleteDailyLockSchedule(id: String) {
+        store.deleteDailySchedule(id)
+        ChallengeAlarmReceiver.scheduleDailyLocks(getApplication())
+    }
+
+    fun snoozeDailyLockByOneMinute(id: String) {
+        PomodoroTimerService.snoozeDailyLock(getApplication(), id)
+    }
 
     fun startOrInviteStudyGroup(
         friends: List<StudyFriendOption>,

@@ -1365,6 +1365,33 @@
     <string name="dynamic_island_header_now">Focus Island • Maintenant</string>
     <string name="dynamic_island_action_open">Ouvrir</string>
     <string name="dynamic_island_action_dismiss">Fermer</string>
+
+    <!-- Daily Lock Phone Intervals & Pre-Lock Warning -->
+    <string name="lock_phone_time_mode_daily_interval">Quotidien</string>
+    <string name="lock_phone_daily_from">De</string>
+    <string name="lock_phone_daily_to">À</string>
+    <string name="lock_phone_daily_pick_start">Heure de début</string>
+    <string name="lock_phone_daily_pick_end">Heure de fin</string>
+    <string name="lock_phone_daily_label_optional">Nom du créneau (optionnel)</string>
+    <string name="lock_phone_daily_label_hint">ex. Sommeil ou Révision du soir</string>
+    <string name="lock_phone_daily_default_label">Verrouillage quotidien</string>
+    <string name="lock_phone_daily_save_button">Enregistrer le créneau</string>
+    <string name="lock_phone_daily_invalid_range">L\'heure de début et de fin doivent être différentes.</string>
+    <string name="lock_phone_daily_summary">Tous les jours · %1$s</string>
+    <string name="lock_phone_daily_summary_overnight">Tous les jours · %1$s (nuit)</string>
+    <string name="lock_phone_daily_section_title">Verrouillages quotidiens auto</string>
+    <string name="lock_phone_daily_section_subtitle">Verrouille automatiquement votre téléphone chaque jour sur ces créneaux</string>
+    <string name="lock_phone_daily_add_button">Ajouter</string>
+    <string name="lock_phone_daily_next_at">Chaque jour · Prochain à %1$s</string>
+    <string name="lock_phone_daily_locks_in">Verrouillage dans %1$s</string>
+    <string name="lock_phone_daily_active_now">Verrouillé jusqu\'à %1$s</string>
+    <string name="lock_phone_daily_disabled">Désactivé</string>
+    <string name="lock_phone_daily_delete_a11y">Supprimer ce verrouillage quotidien</string>
+    <string name="dynamic_island_lock_warning_header">Focus Island • Verrouillage auto</string>
+    <string name="dynamic_island_lock_warning_title">Verrouillage dans %1$s</string>
+    <string name="dynamic_island_lock_warning_subtitle">%1$s · %2$s</string>
+    <string name="dynamic_island_lock_warning_add_one_min">+1 min</string>
+    <string name="dynamic_island_lock_warning_hide">Masquer</string>
 </resources>
 
 

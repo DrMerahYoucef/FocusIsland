@@ -56,22 +56,33 @@ class PomodoroTimerService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var tickerJob: Job? = null
+    private var unlockCheckJob: Job? = null
+    private var dailyLockWarningJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var launchMonitor: AppLaunchMonitor
     private var settings = TimerSettings()
     private var lastAmbientRotationElapsed = 0L
     private var lastAutoPausedElapsed = 0L
+    private var lastScreenUnlockElapsed = 0L
+    private var lastStartOrResumeElapsed = 0L
     private var exoPlayer: ExoPlayer? = null
 
-    private val screenOffReceiver = object : android.content.BroadcastReceiver() {
+    private val screenStateReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
-                // If an app-switch auto-pause raced with pressing the Power button to lock the phone,
-                // resume immediately so locking the phone never pauses the Pomodoro.
-                if (_state.value.isAutoPausedByAppSwitch &&
-                    SystemClock.elapsedRealtime() - lastAutoPausedElapsed < 3_000L
-                ) {
-                    autoResumeFromAppSwitch()
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    unlockCheckJob?.cancel()
+                    // If an app-switch auto-pause raced with pressing the Power button to lock the phone,
+                    // resume immediately so locking the phone never pauses the Pomodoro.
+                    if (_state.value.isAutoPausedByAppSwitch &&
+                        SystemClock.elapsedRealtime() - lastAutoPausedElapsed < 3_000L
+                    ) {
+                        autoResumeFromAppSwitch()
+                    }
+                }
+                Intent.ACTION_USER_PRESENT, Intent.ACTION_SCREEN_ON -> {
+                    lastScreenUnlockElapsed = SystemClock.elapsedRealtime()
+                    scheduleUnlockAutoPauseCheck()
                 }
             }
         }
@@ -86,7 +97,12 @@ class PomodoroTimerService : Service() {
         loadPersisted(this)
         settings = TimerSettings.load(this)
         runCatching {
-            registerReceiver(screenOffReceiver, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF))
+            val filter = android.content.IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
+            }
+            registerReceiver(screenStateReceiver, filter)
         }
         launchMonitor = AppLaunchMonitor(
             context = this,
@@ -115,16 +131,24 @@ class PomodoroTimerService : Service() {
             }
             ACTION_STOP -> {
                 stopTimer()
-                if (!hasActivePhoneLockChallenge()) {
+                if (!hasActivePhoneLockChallenge() && _dailyLockWarning.value == null) {
                     stopSelf()
                 }
             }
             ACTION_SYNC_PHONE_LOCK -> syncPhoneLockProtection()
+            ACTION_SYNC_DAILY_LOCK_WARNING -> syncDailyLockWarningLoop()
+            ACTION_SNOOZE_DAILY_LOCK -> {
+                val scheduleId = intent.getStringExtra(EXTRA_SCHEDULE_ID).orEmpty()
+                if (scheduleId.isNotEmpty()) {
+                    snoozeDailyLockInternal(scheduleId)
+                }
+            }
             ACTION_SET_AMBIENT -> setAmbientSound(intent.getStringExtra(EXTRA_AMBIENT_ID) ?: AMBIENT_NONE)
             else -> { // ACTION_RESTORE or a system restart after the process was killed
                 when {
                     _state.value.isRunning -> start()
                     hasActivePhoneLockChallenge() -> syncPhoneLockProtection()
+                    hasImminentDailyLockWarning() -> syncDailyLockWarningLoop()
                     !_state.value.isUntouched -> showPausedForeground()
                     else -> stopSelf()
                 }
@@ -133,13 +157,153 @@ class PomodoroTimerService : Service() {
         return START_STICKY
     }
 
+    private fun isDeviceUnlockedAndInteractive(): Boolean {
+        val pm = getSystemService(PowerManager::class.java)
+        val km = getSystemService(android.app.KeyguardManager::class.java)
+        val interactive = pm?.isInteractive == true
+        val locked = km?.isKeyguardLocked == true || km?.isDeviceLocked == true
+        return interactive && !locked
+    }
+
+    /**
+     * Closes the screen-unlock loophole: when the user turns off the screen while Pomodoro is running
+     * and later unlocks straight to the Home screen or another app (without re-entering Focus Island),
+     * ActivityLifecycleCallbacks.onActivityStopped does not fire again. This detects the unlock and
+     * auto-pauses the Pomodoro after a short grace window for normal Focus Island resume.
+     */
+    private fun scheduleUnlockAutoPauseCheck() {
+        if (!_state.value.isRunning) return
+        unlockCheckJob?.cancel()
+        unlockCheckJob = scope.launch {
+            delay(650L)
+            val appInForeground = runCatching { FocusFlowApplication.instance.isAnyFocusUiInForeground }.getOrDefault(false)
+            if (_state.value.isRunning && !appInForeground && isDeviceUnlockedAndInteractive()) {
+                autoPauseForAppSwitch()
+            }
+        }
+    }
+
     private fun hasActivePhoneLockChallenge(): Boolean {
         val active = runCatching { FocusFlowApplication.instance.challengeStore.state.value.active }.getOrNull() ?: return false
         return active.isLockPhone && System.currentTimeMillis() < active.endAt
     }
 
+    private fun hasImminentDailyLockWarning(): Boolean {
+        val schedules = runCatching { FocusFlowApplication.instance.challengeStore.state.value.dailySchedules }.getOrNull()
+            ?: return false
+        val nowMs = System.currentTimeMillis()
+        val occ = com.example.data.challenge.DailyLockTime.findImminentOrActive(schedules, nowMs) ?: return false
+        return occ.isWarningAt(nowMs) || occ.isActiveAt(nowMs)
+    }
+
+    private fun syncDailyLockWarningLoop() {
+        if (hasActivePhoneLockChallenge()) {
+            stopDailyLockWarningLoop()
+            return
+        }
+        if (!hasImminentDailyLockWarning()) {
+            stopDailyLockWarningLoop()
+            if (!_state.value.isRunning && _state.value.isUntouched && !hasActivePhoneLockChallenge()) {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+            return
+        }
+        if (!_state.value.isRunning && !hasActivePhoneLockChallenge()) {
+            startForegroundCompat()
+        }
+        if (dailyLockWarningJob?.isActive == true) {
+            refreshDailyLockWarningOnce()
+            return
+        }
+        dailyLockWarningJob = scope.launch {
+            while (isActive) {
+                val keepRunning = refreshDailyLockWarningOnce()
+                if (!keepRunning) break
+                delay(1_000L)
+            }
+        }
+    }
+
+    private fun stopDailyLockWarningLoop() {
+        dailyLockWarningJob?.cancel()
+        dailyLockWarningJob = null
+        _dailyLockWarning.value = null
+        FloatingFocusBubbleManager.clearDailyLockWarning(this)
+    }
+
+    private fun refreshDailyLockWarningOnce(): Boolean {
+        val store = runCatching { FocusFlowApplication.instance.challengeStore }.getOrNull() ?: return false
+        val nowMs = System.currentTimeMillis()
+        if (hasActivePhoneLockChallenge()) {
+            stopDailyLockWarningLoop()
+            return false
+        }
+        val occ = com.example.data.challenge.DailyLockTime.findImminentOrActive(store.state.value.dailySchedules, nowMs)
+        if (occ == null) {
+            stopDailyLockWarningLoop()
+            if (!_state.value.isRunning && _state.value.isUntouched) {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+            return false
+        }
+        if (occ.isActiveAt(nowMs)) {
+            stopDailyLockWarningLoop()
+            ChallengeAlarmReceiver.activateDailyLockIfDue(this)
+            ChallengeAlarmReceiver.scheduleDailyLocks(this)
+            return false
+        }
+        if (!occ.isWarningAt(nowMs)) {
+            stopDailyLockWarningLoop()
+            return false
+        }
+
+        val remainingMs = occ.remainingBeforeLockMs(nowMs)
+        val rangeText = formatScheduleRange(occ.schedule)
+        val label = occ.schedule.label.ifBlank { getString(R.string.lock_phone_daily_default_label) }
+        _dailyLockWarning.value = DailyLockWarningState(
+            scheduleId = occ.schedule.id,
+            label = label,
+            rangeText = rangeText,
+            lockAtMs = occ.effectiveStartMs,
+            remainingMs = remainingMs
+        )
+        FloatingFocusBubbleManager.updateDailyLockWarning(
+            context = this,
+            scheduleId = occ.schedule.id,
+            scheduleLabel = label,
+            rangeText = rangeText,
+            lockAtMs = occ.effectiveStartMs,
+            remainingMs = remainingMs,
+            onAddOneMinute = { snoozeDailyLockInternal(occ.schedule.id) }
+        )
+        if (!_state.value.isRunning && _state.value.isUntouched) {
+            updateNotification()
+        }
+        return true
+    }
+
+    private fun snoozeDailyLockInternal(scheduleId: String) {
+        val store = runCatching { FocusFlowApplication.instance.challengeStore }.getOrNull() ?: return
+        val newLockAt = store.snoozeDailyScheduleByOneMinute(scheduleId) ?: return
+        Log.d(TAG, "Snoozed daily lock $scheduleId by +1 min -> $newLockAt")
+        ChallengeAlarmReceiver.scheduleDailyLocks(this)
+        refreshDailyLockWarningOnce()
+    }
+
+    private fun formatScheduleRange(schedule: com.example.data.challenge.DailyLockSchedule): String {
+        return "%02d:%02d – %02d:%02d".format(
+            schedule.startHour,
+            schedule.startMinute,
+            schedule.endHour,
+            schedule.endMinute
+        )
+    }
+
     private fun syncPhoneLockProtection() {
         if (hasActivePhoneLockChallenge()) {
+            stopDailyLockWarningLoop()
             PhoneLockOverlayManager.syncWithActiveChallenge(this)
             if (startForegroundCompat()) {
                 enableDnd()
@@ -147,7 +311,7 @@ class PomodoroTimerService : Service() {
             }
         } else {
             PhoneLockOverlayManager.dismissShield(this)
-            if (!_state.value.isRunning) {
+            if (!_state.value.isRunning && _dailyLockWarning.value == null) {
                 focusProtectionOff()
                 if (_state.value.isUntouched) {
                     ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -161,8 +325,12 @@ class PomodoroTimerService : Service() {
 
     override fun onDestroy() {
         serviceAlive = false
-        runCatching { unregisterReceiver(screenOffReceiver) }
+        runCatching { unregisterReceiver(screenStateReceiver) }
+        unlockCheckJob?.cancel()
+        dailyLockWarningJob?.cancel()
+        _dailyLockWarning.value = null
         FloatingFocusBubbleManager.hidePausedBubble(this)
+        FloatingFocusBubbleManager.clearDailyLockWarning(this)
         PhoneLockOverlayManager.dismissShield(this)
         tickerJob?.cancel()
         launchMonitor.stop()
@@ -189,6 +357,7 @@ class PomodoroTimerService : Service() {
         }
         val remaining = if (s.isRunning) remainingNow() else s.remainingMs
         endsAtElapsed = SystemClock.elapsedRealtime() + remaining
+        lastStartOrResumeElapsed = SystemClock.elapsedRealtime()
         _state.update { it.copy(isRunning = true, remainingMs = remaining) }
         persist(this)
         FloatingFocusBubbleManager.syncTimerState(this, _state.value)
@@ -303,6 +472,17 @@ class PomodoroTimerService : Service() {
         tickerJob?.cancel()
         tickerJob = scope.launch {
             while (isActive) {
+                val nowElapsed = SystemClock.elapsedRealtime()
+                val appInForeground = runCatching { FocusFlowApplication.instance.isAnyFocusUiInForeground }.getOrDefault(false)
+                if (_state.value.isRunning &&
+                    !appInForeground &&
+                    isDeviceUnlockedAndInteractive() &&
+                    nowElapsed - lastScreenUnlockElapsed >= 650L &&
+                    nowElapsed - lastStartOrResumeElapsed >= 900L
+                ) {
+                    autoPauseForAppSwitch()
+                    if (!_state.value.isRunning) return@launch
+                }
                 val remaining = remainingNow()
                 _state.update { s ->
                     val focusSecs = if (s.phase == Phase.FOCUS) (s.phaseDurationMs - remaining) / 1000 else 0L
@@ -435,6 +615,41 @@ class PomodoroTimerService : Service() {
 
     internal fun buildNotification(): Notification {
         val s = _state.value
+        val openApp = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val lockWarning = _dailyLockWarning.value
+        if (!s.isRunning && s.isUntouched && lockWarning != null) {
+            val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_widget_clock)
+                .setContentTitle(getString(R.string.dynamic_island_lock_warning_title, lockWarning.clockText))
+                .setContentText(
+                    getString(R.string.dynamic_island_lock_warning_subtitle, lockWarning.label, lockWarning.rangeText)
+                )
+                .setContentIntent(openApp)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setSilent(true)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setCategory(NotificationCompat.CATEGORY_REMINDER)
+                .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            if (lockWarning.isUnder30Seconds) {
+                val snoozeIntent = PendingIntent.getService(
+                    this,
+                    9,
+                    Intent(this, PomodoroTimerService::class.java)
+                        .setAction(ACTION_SNOOZE_DAILY_LOCK)
+                        .putExtra(EXTRA_SCHEDULE_ID, lockWarning.scheduleId),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                builder.addAction(0, getString(R.string.dynamic_island_lock_warning_add_one_min), snoozeIntent)
+            }
+            return builder.build()
+        }
+
         val phaseTitle = getString(
             when (s.phase) {
                 Phase.FOCUS -> R.string.timer_notif_focus
@@ -443,11 +658,6 @@ class PomodoroTimerService : Service() {
             }
         )
         val clockText = formatClock(s.remainingMs)
-        val openApp = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
         val totalSec = (s.phaseDurationMs / 1000L).toInt().coerceAtLeast(1)
         val elapsedSec = ((s.phaseDurationMs - s.remainingMs).coerceAtLeast(0L) / 1000L).toInt().coerceIn(0, totalSec)
 
@@ -696,6 +906,21 @@ class PomodoroTimerService : Service() {
         }
     }
 
+    data class DailyLockWarningState(
+        val scheduleId: String,
+        val label: String,
+        val rangeText: String,
+        val lockAtMs: Long,
+        val remainingMs: Long
+    ) {
+        val isUnder30Seconds: Boolean get() = remainingMs in 1L..29_999L
+        val clockText: String
+            get() {
+                val totalSecs = ((remainingMs + 999L) / 1000L).coerceAtLeast(0L)
+                return "%02d:%02d".format(totalSecs / 60L, totalSecs % 60L)
+            }
+    }
+
     companion object {
         private const val TAG = "PomodoroTimerService"
 
@@ -707,9 +932,12 @@ class PomodoroTimerService : Service() {
         const val ACTION_SKIP = "ACTION_SKIP"
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_SYNC_PHONE_LOCK = "ACTION_SYNC_PHONE_LOCK"
+        const val ACTION_SYNC_DAILY_LOCK_WARNING = "ACTION_SYNC_DAILY_LOCK_WARNING"
+        const val ACTION_SNOOZE_DAILY_LOCK = "ACTION_SNOOZE_DAILY_LOCK"
         const val ACTION_SET_AMBIENT = "ACTION_SET_AMBIENT"
         const val ACTION_RESTORE = "ACTION_RESTORE"
         const val EXTRA_AMBIENT_ID = "EXTRA_AMBIENT_ID"
+        const val EXTRA_SCHEDULE_ID = "EXTRA_SCHEDULE_ID"
 
         const val AMBIENT_NONE = "none"
         val AMBIENT_IDS = listOf("rain", "white_noise", "campfire", "stream", "space")
@@ -725,6 +953,9 @@ class PomodoroTimerService : Service() {
 
         private val _state = MutableStateFlow(TimerState())
         val state: StateFlow<TimerState> = _state.asStateFlow()
+
+        private val _dailyLockWarning = MutableStateFlow<DailyLockWarningState?>(null)
+        val dailyLockWarning: StateFlow<DailyLockWarningState?> = _dailyLockWarning.asStateFlow()
 
         val isRunning: Boolean get() = _state.value.isRunning
 
@@ -765,6 +996,37 @@ class PomodoroTimerService : Service() {
                     ContextCompat.startForegroundService(context, intent)
                 } else if (serviceAlive) {
                     context.startService(intent)
+                }
+            }
+        }
+
+        fun syncDailyLockWarning(context: Context) {
+            runCatching {
+                val schedules = FocusFlowApplication.instance.challengeStore.state.value.dailySchedules
+                val nowMs = System.currentTimeMillis()
+                val occ = com.example.data.challenge.DailyLockTime.findImminentOrActive(schedules, nowMs)
+                val needsService = occ != null && (occ.isWarningAt(nowMs) || occ.isActiveAt(nowMs))
+                val intent = Intent(context, PomodoroTimerService::class.java).setAction(ACTION_SYNC_DAILY_LOCK_WARNING)
+                if (needsService) {
+                    ContextCompat.startForegroundService(context, intent)
+                } else if (serviceAlive) {
+                    context.startService(intent)
+                } else {
+                    _dailyLockWarning.value = null
+                    FloatingFocusBubbleManager.clearDailyLockWarning(context)
+                }
+            }
+        }
+
+        fun snoozeDailyLock(context: Context, scheduleId: String) {
+            runCatching {
+                val intent = Intent(context, PomodoroTimerService::class.java)
+                    .setAction(ACTION_SNOOZE_DAILY_LOCK)
+                    .putExtra(EXTRA_SCHEDULE_ID, scheduleId)
+                if (serviceAlive) {
+                    context.startService(intent)
+                } else {
+                    ContextCompat.startForegroundService(context, intent)
                 }
             }
         }

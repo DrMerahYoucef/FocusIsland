@@ -11,6 +11,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.Instant
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.util.UUID
 
 enum class ChallengeResult { DONE, FAILED }
 
@@ -55,7 +60,123 @@ data class Challenge(
     val isLockPhone: Boolean get() = type == PersonalChallengeType.LOCK_PHONE
 }
 
-data class ChallengeState(val active: Challenge? = null, val history: List<Challenge> = emptyList()) {
+/**
+ * A recurring daily Lock Phone interval (e.g. 22:00 – 07:00 or 14:00 – 16:00).
+ * Every day, a 5-minute pre-lock warning appears in the Dynamic Island before [startHour]:[startMinute],
+ * with an unlimited "+1 min" snooze button whenever less than 30 seconds remain ([snoozeUntilMs]).
+ */
+data class DailyLockSchedule(
+    val id: String,
+    val label: String = "",
+    val startHour: Int,
+    val startMinute: Int,
+    val endHour: Int,
+    val endMinute: Int,
+    val enabled: Boolean = true,
+    val allowedPackages: Set<String> = emptySet(),
+    val snoozeUntilMs: Long = 0L
+) {
+    val startTime: LocalTime get() = LocalTime.of(startHour.coerceIn(0, 23), startMinute.coerceIn(0, 59))
+    val endTime: LocalTime get() = LocalTime.of(endHour.coerceIn(0, 23), endMinute.coerceIn(0, 59))
+    val isValid: Boolean get() = startHour != endHour || startMinute != endMinute
+    val durationMinutes: Int get() = DailyLockTime.durationMinutes(startHour, startMinute, endHour, endMinute)
+    val isOvernight: Boolean get() = DailyLockTime.isOvernight(startHour, startMinute, endHour, endMinute)
+}
+
+/** Resolved timestamps for the current or next occurrence of a [DailyLockSchedule]. */
+data class DailyLockOccurrence(
+    val schedule: DailyLockSchedule,
+    val baseStartMs: Long,
+    val effectiveStartMs: Long,
+    val warningAtMs: Long,
+    val endAtMs: Long
+) {
+    fun isActiveAt(nowMs: Long): Boolean = nowMs >= effectiveStartMs && nowMs < endAtMs
+    fun isWarningAt(nowMs: Long): Boolean = nowMs >= warningAtMs && nowMs < effectiveStartMs
+    fun remainingBeforeLockMs(nowMs: Long): Long = (effectiveStartMs - nowMs).coerceAtLeast(0L)
+}
+
+/** Pure daily lock interval arithmetic for reliable alarms and unit testing. */
+object DailyLockTime {
+    const val WARNING_LEAD_MS = 5 * 60_000L
+    const val SNOOZE_THRESHOLD_MS = 30_000L
+    const val SNOOZE_STEP_MS = 60_000L
+
+    fun isOvernight(startHour: Int, startMinute: Int, endHour: Int, endMinute: Int): Boolean {
+        val startTotal = startHour * 60 + startMinute
+        val endTotal = endHour * 60 + endMinute
+        return endTotal < startTotal
+    }
+
+    fun durationMinutes(startHour: Int, startMinute: Int, endHour: Int, endMinute: Int): Int {
+        val startTotal = startHour * 60 + startMinute
+        val endTotal = endHour * 60 + endMinute
+        return when {
+            endTotal > startTotal -> endTotal - startTotal
+            endTotal < startTotal -> (24 * 60 - startTotal) + endTotal
+            else -> 0
+        }
+    }
+
+    /**
+     * Resolves the active or next upcoming occurrence of [schedule] relative to [nowMs],
+     * accounting for overnight windows (e.g. 22:00 – 07:00) and any active `+1 min` [DailyLockSchedule.snoozeUntilMs].
+     */
+    fun nextOccurrence(
+        schedule: DailyLockSchedule,
+        nowMs: Long,
+        zone: ZoneId = ZoneId.systemDefault()
+    ): DailyLockOccurrence? {
+        if (!schedule.enabled || !schedule.isValid) return null
+        val nowZdt = ZonedDateTime.ofInstant(Instant.ofEpochMilli(nowMs), zone)
+        val today = nowZdt.toLocalDate()
+        val durationMin = schedule.durationMinutes.toLong()
+
+        // Candidate dates: yesterday (catches active overnight window), today, tomorrow
+        val candidates = listOf(today.minusDays(1), today, today.plusDays(1))
+        for (date in candidates) {
+            val startZdt = date.atTime(schedule.startTime).atZone(zone)
+            val endZdt = startZdt.plusMinutes(durationMin)
+            val baseStartMs = startZdt.toInstant().toEpochMilli()
+            val endAtMs = endZdt.toInstant().toEpochMilli()
+            if (nowMs >= endAtMs) continue
+
+            // Apply snooze if it falls within this occurrence's window
+            val snoozeApplies = schedule.snoozeUntilMs > baseStartMs && schedule.snoozeUntilMs <= endAtMs
+            val effectiveStartMs = if (snoozeApplies) schedule.snoozeUntilMs else baseStartMs
+            // If user snoozed all the way past the end of this window, skip to the next day's window
+            if (effectiveStartMs >= endAtMs) continue
+
+            val warningAtMs = effectiveStartMs - WARNING_LEAD_MS
+            return DailyLockOccurrence(
+                schedule = schedule,
+                baseStartMs = baseStartMs,
+                effectiveStartMs = effectiveStartMs,
+                warningAtMs = warningAtMs,
+                endAtMs = endAtMs
+            )
+        }
+        return null
+    }
+
+    /** Picks the most urgent occurrence that is either currently active or inside its 5-minute warning window. */
+    fun findImminentOrActive(
+        schedules: List<DailyLockSchedule>,
+        nowMs: Long,
+        zone: ZoneId = ZoneId.systemDefault()
+    ): DailyLockOccurrence? {
+        val resolved = schedules.mapNotNull { nextOccurrence(it, nowMs, zone) }
+        val active = resolved.filter { it.isActiveAt(nowMs) }.minByOrNull { it.endAtMs }
+        if (active != null) return active
+        return resolved.filter { it.isWarningAt(nowMs) }.minByOrNull { it.effectiveStartMs }
+    }
+}
+
+data class ChallengeState(
+    val active: Challenge? = null,
+    val history: List<Challenge> = emptyList(),
+    val dailySchedules: List<DailyLockSchedule> = emptyList()
+) {
     val doneCount: Int get() = history.count { it.result == ChallengeResult.DONE }
 }
 
@@ -129,17 +250,39 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
                         }.getOrDefault(emptyList())
                     } else emptyList()
 
+                    val remoteSchedulesRaw = snap.getString("dailyLockSchedulesJson")
+                    val remoteSchedules = if (!remoteSchedulesRaw.isNullOrBlank()) {
+                        runCatching {
+                            val arr = JSONArray(remoteSchedulesRaw)
+                            (0 until arr.length()).mapNotNull { i ->
+                                runCatching { dailyScheduleFromJson(arr.getJSONObject(i)) }.getOrNull()
+                            }
+                        }.getOrDefault(emptyList())
+                    } else emptyList()
+
                     val mergedHistory = (_state.value.history + remoteHistory)
                         .filterNot { it.isLockPhone }
                         .distinctBy { it.id }
                         .sortedByDescending { it.finishedAt ?: it.startAt }
                         .take(MAX_HISTORY)
 
-                    if (mergedHistory != _state.value.history) {
-                        val nextState = _state.value.copy(history = mergedHistory)
+                    val mergedSchedules = if (_state.value.dailySchedules.isEmpty() && remoteSchedules.isNotEmpty()) {
+                        remoteSchedules
+                    } else {
+                        (_state.value.dailySchedules + remoteSchedules)
+                            .distinctBy { it.id }
+                            .sortedWith(compareBy<DailyLockSchedule> { it.startHour }.thenBy { it.startMinute })
+                    }
+
+                    if (mergedHistory != _state.value.history || mergedSchedules != _state.value.dailySchedules) {
+                        val nextState = _state.value.copy(
+                            history = mergedHistory,
+                            dailySchedules = mergedSchedules
+                        )
                         _state.value = nextState
                         prefs.edit()
                             .putString(KEY_HISTORY, JSONArray(mergedHistory.map { it.toJson() }).toString())
+                            .putString(KEY_DAILY_SCHEDULES, JSONArray(mergedSchedules.map { it.toJson() }).toString())
                             .apply()
                     }
                     pushToFirestore(uid, _state.value)
@@ -152,12 +295,14 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
         runCatching {
             val activeJson = state.active?.toJson()?.toString().orEmpty()
             val historyJson = JSONArray(state.history.filterNot { it.isLockPhone }.take(MAX_HISTORY).map { it.toJson() }).toString()
+            val schedulesJson = JSONArray(state.dailySchedules.map { it.toJson() }).toString()
             Firebase.firestore.collection("users").document(uid)
                 .set(
                     mapOf(
                         "personalActiveChallengeJson" to activeJson,
                         "personalChallengeHistoryJson" to historyJson,
-                        "personalChallengesDoneCount" to state.doneCount
+                        "personalChallengesDoneCount" to state.doneCount,
+                        "dailyLockSchedulesJson" to schedulesJson
                     ),
                     SetOptions.merge()
                 )
@@ -213,7 +358,7 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
             quoteAuthor = chosenQuote?.author.orEmpty(),
             allowedPackages = resolvedAllowed
         )
-        save(ChallengeState(active = challenge, history = historyWithPrevious))
+        save(_state.value.copy(active = challenge, history = historyWithPrevious))
         return challenge
     }
 
@@ -227,7 +372,7 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
         } else {
             upsertHistory(done, _state.value.history)
         }
-        save(ChallengeState(active = null, history = nextHistory))
+        save(_state.value.copy(active = null, history = nextHistory))
         return done
     }
 
@@ -245,12 +390,12 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
         if (now < active.endAt) return null
         if (active.isLockPhone) {
             val done = active.copy(finishedAt = active.endAt, result = ChallengeResult.DONE)
-            save(ChallengeState(active = null, history = _state.value.history))
+            save(_state.value.copy(active = null))
             return done
         }
         if (active.result == ChallengeResult.FAILED) return active
         val failed = active.copy(finishedAt = now, result = ChallengeResult.FAILED)
-        save(ChallengeState(active = failed, history = upsertHistory(failed, _state.value.history)))
+        save(_state.value.copy(active = failed, history = upsertHistory(failed, _state.value.history)))
         return failed
     }
 
@@ -265,11 +410,92 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
         } else {
             upsertHistory(finalized, _state.value.history)
         }
-        save(ChallengeState(active = null, history = nextHistory))
+        save(_state.value.copy(active = null, history = nextHistory))
         return finalized
     }
 
     fun clearHistory() = save(_state.value.copy(history = emptyList()))
+
+    // ------------------------------------------------------------------ Daily Lock Schedules
+
+    @Synchronized
+    fun addDailySchedule(
+        label: String,
+        startHour: Int,
+        startMinute: Int,
+        endHour: Int,
+        endMinute: Int,
+        allowedPackages: Set<String>? = null
+    ): DailyLockSchedule {
+        val resolvedAllowed = if (allowedPackages != null) {
+            val cleaned = allowedPackages.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+            setDefaultAllowedPackages(cleaned)
+            cleaned
+        } else {
+            getDefaultAllowedPackages()
+        }
+        val schedule = DailyLockSchedule(
+            id = "daily_${clock()}_${UUID.randomUUID().toString().take(6)}",
+            label = label.trim(),
+            startHour = startHour.coerceIn(0, 23),
+            startMinute = startMinute.coerceIn(0, 59),
+            endHour = endHour.coerceIn(0, 23),
+            endMinute = endMinute.coerceIn(0, 59),
+            enabled = true,
+            allowedPackages = resolvedAllowed,
+            snoozeUntilMs = 0L
+        )
+        val updated = (_state.value.dailySchedules + schedule)
+            .sortedWith(compareBy<DailyLockSchedule> { it.startHour }.thenBy { it.startMinute })
+        save(_state.value.copy(dailySchedules = updated))
+        return schedule
+    }
+
+    @Synchronized
+    fun setDailyScheduleEnabled(id: String, enabled: Boolean) {
+        val updated = _state.value.dailySchedules.map { schedule ->
+            if (schedule.id == id) {
+                schedule.copy(enabled = enabled, snoozeUntilMs = if (enabled) schedule.snoozeUntilMs else 0L)
+            } else {
+                schedule
+            }
+        }
+        save(_state.value.copy(dailySchedules = updated))
+    }
+
+    @Synchronized
+    fun deleteDailySchedule(id: String) {
+        val updated = _state.value.dailySchedules.filterNot { it.id == id }
+        save(_state.value.copy(dailySchedules = updated))
+    }
+
+    /**
+     * Unlimited `+1 min` snooze for an imminent daily lock schedule.
+     * Advances the upcoming lock activation time by 60 seconds and returns the new lock timestamp.
+     */
+    @Synchronized
+    fun snoozeDailyScheduleByOneMinute(
+        id: String,
+        nowMs: Long = clock(),
+        zone: ZoneId = ZoneId.systemDefault()
+    ): Long? {
+        val target = _state.value.dailySchedules.firstOrNull { it.id == id && it.enabled } ?: return null
+        val occ = DailyLockTime.nextOccurrence(target, nowMs, zone) ?: return null
+        val newSnoozeUntil = maxOf(occ.effectiveStartMs, nowMs) + DailyLockTime.SNOOZE_STEP_MS
+        val updated = _state.value.dailySchedules.map { schedule ->
+            if (schedule.id == id) schedule.copy(snoozeUntilMs = newSnoozeUntil) else schedule
+        }
+        save(_state.value.copy(dailySchedules = updated))
+        return newSnoozeUntil
+    }
+
+    @Synchronized
+    fun clearDailyScheduleSnooze(id: String) {
+        val updated = _state.value.dailySchedules.map { schedule ->
+            if (schedule.id == id) schedule.copy(snoozeUntilMs = 0L) else schedule
+        }
+        save(_state.value.copy(dailySchedules = updated))
+    }
 
     private fun upsertHistory(entry: Challenge, current: List<Challenge>): List<Challenge> {
         val cleanCurrent = current.filterNot { it.isLockPhone }
@@ -285,6 +511,7 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
         prefs.edit()
             .putString(KEY_ACTIVE, cleanState.active?.toJson()?.toString())
             .putString(KEY_HISTORY, JSONArray(cleanState.history.map { it.toJson() }).toString())
+            .putString(KEY_DAILY_SCHEDULES, JSONArray(cleanState.dailySchedules.map { it.toJson() }).toString())
             .apply()
         val uid = runCatching { Firebase.auth.currentUser?.takeIf { !it.isAnonymous }?.uid.orEmpty() }.getOrDefault("")
         if (uid.isNotEmpty()) {
@@ -298,13 +525,18 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
         val history = (0 until array.length())
             .map { challengeFromJson(array.getJSONObject(it)) }
             .filterNot { it.isLockPhone }
-        ChallengeState(active, history)
+        val schedulesArr = JSONArray(prefs.getString(KEY_DAILY_SCHEDULES, "[]"))
+        val schedules = (0 until schedulesArr.length())
+            .mapNotNull { i -> runCatching { dailyScheduleFromJson(schedulesArr.getJSONObject(i)) }.getOrNull() }
+            .sortedWith(compareBy<DailyLockSchedule> { it.startHour }.thenBy { it.startMinute })
+        ChallengeState(active = active, history = history, dailySchedules = schedules)
     }.getOrDefault(ChallengeState())
 
     companion object {
         private const val PREFS = "challenges"
         private const val KEY_ACTIVE = "active"
         private const val KEY_HISTORY = "history"
+        private const val KEY_DAILY_SCHEDULES = "daily_lock_schedules"
         private const val KEY_DEFAULT_ALLOWED_PACKAGES = "default_allowed_packages"
         private const val MAX_HISTORY = 200
 
@@ -343,6 +575,37 @@ class ChallengeStore(context: Context, private val clock: () -> Long = System::c
                 quoteText = o.optString("quoteText", ""),
                 quoteAuthor = o.optString("quoteAuthor", ""),
                 allowedPackages = parsedAllowed
+            )
+        }
+
+        internal fun DailyLockSchedule.toJson(): JSONObject = JSONObject()
+            .put("id", id)
+            .put("label", label)
+            .put("startHour", startHour)
+            .put("startMinute", startMinute)
+            .put("endHour", endHour)
+            .put("endMinute", endMinute)
+            .put("enabled", enabled)
+            .put("allowedPackages", JSONArray(allowedPackages.toList()))
+            .put("snoozeUntilMs", snoozeUntilMs)
+
+        internal fun dailyScheduleFromJson(o: JSONObject): DailyLockSchedule {
+            val allowedArr = o.optJSONArray("allowedPackages")
+            val parsedAllowed = if (allowedArr != null) {
+                (0 until allowedArr.length())
+                    .mapNotNull { i -> allowedArr.optString(i).trim().takeIf { it.isNotEmpty() } }
+                    .toSet()
+            } else emptySet()
+            return DailyLockSchedule(
+                id = o.optString("id").ifBlank { "daily_${System.currentTimeMillis()}" },
+                label = o.optString("label", ""),
+                startHour = o.optInt("startHour", 22).coerceIn(0, 23),
+                startMinute = o.optInt("startMinute", 0).coerceIn(0, 59),
+                endHour = o.optInt("endHour", 7).coerceIn(0, 23),
+                endMinute = o.optInt("endMinute", 0).coerceIn(0, 59),
+                enabled = o.optBoolean("enabled", true),
+                allowedPackages = parsedAllowed,
+                snoozeUntilMs = o.optLong("snoozeUntilMs", 0L)
             )
         }
     }

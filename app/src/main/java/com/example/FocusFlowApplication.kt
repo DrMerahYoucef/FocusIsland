@@ -59,10 +59,14 @@ class FocusFlowApplication : Application() {
     }
 
     private var startedActivitiesCount = 0
+    private var focusOverlayStartedCount = 0
     private var autoPauseJob: kotlinx.coroutines.Job? = null
 
     val isAppInForeground: Boolean
         get() = startedActivitiesCount > 0
+
+    val isAnyFocusUiInForeground: Boolean
+        get() = startedActivitiesCount > 0 || focusOverlayStartedCount > 0
 
     override fun onCreate() {
         super.onCreate()
@@ -86,6 +90,7 @@ class FocusFlowApplication : Application() {
             RevisionReminderWorker.createNotificationChannel(this)
             RevisionSyncWorker.schedulePeriodicSyncWork(this)
             WidgetRefreshScheduler.scheduleNextMidnight(this)
+            com.example.service.ChallengeAlarmReceiver.scheduleDailyLocks(this)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to schedule background work", e)
         }
@@ -143,6 +148,7 @@ class FocusFlowApplication : Application() {
                 autoPauseJob?.cancel()
                 autoPauseJob = null
                 if (activity is FocusOverlayActivity) {
+                    focusOverlayStartedCount++
                     com.example.service.FloatingFocusBubbleManager.hidePausedBubble(this@FocusFlowApplication)
                     com.example.service.FloatingFocusBubbleManager.collapseIsland(this@FocusFlowApplication)
                     com.example.service.FloatingFocusBubbleManager.syncSystemOverlay(this@FocusFlowApplication)
@@ -176,7 +182,10 @@ class FocusFlowApplication : Application() {
             }
 
             override fun onActivityStopped(activity: Activity) {
-                if (activity is FocusOverlayActivity) return
+                if (activity is FocusOverlayActivity) {
+                    focusOverlayStartedCount = (focusOverlayStartedCount - 1).coerceAtLeast(0)
+                    return
+                }
                 startedActivitiesCount = (startedActivitiesCount - 1).coerceAtLeast(0)
                 if (startedActivitiesCount == 0 && !activity.isChangingConfigurations) {
                     com.example.service.PhoneLockOverlayManager.syncWithActiveChallenge(this@FocusFlowApplication)

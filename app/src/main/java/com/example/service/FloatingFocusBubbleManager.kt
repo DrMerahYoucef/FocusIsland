@@ -60,13 +60,17 @@ import kotlin.math.roundToInt
 object FloatingFocusBubbleManager {
 
     private const val TAG = "DynamicIslandManager"
+    private const val PREFS_NAME = "dynamic_island_prefs"
+    private const val KEY_TOP_OFFSET_X = "top_offset_x_px"
+    private const val KEY_TOP_OFFSET_Y = "top_offset_y_px"
     private val mainHandler = Handler(Looper.getMainLooper())
 
     enum class NotificationKind {
         NONE,
         NUDGE,
         INVITE,
-        MESSAGE
+        MESSAGE,
+        LOCK_WARNING
     }
 
     data class DynamicIslandUiState(
@@ -81,10 +85,17 @@ object FloatingFocusBubbleManager {
         val notificationKind: NotificationKind = NotificationKind.NONE,
         val notificationSender: String = "",
         val notificationTitle: String = "",
-        val notificationSubtitle: String = ""
+        val notificationSubtitle: String = "",
+        val lockWarningScheduleId: String = "",
+        val lockWarningRangeText: String = "",
+        val lockWarningRemainingMs: Long = 0L
     ) {
         val isVisible: Boolean
             get() = isTimerActive || notificationKind != NotificationKind.NONE
+
+        val isLockWarningUnder30Sec: Boolean
+            get() = notificationKind == NotificationKind.LOCK_WARNING &&
+                lockWarningRemainingMs in 1L..29_999L
     }
 
     private val _islandState = MutableStateFlow(DynamicIslandUiState())
@@ -95,6 +106,8 @@ object FloatingFocusBubbleManager {
     @Volatile private var inviteAcceptCallback: (() -> Unit)? = null
     @Volatile private var inviteDenyCallback: (() -> Unit)? = null
     @Volatile private var inviteHideCallback: (() -> Unit)? = null
+    @Volatile private var lockWarningAddOneMinCallback: (() -> Unit)? = null
+    @Volatile private var autoExpandedUnder30ForLockAtMs: Long = 0L
 
     // System WindowManager overlay views & animators
     @Volatile private var rootWrapperView: FrameLayout? = null
@@ -112,6 +125,11 @@ object FloatingFocusBubbleManager {
     @Volatile private var windowParams: WindowManager.LayoutParams? = null
     @Volatile private var morphAnimator: ValueAnimator? = null
     @Volatile private var nudgeAutoCollapseRunnable: Runnable? = null
+
+    // Saved top-area drag position (x is offset from center; y is clamped to top safe band)
+    @Volatile private var savedTopOffsetX: Int? = null
+    @Volatile private var savedTopOffsetY: Int? = null
+    @Volatile private var isUserDragging: Boolean = false
 
     val isPausedBubbleShowing: Boolean
         get() = _islandState.value.isTimerActive && !_islandState.value.isRunning
@@ -334,6 +352,72 @@ object FloatingFocusBubbleManager {
         scheduleAutoCollapseNotification(appContext, 5_000L)
     }
 
+    /**
+     * Updates the Dynamic Island with a live 5-minute pre-lock countdown for an upcoming Daily Lock interval.
+     * Whenever remaining time drops below 30 seconds, the Dynamic Island automatically morphs open and shows
+     * the unlimited `+1 min` snooze button.
+     */
+    fun updateDailyLockWarning(
+        context: Context,
+        scheduleId: String,
+        scheduleLabel: String,
+        rangeText: String,
+        lockAtMs: Long,
+        remainingMs: Long,
+        onAddOneMinute: () -> Unit
+    ) {
+        val appContext = context.applicationContext
+        lockWarningAddOneMinCallback = onAddOneMinute
+        val safeRemaining = remainingMs.coerceAtLeast(0L)
+        val totalSecs = ((safeRemaining + 999L) / 1000L).coerceAtLeast(0L)
+        val countdownClock = "%02d:%02d".format(totalSecs / 60L, totalSecs % 60L)
+        val resolvedLabel = scheduleLabel.ifBlank { appContext.getString(R.string.lock_phone_daily_default_label) }
+        val title = appContext.getString(R.string.dynamic_island_lock_warning_title, countdownClock)
+        val subtitle = appContext.getString(R.string.dynamic_island_lock_warning_subtitle, resolvedLabel, rangeText)
+
+        val enteringUnder30 = safeRemaining in 1L..29_999L && autoExpandedUnder30ForLockAtMs != lockAtMs
+        val wasNotLockWarning = _islandState.value.notificationKind != NotificationKind.LOCK_WARNING
+        if (enteringUnder30) {
+            autoExpandedUnder30ForLockAtMs = lockAtMs
+        }
+
+        val shouldExpandNow = enteringUnder30 || wasNotLockWarning
+        _islandState.update { prev ->
+            val nextExpanded = if (shouldExpandNow) true else prev.isExpanded
+            prev.copy(
+                isExpanded = nextExpanded,
+                notificationKind = NotificationKind.LOCK_WARNING,
+                notificationSender = resolvedLabel,
+                notificationTitle = title,
+                notificationSubtitle = subtitle,
+                lockWarningScheduleId = scheduleId,
+                lockWarningRangeText = rangeText,
+                lockWarningRemainingMs = safeRemaining
+            )
+        }
+        syncSystemOverlay(appContext, animateMorphTransition = shouldExpandNow)
+    }
+
+    fun clearDailyLockWarning(context: Context) {
+        lockWarningAddOneMinCallback = null
+        autoExpandedUnder30ForLockAtMs = 0L
+        if (_islandState.value.notificationKind == NotificationKind.LOCK_WARNING) {
+            _islandState.update {
+                it.copy(
+                    isExpanded = false,
+                    notificationKind = NotificationKind.NONE,
+                    notificationSender = "",
+                    notificationTitle = "",
+                    notificationSubtitle = "",
+                    lockWarningScheduleId = "",
+                    lockWarningRangeText = "",
+                    lockWarningRemainingMs = 0L
+                )
+            }
+            syncSystemOverlay(context.applicationContext, animateMorphTransition = true)
+        }
+    }
+
     private fun scheduleAutoCollapseNotification(context: Context, delayMs: Long) {
         nudgeAutoCollapseRunnable?.let { mainHandler.removeCallbacks(it) }
         val runnable = Runnable {
@@ -365,6 +449,18 @@ object FloatingFocusBubbleManager {
         val appContext = context.applicationContext
         val s = _islandState.value
         when (s.notificationKind) {
+            NotificationKind.LOCK_WARNING -> {
+                if (s.isLockWarningUnder30Sec) {
+                    val cb = lockWarningAddOneMinCallback
+                    if (cb != null) {
+                        cb.invoke()
+                    } else if (s.lockWarningScheduleId.isNotEmpty()) {
+                        PomodoroTimerService.snoozeDailyLock(appContext, s.lockWarningScheduleId)
+                    }
+                } else {
+                    collapseIsland(appContext)
+                }
+            }
             NotificationKind.INVITE -> {
                 val cb = inviteHideCallback
                 hideInviteCapsule(appContext)
@@ -387,6 +483,9 @@ object FloatingFocusBubbleManager {
         val appContext = context.applicationContext
         val s = _islandState.value
         when (s.notificationKind) {
+            NotificationKind.LOCK_WARNING -> {
+                collapseIsland(appContext)
+            }
             NotificationKind.INVITE -> {
                 val cb = inviteDenyCallback
                 hideInviteCapsule(appContext)
@@ -410,6 +509,10 @@ object FloatingFocusBubbleManager {
         val appContext = context.applicationContext
         val s = _islandState.value
         when (s.notificationKind) {
+            NotificationKind.LOCK_WARNING -> {
+                collapseIsland(appContext)
+                openMainActivityTab(appContext, "challenges")
+            }
             NotificationKind.INVITE -> {
                 val cb = inviteAcceptCallback
                 hideInviteCapsule(appContext)
@@ -437,7 +540,10 @@ object FloatingFocusBubbleManager {
     internal fun onExpandedCardBodyClicked(context: Context) {
         val appContext = context.applicationContext
         val s = _islandState.value
-        val target = if (s.notificationKind == NotificationKind.INVITE || s.notificationKind == NotificationKind.MESSAGE) {
+        val target = if (s.notificationKind == NotificationKind.INVITE ||
+            s.notificationKind == NotificationKind.MESSAGE ||
+            s.notificationKind == NotificationKind.LOCK_WARNING
+        ) {
             "challenges"
         } else {
             "focus"
@@ -534,6 +640,11 @@ object FloatingFocusBubbleManager {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        loadSavedTopOffset(appContext)
+        val dims = computeDimensions(appContext)
+        val initialX = if (state.isExpanded) 0 else clampHorizontalOffset(appContext, savedTopOffsetX ?: 0, dims.compactW)
+        val initialY = clampTopBandY(appContext, savedTopOffsetY ?: dp(4f))
+
         // CRITICAL: Do NOT set FLAG_LAYOUT_IN_SCREEN or FLAG_LAYOUT_NO_LIMITS.
         // Without those flags, Android automatically places y=0 in the safe application display
         // frame right below the system status bar and physical camera cutout, where the status bar
@@ -550,8 +661,8 @@ object FloatingFocusBubbleManager {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            x = 0
-            y = dp(if (state.isExpanded) 8f else 4f)
+            x = initialX
+            y = initialY
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
             }
@@ -589,9 +700,80 @@ object FloatingFocusBubbleManager {
             clipToPadding = true
             isClickable = true
             isFocusable = false
-            setOnClickListener {
-                if (!_islandState.value.isExpanded) {
-                    expandIsland(appContext)
+        }
+
+        val touchSlop = ViewConfiguration.get(appContext).scaledTouchSlop.toFloat().coerceAtLeast(dp(6f).toFloat())
+
+        fun attachTopAreaDragAndTapListener(
+            targetView: View,
+            allowHorizontalDrag: () -> Boolean,
+            allowSwipeUpCollapse: () -> Boolean,
+            onTap: () -> Unit
+        ) {
+            var downRawX = 0f
+            var downRawY = 0f
+            var startParamX = 0
+            var startParamY = 0
+            var dragging = false
+
+            targetView.setOnTouchListener { _, event ->
+                val lp = windowParams ?: return@setOnTouchListener false
+                val root = rootWrapperView ?: return@setOnTouchListener false
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downRawX = event.rawX
+                        downRawY = event.rawY
+                        startParamX = lp.x
+                        startParamY = lp.y
+                        dragging = false
+                        isUserDragging = false
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = event.rawX - downRawX
+                        val dy = event.rawY - downRawY
+                        if (!dragging && kotlin.math.hypot(dx.toDouble(), dy.toDouble()) > touchSlop) {
+                            dragging = true
+                            isUserDragging = true
+                        }
+                        if (dragging) {
+                            val currentDims = computeDimensions(appContext)
+                            val expanded = _islandState.value.isExpanded
+                            val currentW = if (expanded) currentDims.expandedW else currentDims.compactW
+                            if (allowHorizontalDrag()) {
+                                lp.x = clampHorizontalOffset(appContext, (startParamX + dx).roundToInt(), currentW)
+                            }
+                            lp.y = clampTopBandY(appContext, (startParamY + dy).roundToInt())
+                            runCatching { wm.updateViewLayout(root, lp) }
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val dy = event.rawY - downRawY
+                        val wasDragging = dragging
+                        dragging = false
+                        isUserDragging = false
+                        if (wasDragging) {
+                            if (allowSwipeUpCollapse() && dy < -dp(26f) && lp.y <= dp(6f)) {
+                                collapseIsland(appContext)
+                            } else {
+                                saveTopOffset(
+                                    appContext,
+                                    offsetX = if (allowHorizontalDrag()) lp.x else (savedTopOffsetX ?: 0),
+                                    offsetY = lp.y
+                                )
+                            }
+                        } else {
+                            onTap()
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        dragging = false
+                        isUserDragging = false
+                        true
+                    }
+                    else -> false
                 }
             }
         }
@@ -607,10 +789,23 @@ object FloatingFocusBubbleManager {
             )
             isClickable = true
             isFocusable = false
-            setOnClickListener {
-                expandIsland(appContext)
-            }
         }
+        attachTopAreaDragAndTapListener(
+            targetView = compactRow,
+            allowHorizontalDrag = { !_islandState.value.isExpanded },
+            allowSwipeUpCollapse = { false },
+            onTap = { expandIsland(appContext) }
+        )
+        attachTopAreaDragAndTapListener(
+            targetView = card,
+            allowHorizontalDrag = { !_islandState.value.isExpanded },
+            allowSwipeUpCollapse = { _islandState.value.isExpanded },
+            onTap = {
+                if (!_islandState.value.isExpanded) {
+                    expandIsland(appContext)
+                }
+            }
+        )
 
         val compactIconBadge = createIslandEmblemView(appContext, sizeDp = 26f).apply {
             isClickable = false
@@ -679,14 +874,13 @@ object FloatingFocusBubbleManager {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
             isClickable = true
-            setOnClickListener {
-                onExpandedCardBodyClicked(appContext)
-            }
-            setOnTouchListener { _, event ->
-                swipeDetector.onTouchEvent(event)
-                false
-            }
         }
+        attachTopAreaDragAndTapListener(
+            targetView = topInfoRow,
+            allowHorizontalDrag = { false },
+            allowSwipeUpCollapse = { true },
+            onTap = { onExpandedCardBodyClicked(appContext) }
+        )
 
         val expandedIconBadge = createIslandEmblemView(appContext, sizeDp = 50f).apply {
             (layoutParams as LinearLayout.LayoutParams).marginEnd = dp(16f)
@@ -850,12 +1044,42 @@ object FloatingFocusBubbleManager {
         }
     }
 
+    private fun styleActionPill(
+        view: TextView?,
+        visible: Boolean,
+        highlightedAmber: Boolean = false
+    ) {
+        view ?: return
+        view.visibility = if (visible) View.VISIBLE else View.GONE
+        val bg = view.background as? GradientDrawable
+        if (highlightedAmber) {
+            bg?.setColor(Color.parseColor("#FFB74D"))
+            view.setTextColor(Color.parseColor("#111315"))
+            view.typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        } else {
+            bg?.setColor(Color.parseColor("#2B2B2F"))
+            view.setTextColor(Color.parseColor("#F3F4F6"))
+            view.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
+    }
+
     private fun bindSystemOverlayTexts(context: Context, state: DynamicIslandUiState) {
+        val lockWarningClock = if (state.notificationKind == NotificationKind.LOCK_WARNING) {
+            val totalSecs = ((state.lockWarningRemainingMs + 999L) / 1000L).coerceAtLeast(0L)
+            "%02d:%02d".format(totalSecs / 60L, totalSecs % 60L)
+        } else {
+            state.clockText
+        }
+
         compactClockView?.text = when (state.notificationKind) {
+            NotificationKind.LOCK_WARNING -> lockWarningClock
             NotificationKind.NUDGE, NotificationKind.INVITE, NotificationKind.MESSAGE ->
                 if (state.isTimerActive) state.clockText else "•••"
             NotificationKind.NONE -> state.clockText
         }
+        compactClockView?.setTextColor(
+            if (state.notificationKind == NotificationKind.LOCK_WARNING) Color.parseColor("#FFB74D") else Color.WHITE
+        )
 
         val phaseName = context.getString(
             when (state.phase) {
@@ -866,23 +1090,52 @@ object FloatingFocusBubbleManager {
         )
 
         when (state.notificationKind) {
+            NotificationKind.LOCK_WARNING -> {
+                expandedHeaderView?.setTextColor(Color.parseColor("#FFB74D"))
+                expandedHeaderView?.text = context.getString(R.string.dynamic_island_lock_warning_header)
+                expandedTitleView?.text = state.notificationTitle
+                expandedSubtitleView?.text = state.notificationSubtitle
+                if (state.isLockWarningUnder30Sec) {
+                    btnPrimaryView?.text = context.getString(R.string.dynamic_island_lock_warning_add_one_min)
+                    btnSecondaryView?.text = context.getString(R.string.dynamic_island_lock_warning_hide)
+                    btnTertiaryView?.text = context.getString(R.string.dynamic_island_action_open)
+                    styleActionPill(btnPrimaryView, visible = true, highlightedAmber = true)
+                    styleActionPill(btnSecondaryView, visible = true, highlightedAmber = false)
+                    styleActionPill(btnTertiaryView, visible = true, highlightedAmber = false)
+                } else {
+                    btnPrimaryView?.text = context.getString(R.string.dynamic_island_lock_warning_hide)
+                    btnTertiaryView?.text = context.getString(R.string.dynamic_island_action_open)
+                    styleActionPill(btnPrimaryView, visible = true, highlightedAmber = false)
+                    styleActionPill(btnSecondaryView, visible = false, highlightedAmber = false)
+                    styleActionPill(btnTertiaryView, visible = true, highlightedAmber = false)
+                }
+            }
             NotificationKind.INVITE -> {
+                expandedHeaderView?.setTextColor(Color.parseColor("#38D9C0"))
                 expandedHeaderView?.text = context.getString(R.string.dynamic_island_header_now)
                 expandedTitleView?.text = state.notificationTitle
                 expandedSubtitleView?.text = state.notificationSubtitle
                 btnPrimaryView?.text = context.getString(R.string.invite_capsule_hide)
                 btnSecondaryView?.text = context.getString(R.string.invite_capsule_deny)
                 btnTertiaryView?.text = context.getString(R.string.invite_capsule_accept)
+                styleActionPill(btnPrimaryView, visible = true)
+                styleActionPill(btnSecondaryView, visible = true)
+                styleActionPill(btnTertiaryView, visible = true)
             }
             NotificationKind.NUDGE, NotificationKind.MESSAGE -> {
+                expandedHeaderView?.setTextColor(Color.parseColor("#38D9C0"))
                 expandedHeaderView?.text = context.getString(R.string.dynamic_island_header_now)
                 expandedTitleView?.text = state.notificationTitle
                 expandedSubtitleView?.text = state.notificationSubtitle
                 btnPrimaryView?.text = context.getString(R.string.dynamic_island_action_dismiss)
                 btnSecondaryView?.text = context.getString(R.string.dynamic_island_action_open)
                 btnTertiaryView?.text = context.getString(R.string.timer_action_resume)
+                styleActionPill(btnPrimaryView, visible = true)
+                styleActionPill(btnSecondaryView, visible = true)
+                styleActionPill(btnTertiaryView, visible = true)
             }
             NotificationKind.NONE -> {
+                expandedHeaderView?.setTextColor(Color.parseColor("#38D9C0"))
                 expandedHeaderView?.text = if (state.isRunning) {
                     context.getString(R.string.dynamic_island_header_in_min, state.remainingMinutes)
                 } else {
@@ -899,16 +1152,59 @@ object FloatingFocusBubbleManager {
                 )
                 btnSecondaryView?.text = context.getString(R.string.timer_action_skip)
                 btnTertiaryView?.text = context.getString(R.string.timer_action_end)
+                styleActionPill(btnPrimaryView, visible = true)
+                styleActionPill(btnSecondaryView, visible = true)
+                styleActionPill(btnTertiaryView, visible = true)
             }
         }
     }
 
+    private fun loadSavedTopOffset(context: Context) {
+        if (savedTopOffsetX != null && savedTopOffsetY != null) return
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val density = context.resources.displayMetrics.density
+        savedTopOffsetX = prefs.getInt(KEY_TOP_OFFSET_X, 0)
+        savedTopOffsetY = prefs.getInt(KEY_TOP_OFFSET_Y, (4f * density).roundToInt())
+    }
+
+    private fun saveTopOffset(context: Context, offsetX: Int, offsetY: Int) {
+        val clampedY = clampTopBandY(context, offsetY)
+        val dims = computeDimensions(context)
+        val clampedX = clampHorizontalOffset(context, offsetX, dims.compactW)
+        savedTopOffsetX = clampedX
+        savedTopOffsetY = clampedY
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_TOP_OFFSET_X, clampedX)
+            .putInt(KEY_TOP_OFFSET_Y, clampedY)
+            .apply()
+    }
+
+    internal fun clampTopBandY(context: Context, rawY: Int): Int {
+        val density = context.resources.displayMetrics.density
+        val minY = (2f * density).roundToInt()
+        val maxY = (88f * density).roundToInt()
+        return rawY.coerceIn(minY, maxY)
+    }
+
+    internal fun clampHorizontalOffset(context: Context, rawX: Int, viewWidthPx: Int): Int {
+        val dm = context.resources.displayMetrics
+        val marginPx = (12f * dm.density).roundToInt()
+        val maxOffset = ((dm.widthPixels - viewWidthPx) / 2 - marginPx).coerceAtLeast(0)
+        return rawX.coerceIn(-maxOffset, maxOffset)
+    }
+
     private fun updateWindowPosition(wm: WindowManager, expanded: Boolean) {
+        if (isUserDragging || morphAnimator?.isRunning == true) return
         val wrapper = rootWrapperView ?: return
         val params = windowParams ?: return
-        val density = wrapper.context.resources.displayMetrics.density
-        val targetY = ((if (expanded) 8f else 4f) * density).roundToInt()
-        if (params.y != targetY) {
+        val ctx = wrapper.context
+        loadSavedTopOffset(ctx)
+        val dims = computeDimensions(ctx)
+        val targetX = if (expanded) 0 else clampHorizontalOffset(ctx, savedTopOffsetX ?: 0, dims.compactW)
+        val targetY = clampTopBandY(ctx, savedTopOffsetY ?: (4f * ctx.resources.displayMetrics.density).roundToInt())
+        if (params.x != targetX || params.y != targetY) {
+            params.x = targetX
             params.y = targetY
             runCatching { wm.updateViewLayout(wrapper, params) }
         }
@@ -982,6 +1278,10 @@ object FloatingFocusBubbleManager {
         val startR = if (toExpanded) dims.compactRadius else dims.expandedRadius
         val endR = if (toExpanded) dims.expandedRadius else dims.compactRadius
 
+        val startX = windowParams?.x ?: 0
+        val endX = if (toExpanded) 0 else clampHorizontalOffset(context, savedTopOffsetX ?: 0, dims.compactW)
+        val wm = context.getSystemService(WindowManager::class.java)
+
         compactView.visibility = View.VISIBLE
         expandedView.visibility = View.VISIBLE
 
@@ -1002,6 +1302,16 @@ object FloatingFocusBubbleManager {
                     card.layoutParams = lp
                 }
                 bg.cornerRadius = r
+
+                val winLp = windowParams
+                val root = rootWrapperView
+                if (winLp != null && root != null && wm != null && !isUserDragging && startX != endX) {
+                    val nextX = (startX + (endX - startX) * rawFraction).roundToInt()
+                    if (winLp.x != nextX) {
+                        winLp.x = nextX
+                        runCatching { wm.updateViewLayout(root, winLp) }
+                    }
+                }
 
                 if (toExpanded) {
                     compactView.alpha = (1f - rawFraction * 2.5f).coerceIn(0f, 1f)

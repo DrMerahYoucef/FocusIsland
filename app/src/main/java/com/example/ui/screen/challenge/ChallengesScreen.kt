@@ -188,6 +188,7 @@ fun ChallengesScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val friendState by viewModel.friendState.collectAsStateWithLifecycle()
     var showNew by rememberSaveable { mutableStateOf(false) }
+    var openNewAsDailyLock by rememberSaveable { mutableStateOf(false) }
     var showStudyGroupSheet by rememberSaveable { mutableStateOf(false) }
     var pending by rememberSaveable(stateSaver = PendingSaver) { mutableStateOf(null) }
     var celebrated by remember { mutableStateOf<Challenge?>(null) }
@@ -197,8 +198,9 @@ fun ChallengesScreen(
     val context = LocalContext.current
     val focusStyle = LocalFocusStyle.current
 
-    val now by produceState(System.currentTimeMillis(), state.active?.id) {
-        while (state.active != null) {
+    val hasEnabledDailySchedules = state.dailySchedules.any { it.enabled }
+    val now by produceState(System.currentTimeMillis(), state.active?.id, hasEnabledDailySchedules) {
+        while (state.active != null || hasEnabledDailySchedules) {
             value = System.currentTimeMillis()
             delay(1_000L - value % 1_000L)
         }
@@ -233,7 +235,16 @@ fun ChallengesScreen(
             friendState = friendState,
             nowMs = now,
             celebrated = celebrated,
-            onNew = { showNew = true },
+            onNew = {
+                openNewAsDailyLock = false
+                showNew = true
+            },
+            onAddDailyLockSchedule = {
+                openNewAsDailyLock = true
+                showNew = true
+            },
+            onToggleDailyLockSchedule = viewModel::toggleDailyLockSchedule,
+            onDeleteDailyLockSchedule = viewModel::deleteDailyLockSchedule,
             onGoalReached = {
                 celebrated = viewModel.goalReached()
                 playSuccessSound(context, focusStyle.successSound)
@@ -304,8 +315,22 @@ fun ChallengesScreen(
 
     if (showNew) {
         NewChallengeSheet(
-            onStart = { showNew = false; celebrated = null; pending = it },
-            onDismiss = { showNew = false }
+            initialType = if (openNewAsDailyLock) PersonalChallengeType.LOCK_PHONE else PersonalChallengeType.GOAL,
+            initialDailyInterval = openNewAsDailyLock,
+            onStart = { showNew = false; openNewAsDailyLock = false; celebrated = null; pending = it },
+            onSaveDailySchedule = { label, startHour, startMinute, endHour, endMinute, allowedPackages ->
+                showNew = false
+                openNewAsDailyLock = false
+                viewModel.addDailyLockSchedule(
+                    label = label,
+                    startHour = startHour,
+                    startMinute = startMinute,
+                    endHour = endHour,
+                    endMinute = endMinute,
+                    allowedPackages = allowedPackages
+                )
+            },
+            onDismiss = { showNew = false; openNewAsDailyLock = false }
         )
     }
     if (showStudyGroupSheet) {
@@ -390,7 +415,10 @@ internal fun ChallengesContent(
     onResendStudyGroupInvite: (FriendChallenge, String, String) -> Unit = { _, _, _ -> },
     onAddStudyGroupTime: (FriendChallenge, Int) -> Unit = { _, _ -> },
     onToggleStudyGroupStartFromZero: (FriendChallenge) -> Unit = {},
-    onOpenSettings: (() -> Unit)? = null
+    onOpenSettings: (() -> Unit)? = null,
+    onAddDailyLockSchedule: () -> Unit = onNew,
+    onToggleDailyLockSchedule: (String, Boolean) -> Unit = { _, _ -> },
+    onDeleteDailyLockSchedule: (String) -> Unit = {}
 ) {
     // When a Lock Phone personal challenge is active, lock the entire view to StrictPhoneLockOverlay
     val activeChallenge = state.active
@@ -582,6 +610,9 @@ internal fun ChallengesContent(
                 onDeclineFriendDuel = onDeclineFriendDuel,
                 onHistoryChallengeClick = { selectedPersonalHistory = it },
                 onHistoryDuelClick = { selectedHistoryDuel = it },
+                onAddDailyLockSchedule = onAddDailyLockSchedule,
+                onToggleDailyLockSchedule = onToggleDailyLockSchedule,
+                onDeleteDailyLockSchedule = onDeleteDailyLockSchedule,
                 modifier = Modifier.weight(1f)
             )
         } else {
@@ -637,6 +668,9 @@ private fun PersonalChallengeTabContent(
     onDeclineFriendDuel: (FriendChallenge) -> Unit,
     onHistoryChallengeClick: (Challenge) -> Unit = {},
     onHistoryDuelClick: (FriendChallenge) -> Unit = {},
+    onAddDailyLockSchedule: () -> Unit = onNew,
+    onToggleDailyLockSchedule: (String, Boolean) -> Unit = { _, _ -> },
+    onDeleteDailyLockSchedule: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val lastFailed = state.history.firstOrNull()?.takeIf {
@@ -683,7 +717,17 @@ private fun PersonalChallengeTabContent(
             }
         }
 
-        if (state.history.isEmpty() && friendState.history.isEmpty()) {
+        item(key = "daily_lock_schedules_card") {
+            DailyLockSchedulesSection(
+                schedules = state.dailySchedules,
+                nowMs = nowMs,
+                onAddSchedule = onAddDailyLockSchedule,
+                onToggleSchedule = onToggleDailyLockSchedule,
+                onDeleteSchedule = onDeleteDailyLockSchedule
+            )
+        }
+
+        if (state.history.isEmpty() && friendState.history.isEmpty() && state.dailySchedules.isEmpty()) {
             if (state.active == null) {
                 item {
                     EmptyState(
@@ -1259,8 +1303,21 @@ private fun PersonalChallengeSummarySheet(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-internal fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: () -> Unit) {
-    var challengeTypeName by rememberSaveable { mutableStateOf(PersonalChallengeType.GOAL.name) }
+internal fun NewChallengeSheet(
+    onStart: (PendingChallenge) -> Unit,
+    onDismiss: () -> Unit,
+    initialType: PersonalChallengeType = PersonalChallengeType.GOAL,
+    initialDailyInterval: Boolean = false,
+    onSaveDailySchedule: (
+        label: String,
+        startHour: Int,
+        startMinute: Int,
+        endHour: Int,
+        endMinute: Int,
+        allowedPackages: Set<String>
+    ) -> Unit = { _, _, _, _, _, _ -> }
+) {
+    var challengeTypeName by rememberSaveable { mutableStateOf(initialType.name) }
     val challengeType = remember(challengeTypeName) {
         runCatching { PersonalChallengeType.valueOf(challengeTypeName) }.getOrDefault(PersonalChallengeType.GOAL)
     }
@@ -1276,7 +1333,14 @@ internal fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: (
     }
 
     var goal by rememberSaveable { mutableStateOf("") }
-    var byEndTime by rememberSaveable { mutableStateOf(false) }
+    // 0 = Duration/Timer, 1 = End time/Until hour, 2 = Daily interval (Lock Phone only)
+    var timeMode by rememberSaveable {
+        mutableIntStateOf(if (initialType == PersonalChallengeType.LOCK_PHONE && initialDailyInterval) 2 else 0)
+    }
+    val effectiveTimeMode = if (isLockPhone) timeMode else timeMode.coerceAtMost(1)
+    val isDailyInterval = isLockPhone && effectiveTimeMode == 2
+    val byEndTime = effectiveTimeMode == 1
+
     var hours by rememberSaveable { mutableStateOf("0") }
     var minutes by rememberSaveable { mutableStateOf("45") }
     val defaultEnd = remember { LocalTime.now().plusHours(1).withSecond(0).withNano(0) }
@@ -1284,9 +1348,20 @@ internal fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: (
     var endMinute by rememberSaveable { mutableIntStateOf(defaultEnd.minute) }
     var pickTime by rememberSaveable { mutableStateOf(false) }
 
+    // Daily interval fields (default 22:00 – 07:00)
+    var dailyLabel by rememberSaveable { mutableStateOf("") }
+    var dailyStartHour by rememberSaveable { mutableIntStateOf(22) }
+    var dailyStartMinute by rememberSaveable { mutableIntStateOf(0) }
+    var dailyEndHour by rememberSaveable { mutableIntStateOf(7) }
+    var dailyEndMinute by rememberSaveable { mutableIntStateOf(0) }
+
     val totalMinutes = (hours.toIntOrNull() ?: 0) * 60 + (minutes.toIntOrNull() ?: 0)
     val durationOk = totalMinutes in 1..ChallengeTime.MAX_MINUTES
-    val canStart = (isLockPhone || goal.isNotBlank()) && (byEndTime || durationOk)
+    val dailyRangeValid = dailyStartHour != dailyEndHour || dailyStartMinute != dailyEndMinute
+    val canStart = when {
+        isDailyInterval -> dailyRangeValid
+        else -> (isLockPhone || goal.isNotBlank()) && (byEndTime || durationOk)
+    }
     val defaultLockGoal = stringResource(R.string.lock_phone_default_goal)
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
@@ -1310,7 +1385,10 @@ internal fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: (
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                 SegmentedButton(
                     selected = !isLockPhone,
-                    onClick = { challengeTypeName = PersonalChallengeType.GOAL.name },
+                    onClick = {
+                        challengeTypeName = PersonalChallengeType.GOAL.name
+                        if (timeMode > 1) timeMode = 0
+                    },
                     shape = SegmentedButtonDefaults.itemShape(0, 2),
                     icon = {
                         Icon(
@@ -1355,56 +1433,86 @@ internal fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: (
             }
 
             val modes = if (isLockPhone) {
-                listOf(R.string.lock_phone_time_mode_timer, R.string.lock_phone_time_mode_until_hour)
+                listOf(
+                    R.string.lock_phone_time_mode_timer,
+                    R.string.lock_phone_time_mode_until_hour,
+                    R.string.lock_phone_time_mode_daily_interval
+                )
             } else {
                 listOf(R.string.challenge_mode_duration, R.string.challenge_mode_end_time)
             }
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                 modes.forEachIndexed { i, label ->
                     SegmentedButton(
-                        selected = byEndTime == (i == 1),
-                        onClick = { byEndTime = i == 1 },
+                        selected = effectiveTimeMode == i,
+                        onClick = { timeMode = i },
                         shape = SegmentedButtonDefaults.itemShape(i, modes.size),
                         modifier = Modifier.testTag(
-                            if (i == 0) "lock_phone_time_mode_duration" else "lock_phone_time_mode_until_hour"
+                            when (i) {
+                                0 -> "lock_phone_time_mode_duration"
+                                1 -> "lock_phone_time_mode_until_hour"
+                                else -> "lock_phone_time_mode_daily_interval"
+                            }
                         )
-                    ) { Text(stringResource(label)) }
-                }
-            }
-            if (!byEndTime) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                    ChallengeTime.quickMinutes.forEach { q ->
-                        FilterChip(
-                            selected = totalMinutes == q,
-                            onClick = { hours = (q / 60).toString(); minutes = (q % 60).toString() },
-                            label = { Text(durationText(q)) }
+                    ) {
+                        Text(
+                            text = stringResource(label),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    NumberField(hours, { hours = it }, R.string.challenge_hours, Modifier.weight(1f))
-                    NumberField(minutes, { minutes = it }, R.string.challenge_minutes, Modifier.weight(1f))
-                }
-                if (!durationOk) {
-                    Text(
-                        stringResource(R.string.challenge_duration_invalid),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
+            }
+
+            when {
+                isDailyInterval -> {
+                    DailyLockIntervalForm(
+                        label = dailyLabel,
+                        onLabelChange = { dailyLabel = it },
+                        startHour = dailyStartHour,
+                        startMinute = dailyStartMinute,
+                        endHour = dailyEndHour,
+                        endMinute = dailyEndMinute,
+                        onStartTimeChanged = { h, m -> dailyStartHour = h; dailyStartMinute = m },
+                        onEndTimeChanged = { h, m -> dailyEndHour = h; dailyEndMinute = m }
                     )
                 }
-            } else {
-                val end = LocalTime.of(endHour, endMinute)
-                val tomorrow = !end.isAfter(LocalTime.now())
-                OutlinedButton(
-                    onClick = { pickTime = true },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = Spacing.buttonHeight)
-                        .testTag("lock_phone_pick_hour_button")
-                ) {
-                    Icon(Icons.Rounded.Schedule, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-                    Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                    Text(stringResource(if (tomorrow) R.string.challenge_ends_tomorrow else R.string.challenge_ends_today, formatTime(end)))
+                !byEndTime -> {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        ChallengeTime.quickMinutes.forEach { q ->
+                            FilterChip(
+                                selected = totalMinutes == q,
+                                onClick = { hours = (q / 60).toString(); minutes = (q % 60).toString() },
+                                label = { Text(durationText(q)) }
+                            )
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        NumberField(hours, { hours = it }, R.string.challenge_hours, Modifier.weight(1f))
+                        NumberField(minutes, { minutes = it }, R.string.challenge_minutes, Modifier.weight(1f))
+                    }
+                    if (!durationOk) {
+                        Text(
+                            stringResource(R.string.challenge_duration_invalid),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+                else -> {
+                    val end = LocalTime.of(endHour, endMinute)
+                    val tomorrow = !end.isAfter(LocalTime.now())
+                    OutlinedButton(
+                        onClick = { pickTime = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = Spacing.buttonHeight)
+                            .testTag("lock_phone_pick_hour_button")
+                    ) {
+                        Icon(Icons.Rounded.Schedule, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                        Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                        Text(stringResource(if (tomorrow) R.string.challenge_ends_tomorrow else R.string.challenge_ends_today, formatTime(end)))
+                    }
                 }
             }
 
@@ -1421,26 +1529,44 @@ internal fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: (
 
             Button(
                 onClick = {
-                    val endAt = if (byEndTime) ChallengeTime.endAtClock(System.currentTimeMillis(), LocalTime.of(endHour, endMinute)) else 0L
-                    val resolvedGoal = if (isLockPhone) defaultLockGoal else goal.trim()
-                    if (isLockPhone) {
+                    if (isDailyInterval) {
                         store?.setDefaultAllowedPackages(selectedPackages)
-                    }
-                    onStart(
-                        PendingChallenge(
-                            goal = resolvedGoal,
-                            minutes = if (byEndTime) 0 else totalMinutes,
-                            endAt = endAt,
-                            type = challengeType,
-                            allowedPackages = if (isLockPhone) selectedPackages else emptySet()
+                        onSaveDailySchedule(
+                            dailyLabel.trim(),
+                            dailyStartHour,
+                            dailyStartMinute,
+                            dailyEndHour,
+                            dailyEndMinute,
+                            selectedPackages
                         )
-                    )
+                    } else {
+                        val endAt = if (byEndTime) ChallengeTime.endAtClock(System.currentTimeMillis(), LocalTime.of(endHour, endMinute)) else 0L
+                        val resolvedGoal = if (isLockPhone) defaultLockGoal else goal.trim()
+                        if (isLockPhone) {
+                            store?.setDefaultAllowedPackages(selectedPackages)
+                        }
+                        onStart(
+                            PendingChallenge(
+                                goal = resolvedGoal,
+                                minutes = if (byEndTime) 0 else totalMinutes,
+                                endAt = endAt,
+                                type = challengeType,
+                                allowedPackages = if (isLockPhone) selectedPackages else emptySet()
+                            )
+                        )
+                    }
                 },
                 enabled = canStart,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = Spacing.buttonHeight)
-                    .testTag(if (isLockPhone) "lock_phone_start_button" else "personal_start_challenge_button")
+                    .testTag(
+                        when {
+                            isDailyInterval -> "lock_phone_daily_save_button"
+                            isLockPhone -> "lock_phone_start_button"
+                            else -> "personal_start_challenge_button"
+                        }
+                    )
             ) {
                 Icon(
                     imageVector = if (isLockPhone) Icons.Rounded.Lock else Icons.Rounded.Flag,
@@ -1448,7 +1574,15 @@ internal fun NewChallengeSheet(onStart: (PendingChallenge) -> Unit, onDismiss: (
                     modifier = Modifier.size(ButtonDefaults.IconSize)
                 )
                 Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                Text(stringResource(if (isLockPhone) R.string.lock_phone_start_button else R.string.challenge_start))
+                Text(
+                    stringResource(
+                        when {
+                            isDailyInterval -> R.string.lock_phone_daily_save_button
+                            isLockPhone -> R.string.lock_phone_start_button
+                            else -> R.string.challenge_start
+                        }
+                    )
+                )
             }
         }
     }
